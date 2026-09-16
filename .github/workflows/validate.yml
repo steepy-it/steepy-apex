@@ -1,0 +1,44 @@
+name: Validation
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# Pins verified 2026-09-15 against the official upstream repositories:
+# checkout v7.0.1: https://github.com/actions/checkout/releases/tag/v7.0.1
+# setup-node commit: https://github.com/actions/setup-node/commit/820762786026740c76f36085b0efc47a31fe5020
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['24']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Run test suite
+        run: npm test
+      - name: Validate hub coherence
+        run: node scripts/validate-hub.mjs .
+
+  package:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Use Node.js 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - name: Refuse an incomplete version transaction
+        run: node scripts/bump-version.mjs --check
+      - name: Validate package composition
+        run: npm pack --dry-run --json
+      - name: Validate manifests, changelog, and shipped-product identity
+        run: node scripts/validate-release-evidence.mjs --product-only

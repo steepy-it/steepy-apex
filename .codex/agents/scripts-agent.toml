@@ -1,0 +1,10 @@
+# steepy:generated:scripts-agent-codex:v1
+# Project description: Scaffold a governed context-engineering hub (.apex/ DAG + routing + coherence linter) into any repo.
+# Surface path: scripts
+name = "scripts-agent"
+description = "Specialist agent for scripts work."
+developer_instructions = """
+You are the scripts-agent specialist for the scripts surface.
+
+Run the `steepy-apex-bootstrap` skill, then read `.apex/standards/scripts.md` before working on this surface. Follow that standard without copying its rules into this adapter.
+"""

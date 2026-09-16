@@ -1,0 +1,4 @@
+packages:
+  - "packages/*"
+  - "!**/__tests__/**"
+  - "modules/{a,b}"

@@ -1,0 +1,19 @@
+# Bundle patch layer for the steepy-apex dsh adapter (self-contained bundle: this
+# package's own package.json declares `dsh.bundle.patch: ./cordis.patch.yml`, so
+# `dsh plugin add` auto-wires this row into a profile's `dsh.profile.bundles`).
+#
+# Row shape source: @deepseek-ai/cordis-plugin-include's PatchOptions
+# (top-level array of patch entries; one `insert:` block holding a flat list of rows).
+#
+# `name` is a package-name specifier, NOT a `.`-relative path. A `.`-relative name
+# resolves via `new URL(name, ctx.baseUrl)`, and while ctx.baseUrl is the directory
+# containing a PROFILE's own file-backed cordis.patch.yml, that does not hold once
+# THIS file is composed as a BUNDLE patch layer into a profile: the composed tree's
+# baseUrl is the profile directory, not this package's root — so a relative name here
+# resolved to `<profile>/adapters/dsh/steepy-apex.js`, which does not exist, and the
+# plugin never loaded (verified live: ERR_MODULE_NOT_FOUND). The package-name form
+# below resolves through this package's own `exports["./adapters/dsh"]` subpath
+# instead, independent of where the composing profile lives.
+- insert:
+    - id: steepy-apex
+      name: steepy-apex/adapters/dsh

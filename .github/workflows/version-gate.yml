@@ -1,0 +1,54 @@
+# Version gate: fail a PR that doesn't bump the plugin version vs main, unless it
+# carries the `no-release` label. Kept as its own workflow rather than a job in
+# ci.yml: reacting to label add/remove needs `labeled`/`unlabeled` in the trigger
+# types, and adding those to ci.yml's shared `on.pull_request` would re-run the whole
+# Node test matrix on every label toggle.
+name: Version gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  version-gate:
+    runs-on: ubuntu-latest
+    steps:
+      # Verified 2026-09-15 against the official upstream release:
+      # https://github.com/actions/checkout/releases/tag/v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      # no-release waives only the required increment. Canonical version parsing and
+      # downgrade rejection still run through the shared numeric policy.
+      - name: Compare plugin.json version against main
+        env:
+          NO_RELEASE: ${{ contains(github.event.pull_request.labels.*.name, 'no-release') }}
+        run: |
+          git fetch origin main --depth=1
+          git show FETCH_HEAD:.claude-plugin/plugin.json > /tmp/main-plugin.json
+
+          # Versions come from JSON via node, never parsed with grep/sed.
+          PR_VERSION="$(node -p "require('./.claude-plugin/plugin.json').version")"
+          MAIN_VERSION="$(node -p "require('/tmp/main-plugin.json').version")"
+
+          PR_VERSION="$PR_VERSION" MAIN_VERSION="$MAIN_VERSION" node --input-type=module -e "
+            import { validateVersionTransition } from './scripts/version-policy.mjs';
+            try {
+              validateVersionTransition(process.env.PR_VERSION, process.env.MAIN_VERSION, {
+                requireIncrement: process.env.NO_RELEASE !== 'true',
+              });
+            } catch (error) {
+              console.error('::error::' + error.message + ' — run scripts/bump-version.mjs; no-release permits equality only');
+              process.exit(1);
+            }
+          "
+
+          echo "version policy passed: main=$MAIN_VERSION, PR=$PR_VERSION, no-release=$NO_RELEASE"

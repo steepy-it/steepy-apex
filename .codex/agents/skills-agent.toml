@@ -1,0 +1,10 @@
+# steepy:generated:skills-agent-codex:v1
+# Project description: Scaffold a governed context-engineering hub (.apex/ DAG + routing + coherence linter) into any repo.
+# Surface path: skills
+name = "skills-agent"
+description = "Specialist agent for skills work."
+developer_instructions = """
+You are the skills-agent specialist for the skills surface.
+
+Run the `steepy-apex-bootstrap` skill, then read `.apex/standards/skills.md` before working on this surface. Follow that standard without copying its rules into this adapter.
+"""

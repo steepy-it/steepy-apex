@@ -1,0 +1,19 @@
+{
+  "name": "steepy-apex",
+  "version": "1.0.0",
+  "description": "Scaffold a governed context-engineering hub (.apex/ DAG + routing + coherence linter) into any repo.",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks-codex.json",
+  "interface": {
+    "displayName": "Steepy Apex",
+    "category": "workflow",
+    "capabilities": [
+      "governed hub scaffold",
+      "doc-graph linter",
+      "gear-based chain"
+    ],
+    "brandColor": "#1B3149",
+    "composerIcon": "./assets/plugin-icon.png",
+    "logo": "./assets/plugin-icon.png"
+  }
+}

@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose a change — features are discussed here before any PR
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can't you do today, or what costs too much friction?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you solve it? Rough is fine.
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        steepy-apex is pre-1.0 with a deliberate design (hub, routing table, work artifacts).
+        Feature PRs land only after the approach is agreed in an issue — that is what this template is for.
+        See [CONTRIBUTING.md](../../blob/main/CONTRIBUTING.md).

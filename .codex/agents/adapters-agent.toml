@@ -1,0 +1,10 @@
+# steepy:generated:adapters-agent-codex:v1
+# Project description: Scaffold a governed context-engineering hub (.apex/ DAG + routing + coherence linter) into any repo.
+# Surface path: adapters
+name = "adapters-agent"
+description = "Specialist agent for adapters work."
+developer_instructions = """
+You are the adapters-agent specialist for the adapters surface.
+
+Run the `steepy-apex-bootstrap` skill, then read `.apex/standards/adapters.md` before working on this surface. Follow that standard without copying its rules into this adapter.
+"""

@@ -1,0 +1,10 @@
+# steepy:generated:tests-agent-codex:v1
+# Project description: Scaffold a governed context-engineering hub (.apex/ DAG + routing + coherence linter) into any repo.
+# Surface path: tests
+name = "tests-agent"
+description = "Specialist agent for tests work."
+developer_instructions = """
+You are the tests-agent specialist for the tests surface.
+
+Run the `steepy-apex-bootstrap` skill, then read `.apex/standards/tests.md` before working on this surface. Follow that standard without copying its rules into this adapter.
+"""

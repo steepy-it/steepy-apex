@@ -1,0 +1,10 @@
+# steepy:generated:{{agent}}-codex:v1
+# Project description: {{description}}
+# Surface path: {{path}}
+name = "{{agent}}"
+description = "Specialist agent for {{surface}} work."
+developer_instructions = """
+You are the {{agent}} specialist for the {{surface}} surface.
+
+Run the `{{projectName}}-bootstrap` skill, then read `.apex/standards/{{surface}}.md` before working on this surface. Follow that standard without copying its rules into this adapter.
+"""

@@ -1,0 +1,101 @@
+# Release: on every push to main, first require reusable tests and product validation.
+# Then tag an untagged plugin.json version and create
+# the matching GitHub Release. Tag and Release creation remain independently idempotent.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validation:
+    uses: ./.github/workflows/validate.yml
+    permissions:
+      contents: read
+
+  publish:
+    needs: validation
+    if: needs.validation.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # fetch-depth: 0 — we need full history and tags to check whether v$V already
+      # exists and to push a new tag from this commit.
+      # Verified 2026-09-15 against the official upstream release:
+      # https://github.com/actions/checkout/releases/tag/v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Read version from plugin.json
+        id: version
+        run: |
+          # Version comes from JSON via node, never parsed with grep/sed.
+          V="$(node -p "require('./.claude-plugin/plugin.json').version")"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether the release tag already exists
+        id: tag_check
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          # Re-fetch tags explicitly to be safe: fetch-depth: 0 on checkout guarantees
+          # full history, not necessarily every tag ref, depending on the runner's
+          # default fetch config.
+          git fetch --tags --quiet
+          if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Tag creation is skipped once the tag exists — nothing more to do on that
+      # front. Kept as its own step (not combined with Release creation below): a
+      # tag can exist without a Release (e.g. a prior run pushed the tag then failed
+      # before publishing), and gating both on tag existence would strand that
+      # version's Release forever with no way to recover on a later run.
+      - name: Create tag
+        if: steps.tag_check.outputs.exists == 'false'
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          TAG="v$V"
+
+          # Lightweight tag on the exact commit that triggered this push.
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+
+      # Independently idempotent via `gh release view`, not the tag-existence check
+      # above — this step always runs, so a stranded tag-without-Release (see note
+      # above) gets its Release published on the very next run of this workflow.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          TAG="v$V"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists — nothing to do"
+            exit 0
+          fi
+
+          # Release body comes from the CHANGELOG.md section for this version. A
+          # missing or malformed prose section must never fail the release — fall
+          # back to a stock body instead.
+          NOTES_FILE="$(mktemp)"
+          if node scripts/extract-changelog.mjs "$V" > "$NOTES_FILE" 2>/dev/null; then
+            echo "release notes extracted from CHANGELOG.md"
+          else
+            echo "Release v$V — see CHANGELOG.md" > "$NOTES_FILE"
+          fi
+
+          gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"

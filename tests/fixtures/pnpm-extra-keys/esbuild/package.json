@@ -1,0 +1,1 @@
+{ "name": "esbuild", "scripts": { "build": "node ./bin.js" } }

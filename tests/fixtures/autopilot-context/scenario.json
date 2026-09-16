@@ -1,0 +1,77 @@
+{
+  "files": {
+    ".apex/work/specs/context-efficient.md": "# Context-efficient autopilot\n\nOwning surface: scripts\nCross-cutting surfaces: adapters\n\n## Success criteria\n\n- SC3: role inventories retain required facts.\n- SC5: comparative prompt footprints shrink.\n",
+    ".apex/work/plans/context-efficient.md": "# Plan\n\n## Task 1\nSurface: scripts\nTest: npm test\nCriteria: SC3, SC5\n\n## Task 2\nSurface: adapters\nTest: npm test\nCriteria: SC1\n",
+    ".apex/work/tasks/context-efficient/task-result-index.md": "# Results\n\n- Task 1: DONE; artifact: .apex/work/tasks/context-efficient/task-1-report.md; changed-paths: scripts/example.mjs; signals: tdd:red-green\n- Task 2: DONE_WITH_CONCERNS; artifact: .apex/work/tasks/context-efficient/task-2-report.md; changed-paths: adapters/example.mjs; signals: follow-up:telemetry\n",
+    ".apex/work/tasks/context-efficient/success-criteria.md": "# Success criteria\n\nSource: `.apex/work/specs/context-efficient.md`\nHeading: `## Success criteria`\n\n- SC3: role inventories retain required facts.\n- SC5: comparative prompt footprints shrink.\n",
+    ".apex/work/tasks/context-efficient/task-1-brief.md": "# Task 1\n\nSurface: scripts\nTest command: npm test\nCriteria: SC3, SC5\nConstraint: use Node built-ins only.\n",
+    ".apex/work/tasks/context-efficient/task-1-report.md": "# Task 1 report\n\nRED then GREEN. All required checks passed.\n",
+    ".apex/work/tasks/context-efficient/task-1-review.md": "# Review issue\n\nISSUES_FOUND: preserve list order.\n",
+    ".apex/work/tasks/context-efficient/task-2-report.md": "# Task 2 report\n\nThis other task report must not be eager for Task 1.\n",
+    ".apex/work/tasks/context-efficient/task-1.diff": "diff --git a/scripts/example.mjs b/scripts/example.mjs\n+export const ready = true;\n",
+    ".apex/work/tasks/context-efficient/branch-diff.txt": "diff --git a/scripts/example.mjs b/scripts/example.mjs\n+export const ready = true;\ndiff --git a/adapters/example.mjs b/adapters/example.mjs\n+export const routed = true;\n",
+    ".apex/work/tasks/context-efficient/ledger.md": "# Ledger\n\nTask 1 pending. Task 2 pending.\n",
+    ".apex/context-manifests.md": "# Context manifests\n\nRequired inputs are eager; on-demand inputs are read only for a concrete missing fact.\n",
+    ".apex/_INDEX.md": "# Hub index\n\n| scripts | standards/scripts.md | scripts-agent |\n| adapters | standards/adapters.md | adapters-agent |\n| prose | standards/prose.md | prose-agent |\n",
+    ".apex/testing-and-checklist.md": "# Testing\n\nRun npm test and validate-hub.\n",
+    ".apex/standards/scripts.md": "# Scripts standard\n\nNode built-ins only. Pure functions and thin CLIs.\n",
+    ".apex/standards/scripts/scripts-core.md": "# Scripts core standard\n\nModular owning standard selected by the routing table.\n",
+    ".apex/standards/adapters.md": "# Adapters standard\n\nKeep provider details adapter-local.\n",
+    ".apex/standards/prose.md": "# Prose standard\n\nUNRELATED_CONTEXT_SENTINEL_7B1D9E. This complete unrelated artifact must never be eager.\n"
+  },
+  "surfaces": {
+    "scripts": ".apex/standards/scripts.md",
+    "adapters": ".apex/standards/adapters.md",
+    "prose": ".apex/standards/prose.md"
+  },
+  "baselineEager": [
+    ".apex/work/specs/context-efficient.md",
+    ".apex/work/plans/context-efficient.md",
+    ".apex/_INDEX.md",
+    ".apex/testing-and-checklist.md",
+    ".apex/standards/scripts.md",
+    ".apex/standards/adapters.md",
+    ".apex/standards/prose.md",
+    ".apex/work/tasks/context-efficient/task-1-report.md",
+    ".apex/work/tasks/context-efficient/task-2-report.md",
+    ".apex/work/tasks/context-efficient/branch-diff.txt"
+  ],
+  "baselinePhases": {
+    "plan": {
+      "eager": [
+        ".apex/work/specs/context-efficient.md",
+        ".apex/_INDEX.md",
+        ".apex/testing-and-checklist.md",
+        ".apex/standards/scripts.md",
+        ".apex/standards/adapters.md"
+      ],
+      "prompt": "Invoke the steepy-apex 'plan' skill the way this harness invokes skills, on the spec at /repo/.apex/work/specs/context-efficient.md. This is an unattended gear-3 autopilot run: the contract is the extended verdict artifact at the head of that spec — read it and obey it. Follow the plan skill's autopilot branch: never ask a question, never wait for a human, and never push, bump a version, or open a PR. If anything is unresolvable, append a `BLOCKED` line with the reason to the run's `autopilot-status.md` (in .apex/work/tasks/<spec-basename>/) and exit non-zero."
+    },
+    "implement": {
+      "eager": [
+        ".apex/work/plans/context-efficient.md",
+        ".apex/work/specs/context-efficient.md",
+        ".apex/_INDEX.md",
+        ".apex/testing-and-checklist.md",
+        ".apex/standards/scripts.md",
+        ".apex/standards/adapters.md",
+        ".apex/work/tasks/context-efficient/ledger.md"
+      ],
+      "prompt": "Invoke the steepy-apex 'implement' skill the way this harness invokes skills, on the spec at /repo/.apex/work/specs/context-efficient.md. This is an unattended gear-3 autopilot run: the contract is the extended verdict artifact at the head of that spec — read it and obey it. Follow the implement skill's autopilot branch: never ask a question, never wait for a human, and never push, bump a version, or open a PR. If anything is unresolvable, append a `BLOCKED` line with the reason to the run's `autopilot-status.md` (in .apex/work/tasks/<spec-basename>/) and exit non-zero."
+    },
+    "review": {
+      "eager": [
+        ".apex/work/specs/context-efficient.md",
+        ".apex/work/plans/context-efficient.md",
+        ".apex/_INDEX.md",
+        ".apex/testing-and-checklist.md",
+        ".apex/standards/scripts.md",
+        ".apex/standards/adapters.md",
+        ".apex/work/tasks/context-efficient/task-result-index.md",
+        ".apex/work/tasks/context-efficient/branch-diff.txt",
+        ".apex/work/tasks/context-efficient/ledger.md"
+      ],
+      "prompt": "Invoke the steepy-apex 'review' skill the way this harness invokes skills, on the spec at /repo/.apex/work/specs/context-efficient.md. This is an unattended gear-3 autopilot run: the contract is the extended verdict artifact at the head of that spec — read it and obey it. Follow the review skill's autopilot branch: never ask a question, never wait for a human, and never push, bump a version, or open a PR. If anything is unresolvable, append a `BLOCKED` line with the reason to the run's `autopilot-status.md` (in .apex/work/tasks/<spec-basename>/) and exit non-zero."
+    }
+  }
+}

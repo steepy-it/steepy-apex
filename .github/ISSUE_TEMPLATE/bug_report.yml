@@ -1,0 +1,38 @@
+name: Bug report
+description: Something in steepy-apex misbehaves
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: From `/plugin` in Claude Code, or `.claude-plugin/plugin.json` in a local checkout.
+      placeholder: "0.2.4"
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command or skill involved
+      placeholder: "/steepy-apex:init"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Relevant output
+      description: Output of the failing command — or of `node scripts/validate-hub.mjs .` if the hub is involved.
+      render: shell
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and Node version (`node --version`).
+      placeholder: "macOS 15, Node 24.x"

@@ -1,0 +1,1 @@
+{ "name": "ui", "scripts": { "test": "vitest", "build": "vite build" } }

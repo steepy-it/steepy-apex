@@ -1,0 +1,60 @@
+{
+  "name": "steepy-apex",
+  "version": "1.0.0",
+  "private": false,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "Scaffold a governed context-engineering hub (.apex/ DAG + routing + coherence linter) into any repo.",
+  "author": {
+    "name": "steepy-it",
+    "email": "info@steepy.it"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/steepy-it/steepy-apex.git"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "main": "./adapters/opencode/steepy-apex.js",
+  "exports": {
+    ".": "./adapters/opencode/steepy-apex.js",
+    "./adapters/dsh": "./adapters/dsh/steepy-apex.js"
+  },
+  "pi": {
+    "skills": [
+      "./skills"
+    ],
+    "extensions": [
+      "./adapters/pi"
+    ]
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    ".agents/",
+    ".claude-plugin/",
+    ".codex-plugin/",
+    "adapters/",
+    "assets/",
+    "docs/",
+    "hooks/",
+    "scripts/",
+    "skills/",
+    "templates/",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "LICENSE",
+    "NOTICE",
+    "RELEASE.md",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  }
+}

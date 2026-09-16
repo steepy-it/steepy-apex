@@ -1,0 +1,11 @@
+node_modules/
+*.log
+.DS_Store
+docs/brand/
+.worktrees/
+.claude/settings.local.json
+.claude/skills/*
+!.claude/skills/steepy-apex-bootstrap
+
+# Local workflow artifacts must never enter release history.
+/.apex/work/

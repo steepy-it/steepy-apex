@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"codex-thread-123"}
+{"type":"item.completed","thread_id":"codex-thread-123","item":{"type":"agent_message","text":"Starting the task."}}
+{"type":"item.started","thread_id":"codex-thread-123","item":{"type":"command_execution","id":"call-1","command":"git status"}}
+{"type":"item.completed","thread_id":"codex-thread-123","item":{"type":"command_execution","id":"call-1","command":"git status","exit_code":0}}
+{"type":"item.completed","thread_id":"codex-thread-123","item":{"type":"reasoning","text":"Internal reasoning must not be curated."}}
+{"type":"turn.completed","thread_id":"codex-thread-123","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5,"reasoning_tokens":0,"total_tokens":15}}
+{"type":"error","thread_id":"codex-thread-123","message":"request failed"}
+{"type":"turn.completed","thread_id":"codex-thread-123","usage":{"input_tokens":0,"cached_input_tokens":-1,"output_tokens":null,"reasoning_tokens":{},"total_tokens":-5,"cost":"0.01","currency":3,"turns":-1}}
