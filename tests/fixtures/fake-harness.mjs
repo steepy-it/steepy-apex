@@ -286,7 +286,45 @@ function switchBranchIfAsked() {
   if (branch) execFileSync('git', ['checkout', '-q', '-b', branch], { cwd: process.cwd() });
 }
 
+// Synthetic skill behavior: exercises the real conductor's resume capability boundary,
+// not native reviewer compliance or a production task-state reducer.
+function taskResumeScenario() {
+  const manifest = JSON.parse(readFileSync(manifestPathFromPrompt(), 'utf8'));
+  const resultPath = '.apex/work/tasks/topic/task-result-index.md';
+  const ledgerPath = '.apex/work/tasks/topic/ledger.md';
+  for (const path of [ledgerPath, resultPath]) {
+    if (!manifest.onDemand.some((entry) => entry.path === path && entry.available === existsSync(path))) {
+      throw new Error(`missing explicit resume capability: ${path}`);
+    }
+  }
+  const taskDir = dirname(resultPath);
+  const tracePath = join(taskDir, 'scenario-trace.txt');
+  const result = (id) => `- Task ${id}: DONE; artifact: ${taskDir}/task-${id}-report.md; changed-paths: none; signals: none\n`;
+  if (!existsSync(ledgerPath)) {
+    writeFileSync(ledgerPath, 'Task 1: complete\nTask 2: complete\n');
+    writeFileSync(resultPath, `<!-- steepy-workflow: v1\nphase: implement\nstatus: DRAFT\nnext: review\nsource: .apex/work/plans/topic.md\nconsumed-by: none\n-->\n# Results\n${result(1)}${result(2)}`);
+    writeFileSync(tracePath, 'implement:1\nreview:1:APPROVED\nimplement:2\nreview:2:APPROVED\nimplement:3\nreview:3:ISSUES_FOUND\n');
+    writeFileSync(join(taskDir, 'task-3-issues.md'), 'T3-001: replace operational details control\n');
+    writeFileSync(join(taskDir, 'task-3-review.md'), 'Issues Found: task-3-issues.md\n');
+    append(phase, 'BLOCKED', correlated('malformed reviewer envelope for Task 3: ISSUES_FOUND artifact must be task-3-issues.md'));
+    return 1;
+  }
+  const ledger = readFileSync(ledgerPath, 'utf8');
+  const index = readFileSync(resultPath, 'utf8');
+  if (!/status: DRAFT/.test(index) || !ledger.includes('Task 2: complete') || ledger.includes('Task 3: complete')) {
+    throw new Error('unexpected resume state');
+  }
+  appendFileSync(tracePath, 'fix:3\nreview:3:APPROVED\n');
+  appendFileSync(ledgerPath, 'Task 3: complete\n');
+  writeFileSync(resultPath, index.replace('status: DRAFT', 'status: READY') + result(3));
+  append(phase, 'DONE', correlated('corrected and reviewed Task 3'));
+  return 0;
+}
+
 switch (mode) {
+  case 'task-resume':
+    process.exit(taskResumeScenario());
+    break;
   case 'done':
     materializePhaseArtifacts();
     append(phase, phase === 'review' ? 'READY_FOR_PR' : 'DONE', correlated(`fake harness completed ${phase}`));

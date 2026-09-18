@@ -2505,3 +2505,10 @@ test('all five chain skills declare session-per-phase discipline: entry declarat
     assert.match(handoff, /every turn/i, `${s} handoff must state every turn of the next work would pay to carry this phase's context`);
   }
 });
+
+test('task reviewer explicitly rejects a review-file pointer for ISSUES_FOUND', () => {
+  const text = readFileSync(join(skillsDir, 'implement', 'task-reviewer-prompt.md'), 'utf8');
+  assert.match(text, /ISSUES_FOUND artifact must be task-N-issues\.md/);
+  assert.match(text, /A link from the review file to the issue file does not satisfy/);
+  assert.match(text, /status: ISSUES_FOUND\n    artifact: \[ISSUE_FILE\]/);
+});

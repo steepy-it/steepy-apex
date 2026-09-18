@@ -103,6 +103,9 @@
   signals: <short IDs or none>
   ```
 
+- Task-reviewer `ISSUES_FOUND` points directly to `task-N-issues.md`; a review-file link is not
+  a substitute. Malformed envelopes still fail closed without task completion. Automatic envelope
+  retries are deferred until correction attempts have explicit correlation and bounded replay evidence.
 - Each chain skill keeps a phase-local role map: in Gear 2, `brainstorm` produces a READY spec
   directly for `implement`, and an explicitly requested light plan may still insert `plan`; in Gear
   3, `brainstorm` produces a READY spec for `plan`, `plan` produces a READY plan for `implement`,

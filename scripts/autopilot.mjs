@@ -1093,6 +1093,7 @@ function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, bas
       planPath,
       routingPath,
       ledgerPath,
+      taskResultIndexPath,
       specPath,
       tasks: planRoute.tasks,
       testCommand: planRoute.testCommand,

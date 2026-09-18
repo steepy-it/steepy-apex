@@ -1463,6 +1463,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
             ['.apex/_INDEX.md', true],
             ['.apex/standards/scripts.md', true],
             ['.apex/work/tasks/topic/ledger.md', false],
+            ['.apex/work/tasks/topic/task-result-index.md', false],
             ['.apex/work/specs/topic.md', true],
           ]);
           assert.deepEqual(manifest.outputs, [
@@ -3138,6 +3139,35 @@ if (process.argv[2] === '--version') {
     } finally {
       rmSync(safeRun.dir, { recursive: true, force: true });
       rmSync(exactRun.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('resumes synthetic task 3 correction after reviewer rejection without replaying completed tasks', async () => {
+    const run = makeRun();
+    try {
+      const env = {
+        FAKE_HARNESS_MODE_IMPLEMENT: 'task-resume',
+        FAKE_HARNESS_PLAN_TEXT: '# Plan\n' + [1, 2, 3].map((id) =>
+          `\n## Task ${id} — integration\n\n- **Surface:** \`scripts\`\n- **Test command:** \`npm test\`\n- **Complexity:** \`integration\`\n- **Success criteria:** SC1, SC2\n`).join(''),
+      };
+      assert.equal((await drive(run, env)).code, 1);
+      assert.doesNotMatch(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
+      const indexPath = join(run.taskDir, 'task-result-index.md');
+      const beforeIndex = readFileSync(indexPath, 'utf8');
+      assert.match(beforeIndex, /status: DRAFT/);
+      assert.doesNotMatch(beforeIndex, /- Task 3:/);
+      const evidencePaths = ['context/phase-implement-attempt-1.json', 'phase-2-attempt-1.log', 'phase-2-attempt-1.raw.jsonl'];
+      const evidence = evidencePaths.map((path) => readFileSync(join(run.taskDir, path), 'utf8'));
+      assert.equal((await drive(run, env)).code, 0);
+      evidencePaths.forEach((path, i) => assert.equal(readFileSync(join(run.taskDir, path), 'utf8'), evidence[i]));
+      const manifest = JSON.parse(readFileSync(join(run.taskDir, 'context/phase-implement-attempt-2.json'), 'utf8'));
+      assert.equal(manifest.onDemand.find((entry) => entry.path.endsWith('/task-result-index.md')).available, true);
+      assert.equal(readFileSync(join(run.taskDir, 'scenario-trace.txt'), 'utf8'),
+        'implement:1\nreview:1:APPROVED\nimplement:2\nreview:2:APPROVED\nimplement:3\nreview:3:ISSUES_FOUND\nfix:3\nreview:3:APPROVED\n');
+      assert.equal(readFileSync(indexPath, 'utf8').match(/- Task /g).length, 3);
+      assert.equal(linesWith(statusOf(run), ' — SPAWNED — ').filter((line) => /phase=plan/.test(line)).length, 1);
+    } finally {
+      rmSync(run.dir, { recursive: true, force: true });
     }
   });
 

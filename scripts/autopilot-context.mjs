@@ -725,6 +725,7 @@ export function buildImplementManifest(input) {
       ...standards.required.map((path) => onDemand(root, path, PURPOSES.standard)),
       ...standards.conditional.map((path) => onDemand(root, path, 'conditional surface standard')),
       onDemand(root, input.ledgerPath, PURPOSES.ledger),
+      ...optionalOnDemand(root, input.taskResultIndexPath, PURPOSES.resultIndex),
       ...optionalOnDemand(root, input.specPath, PURPOSES.upstream),
     ],
   });
