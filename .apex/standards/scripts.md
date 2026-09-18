@@ -53,8 +53,8 @@
   criteria input and consumes canonical `task-result-index.md` plus `branch-diff.txt` artifacts.
   Plan requires the spec, routing index, testing checklist, and implicated routed core/single
   standards. The implement controller eagerly loads only the approved plan; its on-demand inventory
-  retains the routing index, exact routed core/single paths, and every exact modular leaf named by a
-  core mini-routing table. Task-local manifests require the selected core/single plus matching leaves
+  includes exact ledger/index resume capabilities (present or absent; outputs alone never authorize reads),
+  the routing index, exact routed core/single paths, and every leaf named by a core mini-routing table. Task-local manifests require the selected core/single plus matching leaves
   through repeated `--standard` arguments, without guessing a conventional filename or eagerly
   loading unrelated leaves. Phase inventories preserve exact core/leaf order and reachability; the
   plan, implement, and review skill protocols own evidence-based condition matching. This is

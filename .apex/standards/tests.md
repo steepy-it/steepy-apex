@@ -123,6 +123,10 @@ Hermetic fake-harness cases may prove parser, redaction, identity, and false-PAS
   copy in review. The same tension applies to the `MODEL_SECTION_WITH_REVIEW` /
   `MODEL_SECTION_WITHOUT_REVIEW` canonical strings, which byte-lock the five chain SKILL.mds
   from one test file.
+- Autopilot resume coverage composes the real conductor with a synthetic three-task child:
+  completed tasks 1–2, task 3 issues and halt, explicit ledger/index capabilities on a new attempt,
+  then simulated correction and approval. It verifies fresh absence, resumed availability and
+  immutable earlier manifest/log bytes; it does not certify native skill/reviewer behavior.
 - Autopilot coverage includes comparative reachability and an irrelevant-absence fixture for
   manifests. Each plan/implement/review footprint comparison uses its own matching baseline eager
   inventory and baseline generated prompt, never a shared union baseline or combined arithmetic that

@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.0.1 (2026-09-18)
+
+- Authorize the task-result index as an on-demand implementation input, allowing
+  halted Gear-3 runs to validate prior progress without requiring fresh outputs.
+- Clarify that task reviewers returning `ISSUES_FOUND` must reference the issue
+  artifact directly; malformed responses still block without completing the task.
+- Add synthetic halt/resume coverage for a third task after two completed tasks,
+  including preservation of earlier attempt manifests and logs.
+
 ## v1.0.0 (2026-09-16)
 
 First public release.

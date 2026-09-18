@@ -69,6 +69,17 @@ Subagent (reviewer):
     `artifact` is [REVIEW_FILE]; for ISSUES_FOUND it is [ISSUE_FILE]. `signals` contains only short IDs
     such as `review:clean`, `review:critical`, or `none`.
 
+    ISSUES_FOUND artifact must be task-N-issues.md, never task-N-review.md.
+    A link from the review file to the issue file does not satisfy this response contract.
+    For ISSUES_FOUND, verify that [ISSUE_FILE] exists and contains the complete actionable set.
+    For example, substitute the actual issue path in this exact response:
+
+    status: ISSUES_FOUND
+    artifact: [ISSUE_FILE]
+    changed-paths: none
+    signals: review:critical
+
+    General response shape:
     status: <enum>
     artifact: <sanitized repo-relative path>
     changed-paths: <comma list or none>
