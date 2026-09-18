@@ -79,7 +79,12 @@ Adapters declare configured host wiring, not a timeless host-runtime guarantee. 
   and reload; history-unavailable mode retains only the documented process-local fallback.
 - Pi and DSH do not invent harness-specific specialist directories; their scope is
   generic bootstrap guidance and the host capabilities they actually expose.
-- `reviewer-response.mjs` validates text/JSON reviewer payloads against the shipped role schema and preserves values; native constrained generation is a separate optional dispatch capability.
+- `reviewer-response.mjs` validates text/JSON reviewer payloads against the selected shipped role
+  schema and preserves values; native constrained generation is a separate optional dispatch
+  capability. Protocol 1 retains four fields and literal none. Protocol 2 selects
+  `reviewer-response-v2.schema.json` with status/artifact/signals only; a legacy extra changed-paths
+  is ignored raw telemetry. Only the engine's unchanged source observation establishes no source
+  changes. Adapters never infer or correct semantic fields or decide task approval.
 - A headless descriptor declares its command, protocol, display/native metadata, and
   capabilities. Its decoder maps only source evidence: it never owns workflow policy or invents
   actor hierarchy, and it preserves unknown or malformed source input for fallback.

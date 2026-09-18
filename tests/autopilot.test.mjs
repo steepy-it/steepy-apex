@@ -888,7 +888,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
   // committed: the conductor's fresh-run preflight demands a clean working tree.
   function makeRun({
     repoBranch = 'gear3-topic', opencodeModel, opencodeConfig = 'opencode.json',
-    opencodeConfigText, rawSpec, ...contract
+    opencodeConfigText, rawSpec, legacyTaskResults = false, ...contract
   } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'steepy-autopilot-'));
     execFileSync('git', ['init', '-q', '-b', repoBranch], { cwd: dir });
@@ -918,6 +918,11 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
     const specPath = join(dir, '.apex', 'work', 'specs', 'topic.md');
     writeFileSync(specPath, rawSpec ?? specText(contract));
     const taskDir = join(dir, '.apex', 'work', 'tasks', 'topic');
+    if (legacyTaskResults) {
+      mkdirSync(taskDir, { recursive: true });
+      writeFileSync(join(taskDir, 'autopilot-status.md'), protocolLine
+        + '2026-08-10T08:00:01.000Z — CONDUCTOR — TASK_RESULT_PROTOCOL — version=1\n');
+    }
     return { dir, specPath, taskDir, statusFile: join(taskDir, 'autopilot-status.md') };
   }
 
@@ -3156,6 +3161,102 @@ if (process.argv[2] === '--version') {
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 
+  it('steepysite e425507 paths resume from a durable execution receipt without implementing twice', async () => {
+    const run = makeRun();
+    try {
+      const env = { FAKE_HARNESS_MODE_IMPLEMENT: 'steepysite-receipt',
+        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1, SC2\n' };
+      const first = await drive(run, env);
+      assert.equal(first.code, 1, first.err);
+      assert.match(statusOf(run), /TASK_RESULT_PROTOCOL — version=2/);
+      assert.doesNotMatch(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
+      const receiptPath = join(run.taskDir, 'task-1-execution-1-result.json');
+      const before = readFileSync(receiptPath);
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: run.dir }).toString();
+      const second = await drive(run, env);
+      assert.equal(second.code, 0, second.err);
+      assert.deepEqual(readFileSync(receiptPath), before);
+      assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: run.dir }).toString(), head);
+      assert.equal(readFileSync(join(run.taskDir, 'receipt-trace.txt'), 'utf8'),
+        'implement:1\nresume:review-pending\nreview:1:APPROVED\nreview:final:APPROVED\n');
+      const { parseTaskResultProjection } = await import('../scripts/task-results.mjs');
+      const [entry] = parseTaskResultProjection(readFileSync(join(run.taskDir, 'task-result-index.md'), 'utf8'));
+      assert.deepEqual(entry.changedPaths, ['generation', 'issues'].flatMap((route) => ['page.test.tsx', 'page.tsx']
+        .map((name) => `apps/web/app/admin/(protected)/${route}/[id]/${name}`)));
+      assert.match(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement attempt=2/);
+      assert.match(statusOf(run), /SPAWNED[^\n]*phase=review/);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('v2 NEEDS_CONTEXT resumes with an explicit retry and retains its original evidence', async () => {
+    const run = makeRun();
+    try {
+      const env = { FAKE_HARNESS_MODE_IMPLEMENT: 'receipt-needs-context',
+        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n' };
+      assert.equal((await drive(run, env)).code, 1);
+      const paths = ['baseline.json', 'capture.json', 'result.json', 'report.md'].map((suffix) =>
+        join(run.taskDir, `task-1-execution-1-${suffix}`));
+      const originals = paths.map((path) => readFileSync(path));
+      const second = await drive(run, env);
+      assert.equal(second.code, 0, second.err);
+      paths.forEach((path, index) => assert.deepEqual(readFileSync(path), originals[index]));
+      assert.equal(readFileSync(join(run.dir, 'partial.txt'), 'utf8'), 'partial task work preserved\n');
+      assert.equal(readFileSync(join(run.taskDir, 'continuation-trace.txt'), 'utf8'),
+        'dispatch:1\ncontext:supplied\nretry:2\nreview:task:APPROVED\nreview:final:APPROVED\n');
+      const result = JSON.parse(readFileSync(join(run.taskDir, 'task-1-execution-2-result.json')));
+      assert.deepEqual(result.changedPaths, ['completed.txt', 'partial.txt']);
+      assert.match(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement attempt=2/);
+      assert.match(statusOf(run), /SPAWNED[^\n]*phase=review/);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('v2 conductor rejects a wrong-run ancestor hidden by a valid fix', async () => {
+    const run = makeRun();
+    try {
+      const env = { FAKE_HARNESS_MODE_IMPLEMENT: 'receipt-wrong-ancestor',
+        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n' };
+      assert.equal((await drive(run, env)).code, 1);
+      const result = await drive(run, env);
+      assert.equal(result.code, 1);
+      assert.match(statusOf(run), /reviewer evidence rejected/);
+      assert.doesNotMatch(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
+      assert.doesNotMatch(statusOf(run), /SPAWNED[^\n]*phase=review/);
+      assert.equal(JSON.parse(readFileSync(join(run.taskDir, 'task-1-execution-2-result.json'))).accepted, true,
+        'the valid fix must reach the conductor provenance gate');
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('v2 resume refuses protocol removal instead of downgrading to legacy acceptance', async () => {
+    const run = makeRun();
+    try {
+      assert.equal((await drive(run, { FAKE_HARNESS_MODE_IMPLEMENT: 'fail' })).code, 1);
+      writeFileSync(run.statusFile, statusOf(run).replace(/^.* — TASK_RESULT_PROTOCOL — .*\n/m, ''));
+      const result = await drive(run);
+      assert.equal(result.code, 1);
+      assert.match(result.err, /task result protocol.*retained phase manifest/);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('v2 resume continues the next task with the saved execution as its parent', async () => {
+    const run = makeRun();
+    try {
+      const env = { FAKE_HARNESS_MODE_IMPLEMENT: 'steepysite-receipt',
+        FAKE_HARNESS_PLAN_TEXT: '# Plan\n' + ['1', '2'].map((id) =>
+          `\n## Task ${id}\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC${id}\n`).join('') };
+      assert.equal((await drive(run, env)).code, 1);
+      const second = await drive(run, env);
+      assert.equal(second.code, 0, second.err);
+      const trace = readFileSync(join(run.taskDir, 'receipt-trace.txt'), 'utf8');
+      assert.equal(trace.match(/implement:1/g).length, 1);
+      assert.equal(trace.match(/implement:2/g).length, 1);
+      const before = JSON.parse(readFileSync(join(run.taskDir, 'task-1-execution-1-baseline.json')));
+      const after = JSON.parse(readFileSync(join(run.taskDir, 'task-2-execution-1-baseline.json')));
+      assert.notEqual(before.config.runId, after.config.runId);
+      assert.equal(after.config.attempt, 2);
+      assert.equal(after.config.parentState, '.apex/work/tasks/topic/task-1-execution-1');
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
 
   for (const mutation of ['drop-task', 'change-handoff', 'change-code', 'corrupt-receipt']) {
     it(`conductor rejects ${mutation} despite implement DONE and a final Approved response`, async () => {
@@ -3197,7 +3298,7 @@ if (process.argv[2] === '--version') {
       assert.equal((await drive(run, env)).code, 1);
       assert.equal((await drive(run, { ...env, FAKE_HARNESS_FINAL_RESUME_MUTATION: '1' })).code, 1);
       assert.doesNotMatch(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
-      assert.match(statusOf(run), /final reviewer gate is not approved/);
+      assert.match(statusOf(run), /final reviewer gate is not approved|latest task source snapshot drift/);
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 
@@ -3233,7 +3334,7 @@ if (process.argv[2] === '--version') {
 
   for (const failure of ['none', 'bad-correction', 'code-change']) {
     it(`real conductor resumes response-only review recovery (${failure}) without implementing completed work again`, async () => {
-      const run = makeRun();
+      const run = makeRun({ legacyTaskResults: true });
       try {
         writeFileSync(join(run.dir, 'tracked.txt'), 'baseline\n');
         execFileSync('git', ['add', 'tracked.txt'], { cwd: run.dir });
@@ -3277,7 +3378,7 @@ if (process.argv[2] === '--version') {
   }
 
   it('resumes synthetic task 3 correction after reviewer rejection without replaying completed tasks', async () => {
-    const run = makeRun();
+    const run = makeRun({ legacyTaskResults: true });
     try {
       const env = {
         FAKE_HARNESS_MODE_IMPLEMENT: 'task-resume',

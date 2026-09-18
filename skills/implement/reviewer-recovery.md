@@ -5,7 +5,25 @@ The implement skill orchestrates dispatch; `scripts/reviewer-response.mjs` suppl
 validation and create-only evidence. Before accepting implement DONE, the conductor independently
 replays the required task receipts and final receipt. The helper does not dispatch a model or
 implement a task itself.
-Manual drive uses the same response semantics and records its existing no-manifest degradation.
+Manual drive retains the legacy four-field response semantics and existing no-manifest degradation.
+
+## Protocol selection
+
+For `manifest.contract.taskResultProtocol: 2`, the semantic contract takes precedence over the
+legacy four-field examples and correction section below: return only status, artifact, signals
+(ordered text or the selected JSON format). Select `reviewer-response-v2.schema.json` through
+`reviewerResponseSchema(2)`; native schema-constrained generation remains optional. The gate
+preserves a legacy extra changed-paths field as ignored raw-only telemetry. A path-only typo needs
+no correction or repeated review. Status, artifact, and signals must still validate exactly; never
+infer them from report prose or repair their values. The gate derives `changed-paths: none` only
+after an independent unchanged source observation. Unauthorized source changes still block.
+
+Protocol 1 retains `reviewer-response.schema.json`, exact four-field validation, and its one
+reserved correction. A retained run never silently upgrades. Manual drive and Gear 4 are unchanged.
+For protocol 2, task reviewer begin REQUIRES `--execution <latest-task-execution-state>`; it binds
+that validated execution digest in the baseline so an approval from before a fix cannot be reused.
+Final begin detects the v2 generated index and validates the receipt chain. Its required task
+approvals must bind each task's latest execution, including after a whole-branch fix.
 
 ## Before dispatch
 
@@ -20,6 +38,11 @@ identity; never allocate a new iteration merely to replenish a response-correcti
 node <engine-root>/scripts/reviewer-response.mjs --repo-root . --action begin --state <prefix> --run-id <supplied-run-id> --attempt <supplied-attempt> --iteration <iteration> --task <N-or-final> --report <exact-review-path> --issues <exact-issues-path>
 ```
 
+For a v2 task review add `--execution <latest-task-execution-state>` to that command. For final
+review add the exact plan and index arguments described below instead. These exact bound paths
+and schema-authorized receipt parent/previous links grant machine replay only, confined to the
+same task directory; they never authorize work-directory discovery or child report preloading.
+
 The helper creates versioned baseline evidence. Its snapshot covers branch, HEAD, index, tracked
 source files and nonignored untracked source files outside `.apex/work/`, including contents, modes
 and symlink targets. Work bodies are read only through the exact authorized artifact paths. Gitignored
@@ -28,7 +51,7 @@ The two exact review outputs are checked separately; guard state is stored in fo
 Review artifacts remain physically confined ordinary files. Code changes, even with
 `changed-paths: none`, block. Do not reset or silently repair such changes.
 
-The provider-neutral adapter `adapters/reviewer-response.mjs` applies the shipped
+For protocol 1, the provider-neutral adapter `adapters/reviewer-response.mjs` applies the shipped
 `reviewer-response.schema.json` to every returned payload locally. Native schema-constrained
 generation remains optional: supply that schema only if the dispatch API supports it. Its literal
 `none` constraint is specific to reviewers. For a JSON response, begin with `--format json` and send the exact JSON payload to check/correct;
@@ -37,9 +60,9 @@ lines. Do not turn invalid JSON into a synthesized valid text response. If the
 API cannot constrain responses, retain the four-line text contract; do not invent a schema flag
 or claim native constrained-output support. The deterministic validator is required in both cases.
 
-## Validate, then at most one response-only correction
+## Validate, then at most one legacy response-only correction
 
-Feed the exact returned four-line response to stdin of:
+Feed the exact returned response (v2 semantic fields, or v1 four lines) to stdin of:
 
 ```sh
 node <engine-root>/scripts/reviewer-response.mjs --repo-root . --action check --state <prefix>
@@ -47,11 +70,14 @@ node <engine-root>/scripts/reviewer-response.mjs --repo-root . --action check --
 
 Preserve the response verbatim; never replace a returned path with `none`. The helper first checks
 repository state independently, then validates fields, status, literal `none`, exact role/status
-artifact binding, signals, and the artifact. An Approved report alone never completes a task.
+artifact binding, signals, and the artifact under protocol 1. Protocol 2 validates semantic fields
+and independently derives the no-source-change fact, ignoring legacy path telemetry. An Approved
+report alone never completes a task.
 Only an accepted APPROVED receipt permits completion; accepted ISSUES_FOUND routes to the fix.
 BLOCKED or NEEDS_CONTEXT follows the existing correlated BLOCKED handling.
 
-Only a response with valid status, exact artifact, and valid signals, whose sole defect is a
+The remainder of this correction section applies only to protocol 1. Only a response with valid status,
+exact artifact, and valid signals, whose sole defect is a
 non-`none` changed-path list, is REPAIRABLE. The verdict must be APPROVED or ISSUES_FOUND, and the
 required artifacts must exist and be nonempty. Empty responses, extra fields, unknown verdicts,
 wrong artifacts, and ambiguous data block immediately. Report Markdown has no machine verdict
@@ -127,8 +153,17 @@ against its phase-attempt manifest, checks frozen artifacts, and checks the fina
 Missing receipts, substituted results, and stale correlation halt even if the child writes DONE.
 Historical task snapshots are not compared to current code after later tasks: final review covers
 that aggregate state. Exact refs are capabilities; no guard-directory discovery is permitted.
+For v2, provenance checks include every unique execution ancestor, including non-success executions
+followed by explicit retries. Each must match its exact phase manifest's runId, attempt and protocol 2;
+the latest successful fix or retry cannot conceal a wrong, missing or downgraded ancestor manifest.
 
 ## Resume
+
+For a v2 writer interruption, first inspect/resume the exact execution state per
+`task-results-protocol.md`. A saved execution resumes review-pending without reimplementation;
+baseline-only state cannot prove completion. Any real fix creates a new execution receipt and
+requires a fresh task review if the old approval no longer binds it. This is separate from the
+reviewer-only recovery below, which never repeats implementation.
 
 Keep already completed ledger tasks complete; never re-open their old review gates after later code
 changes. For the pending review transition only, use the exact state prefix recorded in the

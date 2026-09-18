@@ -9,6 +9,8 @@ import { decodeReviewerResponse } from '../adapters/reviewer-response.mjs';
 import { reviewPhaseContext } from './autopilot-context.mjs';
 import { assertSafeRelPath } from './sanitize.mjs';
 import { writeAllSync } from './write-all.mjs';
+import { inspectTaskResult, parseTaskResultProjection, verifyTaskResults } from './task-results.mjs';
+import { observeSource } from './source-observation.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const stages = ['baseline', 'original', 'reserved', 'corrected'];
@@ -33,7 +35,9 @@ function load(root, state, stage) {
 function git(root, ...args) {
   return execFileSync('git', args, { cwd: root, maxBuffer: 64 * 1024 * 1024 });
 }
-function snapshot(root, excluded) {
+function snapshot(root, excluded, protocol = 1) {
+  // Keep retained v1 hashes stable; v2 shares the writer's literal source model.
+  if (protocol === 2) return observeSource(root).digest;
   const paths = [...new Set(git(root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.', ':(exclude).apex/work/**').toString().split('\0').filter(Boolean))].sort();
   const files = paths.filter((path) => !excluded.includes(path)).map((path) => {
     // Refuse traversing source symlink ancestors; Git may still list paths below a replaced directory.
@@ -75,7 +79,11 @@ function keys(value, expected, label) {
     || !equal(Object.keys(value).sort(), [...expected].sort())) throw new Error(`invalid ${label} schema`);
 }
 function validateConfig(state, config) {
-  keys(config, ['runId', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'index'], 'review correlation');
+  keys(config, ['runId', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'index',
+    ...(Object.hasOwn(config, 'execution') ? ['execution'] : []),
+    ...(Object.hasOwn(config, 'taskResultProtocol') ? ['taskResultProtocol'] : [])], 'review correlation');
+  if (Object.hasOwn(config, 'taskResultProtocol') && config.taskResultProtocol !== 2) throw new Error('invalid reviewer task result protocol');
+  if (config.taskResultProtocol === 2 && config.task !== 'final' && !Object.hasOwn(config, 'execution')) throw new Error('v2 task review requires an execution receipt');
   if (typeof config.runId !== 'string' || !/^[A-Za-z0-9-]+$/.test(config.runId)
     || !Number.isSafeInteger(config.attempt) || config.attempt < 1
     || !Number.isSafeInteger(config.iteration) || config.iteration < 1
@@ -87,6 +95,11 @@ function validateConfig(state, config) {
   const dir = state.slice(0, state.lastIndexOf('/'));
   if (config.report !== `${dir}/${scope}-review.md` || config.issues !== `${dir}/${scope === 'final' ? 'final-review' : scope}-issues.md`) throw new Error('wrong review artifact paths');
   for (const path of [config.report, config.issues]) parseWorkPath(path, 'work-output', 'review-artifact');
+  if (Object.hasOwn(config, 'execution')) {
+    if (config.task === 'final' || typeof config.execution !== 'string'
+      || !config.execution.startsWith(`${dir}/task-${config.task}-execution-`)) throw new Error('wrong task execution binding');
+    parseWorkPath(`${config.execution}-result.json`, 'work-output', 'task-result');
+  }
   if (config.plan !== null || config.index !== null) {
     if (config.task !== 'final' || config.plan !== `.apex/work/plans/${dir.split('/').at(-1)}.md`
       || config.index !== `${dir}/task-result-index.md`) throw new Error('invalid review handoff paths');
@@ -94,24 +107,38 @@ function validateConfig(state, config) {
 }
 function baselineFor(root, state) {
   const baseline = load(root, state, 'baseline');
-  keys(baseline, ['version', 'config', 'snapshot', 'handoff'], 'review baseline');
-  if (baseline.version !== VERSION || !digestPattern.test(baseline.snapshot)
+  keys(baseline, ['version', 'config', 'snapshot', 'handoff', ...(baseline.version === 4 ? ['implementation'] : [])], 'review baseline');
+  if (![VERSION, 4].includes(baseline.version) || !digestPattern.test(baseline.snapshot)
     || !(baseline.handoff === null || digestPattern.test(baseline.handoff))) throw new Error('invalid review baseline evidence');
   validateConfig(state, baseline.config);
+  if ((baseline.version === 4) !== (baseline.config.taskResultProtocol === 2)) throw new Error('invalid review execution version');
+  if (baseline.version === 4 && (baseline.config.task === 'final' ? baseline.implementation !== null : !digestPattern.test(baseline.implementation))) throw new Error('invalid review execution digest');
   if ((baseline.config.plan === null) !== (baseline.handoff === null)) throw new Error('invalid handoff evidence');
   return baseline;
 }
 export function beginReview(root, state, input) {
   const config = { ...input, format: input.format ?? 'text', plan: input.plan ?? null, index: input.index ?? null };
+  if (config.execution !== undefined || config.index !== null
+    && parseTaskResultProjection(readWorkPath(root, config.index, { encoding: 'utf8' })) !== null) config.taskResultProtocol = 2;
   validateConfig(state, config);
   const handoff = config.plan === null ? null : handoffDetails(root, config.plan, config.index, state).digest;
-  return save(root, state, 'baseline', { version: VERSION, config, snapshot: snapshot(root, exclusions(state, config)), handoff });
+  let implementation;
+  if (config.execution !== undefined) {
+    const execution = inspectTaskResult(root, config.execution);
+    if (!execution.accepted || execution.config.task !== config.task) throw new Error('task execution is not ready for review');
+    implementation = execution.digest;
+  }
+  return save(root, state, 'baseline', { version: config.taskResultProtocol === 2 ? 4 : VERSION,
+    config, snapshot: snapshot(root, exclusions(state, config), config.taskResultProtocol), handoff,
+    ...(config.taskResultProtocol === 2 ? { implementation: implementation ?? null } : {}) });
 }
 function candidateResponse(text, config) {
-  const value = decodeReviewerResponse(text, config.format ?? 'text', { candidate: true });
+  const value = decodeReviewerResponse(text, config.format ?? 'text', { candidate: true, protocol: config.taskResultProtocol ?? 1 });
   if (!/^(?:none|[A-Za-z0-9][A-Za-z0-9:._-]*(?:, [A-Za-z0-9][A-Za-z0-9:._-]*)*)$/.test(value.signals)) throw new Error('invalid reviewer signals');
   if (value.artifact !== (value.status === 'ISSUES_FOUND' ? config.issues : config.report)) throw new Error('wrong reviewer artifact');
-  return value;
+  // v2 paths are an observation owned by this gate. outcome() accepts this
+  // semantic candidate only after independently proving source immutability.
+  return config.taskResultProtocol === 2 ? { ...value, 'changed-paths': 'none' } : value;
 }
 export function parseReviewerResponse(text, config) {
   const value = candidateResponse(text, config);
@@ -140,7 +167,11 @@ function outcome(response, baseline, observation, original = null) {
 }
 function observe(root, state, baseline) {
   try {
-    return { snapshot: snapshot(root, exclusions(state, baseline.config)), artifacts: artifacts(root, baseline.config), error: null };
+    if (baseline.config.execution !== undefined) {
+      const execution = inspectTaskResult(root, baseline.config.execution);
+      if (!execution.accepted || execution.digest !== baseline.implementation) throw new Error('task execution changed during review');
+    }
+    return { snapshot: snapshot(root, exclusions(state, baseline.config), baseline.config.taskResultProtocol), artifacts: artifacts(root, baseline.config), error: null };
   } catch { return { snapshot: null, artifacts: null, error: 'cannot safely observe review repository or artifacts' }; }
 }
 function validateObservation(value, config) {
@@ -156,7 +187,7 @@ function validateObservation(value, config) {
 function validateResult(result, baseline, original = null) {
   if (typeof result?.response !== 'string') throw new Error('invalid review response evidence');
   validateObservation(result.observation, baseline.config);
-  const expected = { version: VERSION, config: baseline.config, response: result.response, observation: result.observation,
+  const expected = { version: baseline.version, config: baseline.config, response: result.response, observation: result.observation,
     ...outcome(result.response, baseline, result.observation, original) };
   // Closed schema and replayed outcome: stored acceptance is never itself authority.
   keys(result, Object.keys(expected), 'review result');
@@ -170,7 +201,7 @@ function readEvidence(root, state) {
   const corrected = loadOptional(root, state, 'corrected');
   if (reserved !== null) {
     keys(reserved, ['version', 'config', 'originalDigest', 'budget'], 'review reservation');
-    if (reserved.version !== VERSION || reserved.budget !== 1 || !equal(reserved.config, baseline.config)
+    if (reserved.version !== baseline.version || reserved.budget !== 1 || !equal(reserved.config, baseline.config)
       || reserved.originalDigest !== hash(JSON.stringify(original)) || original.status !== 'REPAIRABLE') throw new Error('invalid correction correlation evidence');
   }
   if (corrected !== null && reserved === null) throw new Error('invalid unreserved correction evidence');
@@ -182,7 +213,7 @@ export function reserveRepair(root, state) {
   if (evidence.original.status !== 'REPAIRABLE') throw new Error('review response is not repairable');
   const current = observe(root, state, evidence.baseline);
   if (!equal(current, evidence.original.observation)) throw new Error('review changed before correction');
-  return save(root, state, 'reserved', { version: VERSION, config: evidence.baseline.config,
+  return save(root, state, 'reserved', { version: evidence.baseline.version, config: evidence.baseline.config,
     originalDigest: hash(JSON.stringify(evidence.original)), budget: 1 });
 }
 export function checkReview(root, state, response, correction = false) {
@@ -194,13 +225,17 @@ export function checkReview(root, state, response, correction = false) {
     original = evidence.original;
   }
   const observation = observe(root, state, baseline);
-  const result = { version: VERSION, config: baseline.config, response, observation, ...outcome(response, baseline, observation, original) };
+  const result = { version: baseline.version, config: baseline.config, response, observation, ...outcome(response, baseline, observation, original) };
   return save(root, state, correction ? 'corrected' : 'original', result);
 }
 export function inspectReview(root, state) {
   const evidence = readEvidence(root, state);
   if (evidence.reserved && !evidence.corrected) return { accepted: false, status: 'BLOCKED', reason: 'reserved correction has no result; do not redispatch' };
   if (!equal(observe(root, state, evidence.baseline), evidence.result.observation)) return { accepted: false, status: 'BLOCKED', reason: 'review evidence drift on resume' };
+  if (evidence.baseline.config.execution !== undefined) {
+    const execution = inspectTaskResult(root, evidence.baseline.config.execution);
+    if (!execution.accepted || execution.digest !== evidence.baseline.implementation) throw new Error('reviewed execution evidence changed');
+  }
   if (evidence.baseline.handoff !== null && handoffDetails(root, evidence.baseline.config.plan, evidence.baseline.config.index, state).digest !== evidence.baseline.handoff) throw new Error('review handoff evidence mismatch');
   return evidence.result;
 }
@@ -261,6 +296,8 @@ function handoffDetails(root, planPath, indexPath, finalState) {
   const plan = readWorkPath(root, planPath, { encoding: 'utf8' });
   const index = readWorkPath(root, indexPath, { encoding: 'utf8' });
   const route = reviewPhaseContext(plan, index);
+  const projection = parseTaskResultProjection(index);
+  const executions = projection === null ? null : verifyTaskResults(root, { indexPath, expectedTasks: route.tasks });
   const refs = new Map();
   for (const line of index.split(/\r?\n/)) {
     if (!/^Reviewer gate\b/.test(line)) continue;
@@ -280,11 +317,20 @@ function handoffDetails(root, planPath, indexPath, finalState) {
     const proof = readEvidence(root, state);
     if (proof.baseline.config.task !== task.task || proof.result.status !== 'APPROVED' || !proof.result.accepted
       || proof.reserved && !proof.corrected || !equal(artifacts(root, proof.baseline.config), proof.result.observation.artifacts)) throw new Error(`invalid approval evidence for Task ${task.task}`);
+    if (projection !== null) {
+      const entry = projection.find((item) => item.task === task.task);
+      const execution = inspectTaskResult(root, entry.receipt, { checkCurrent: false });
+      if (proof.baseline.config.execution !== entry.receipt || proof.baseline.implementation !== execution.digest) {
+        throw new Error(`task review does not approve current execution for Task ${task.task}`);
+      }
+    }
     proofs.push({ task: task.task, state, config: proof.baseline.config, digest: hash(JSON.stringify(proof)) });
   }
   refs.delete('final');
   if (refs.size) throw new Error('unknown task reviewer gate');
-  return { proofs, digest: hash(JSON.stringify({ plan: boundPlanText(plan, indexPath), tasks: route.tasks, results: index.split('\n').filter((line) => line.startsWith('- Task ')), finalState, proofs })) };
+  return { proofs, digest: hash(JSON.stringify({ plan: boundPlanText(plan, indexPath), tasks: route.tasks,
+    results: projection ?? index.split('\n').filter((line) => line.startsWith('- Task ')), finalState, proofs,
+    ...(executions === null ? {} : { executions: executions.digest }) })) };
 }
 function assertAttemptManifest(root, indexPath, identity) {
   const dir = indexPath.slice(0, indexPath.lastIndexOf('/'));
@@ -292,6 +338,8 @@ function assertAttemptManifest(root, indexPath, identity) {
   const manifest = JSON.parse(readWorkPath(root, `${dir}/context/phase-implement-attempt-${identity.attempt}.json`, { encoding: 'utf8' }));
   if (manifest.runId !== identity.runId || manifest.attempt !== identity.attempt
     || manifest.scope?.phase !== 'implement' || manifest.scope?.role !== 'implement') throw new Error('reviewer gate run correlation mismatch');
+  if (![1, 2].includes(manifest.contract?.taskResultProtocol ?? 1)) throw new Error('invalid task result protocol in phase manifest');
+  return manifest;
 }
 
 export function captureRetainedApproval(root, { planPath, indexPath, runId, attempt }) {
@@ -322,7 +370,17 @@ export function verifyImplementReviews(root, { planPath, indexPath, runId, attem
   const state = matches[0][1];
   const baseline = baselineFor(root, state);
   if (baseline.config.task !== 'final' || baseline.config.plan !== planPath || baseline.config.index !== indexPath) throw new Error('final reviewer gate correlation mismatch');
-  assertAttemptManifest(root, indexPath, { runId, attempt });
+  const manifest = assertAttemptManifest(root, indexPath, { runId, attempt });
+  if (manifest.contract?.taskResultProtocol === 2 || parseTaskResultProjection(index) !== null) {
+    if (manifest.contract?.taskResultProtocol !== 2) throw new Error('v2 task results require protocol 2 in the current phase manifest');
+    const tasks = reviewPhaseContext(readWorkPath(root, planPath, { encoding: 'utf8' }), index).tasks;
+    const executionProof = verifyTaskResults(root, { indexPath, expectedTasks: tasks, required: true });
+    for (const execution of executionProof.executions) {
+      if (execution.config.attempt > attempt) throw new Error('task result is from a future attempt');
+      const executionManifest = assertAttemptManifest(root, indexPath, execution.config);
+      if (executionManifest.contract?.taskResultProtocol !== 2) throw new Error('task execution requires protocol 2 in its phase manifest');
+    }
+  }
   const sameAttempt = baseline.config.runId === runId && baseline.config.attempt === attempt;
   if (!sameAttempt && !(retainedApproval?.state === state && retainedApproval.runId === baseline.config.runId
     && retainedApproval.attempt === baseline.config.attempt && retainedApproval.attempt < attempt
@@ -339,11 +397,12 @@ export function verifyImplementReviews(root, { planPath, indexPath, runId, attem
   return { state, runId, attempt, status: 'APPROVED', ...(sameAttempt ? {} : { retainedApproval }) };
 }
 export function main(argv) {
-  const { values } = parseArgs({ args: argv, options: Object.fromEntries(['repo-root', 'state', 'action', 'run-id', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'task-result-index', 'previous-state', 'resume-final'].map((name) => [name, { type: 'string' }])) });
+  const { values } = parseArgs({ args: argv, options: Object.fromEntries(['repo-root', 'state', 'action', 'run-id', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'task-result-index', 'previous-state', 'resume-final', 'execution'].map((name) => [name, { type: 'string' }])) });
   const root = resolve(values['repo-root'] ?? '.');
   const state = values.state;
   let result;
-  if (values.action === 'begin') result = beginReview(root, state, { runId: values['run-id'], attempt: Number(values.attempt), iteration: Number(values.iteration), task: values.task, report: values.report, issues: values.issues, format: values.format ?? 'text', plan: values.plan ?? null, index: values['task-result-index'] ?? null });
+  if (values.action === 'begin') result = beginReview(root, state, { runId: values['run-id'], attempt: Number(values.attempt), iteration: Number(values.iteration), task: values.task, report: values.report, issues: values.issues, format: values.format ?? 'text', plan: values.plan ?? null, index: values['task-result-index'] ?? null,
+    ...(values.execution === undefined ? {} : { execution: values.execution }) });
   else if (values.action === 'inspect') result = inspectReview(root, state);
   else if (values.action === 'reserve') result = reserveRepair(root, state);
   else if (values.action === 'bind-reference') result = setReviewReference(root, { indexPath: values['task-result-index'], state, previousState: values['previous-state'] ?? null });

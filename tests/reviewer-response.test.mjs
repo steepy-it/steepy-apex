@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { beginReview, checkReview, reserveRepair, inspectReview, parseReviewerResponse, verifyImplementReviews, captureRetainedApproval, setReviewReference } from '../scripts/reviewer-response.mjs';
+import { beginTask, recordTaskResult, projectTaskResults } from '../scripts/task-results.mjs';
 
 function fixture(fn) {
   const root = mkdtempSync(join(tmpdir(), 'steepy-reviewer-response-'));
@@ -157,6 +158,61 @@ test('whole-branch reviewer uses the same bounded gate and exact final issue bin
   assert.equal(inspectReview(root, finalState).status, 'BLOCKED');
 }));
 
+test('v2 task approval binds its execution and cannot approve a later fix', () => fixture(({ root, state, config, put, dir, report, envelope }) => {
+  const planPath = '.apex/work/plans/topic.md', indexPath = `${dir}/task-result-index.md`;
+  mkdirSync(join(root, '.apex/work/plans'), { recursive: true });
+  put(planPath, '# Plan\n\n## Task 4\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n');
+  const taskReport = `${dir}/task-4-report.md`, first = `${dir}/task-4-execution-1`, second = `${dir}/task-4-execution-2`;
+  beginTask(root, first, { runId: config.runId, attempt: config.attempt, task: '4', execution: 1, role: 'implementer', report: taskReport, planPath });
+  put(taskReport, 'Implementation report.\n');
+  recordTaskResult(root, first, `status: DONE\nartifact: ${taskReport}\nsignals: none\n`);
+  beginReview(root, state, { ...config, execution: first }); put(report, 'Approved first execution.\n');
+  assert.equal(checkReview(root, state, envelope('apps/(protected)/[id]/{page.tsx,page.test.tsx}')).accepted, true);
+  beginTask(root, second, { runId: config.runId, attempt: config.attempt, task: '4', execution: 2, role: 'fix', report: taskReport, planPath, previousState: first });
+  put('code.js', 'later fix\n'); put(taskReport, 'Fixed implementation.\n');
+  recordTaskResult(root, second, `status: DONE\nartifact: ${taskReport}\nsignals: none\n`);
+  const finalState = `${dir}/final-review-guard-attempt-3-iteration-1`;
+  put(indexPath, `# Results\nReviewer gate Task 4: ${state}\nReviewer gate final: ${finalState}\n`);
+  projectTaskResults(root, { indexPath, states: [second] });
+  assert.throws(() => beginReview(root, finalState, { runId: config.runId, attempt: 3, iteration: 1, task: 'final',
+    report: `${dir}/final-review.md`, issues: `${dir}/final-review-issues.md`, plan: planPath, index: indexPath }), /does not approve current execution/);
+}));
+
+for (const replacement of ['directory-to-file', 'file-to-directory']) {
+  test(`v2 review accepts unstaged ${replacement} and still detects drift`, () => fixture(({ root, state, config, put, dir, report, git }) => {
+    const planPath = '.apex/work/plans/topic.md', taskReport = `${dir}/task-4-report.md`, execution = `${dir}/task-4-execution-1`;
+    mkdirSync(join(root, '.apex/work/plans'), { recursive: true });
+    put(planPath, 'Task 4: source replacement\n');
+    if (replacement === 'directory-to-file') {
+      mkdirSync(join(root, 'item')); put('item/old', 'old source\n');
+    } else put('item', 'old source\n');
+    git('add', 'item'); git('commit', '-m', 'add original source shape');
+    beginTask(root, execution, { runId: config.runId, attempt: config.attempt, task: '4', execution: 1, role: 'implementer', report: taskReport, planPath });
+    rmSync(join(root, 'item'), { recursive: true });
+    const changedPath = replacement === 'directory-to-file' ? 'item' : 'item/new';
+    if (replacement === 'file-to-directory') mkdirSync(join(root, 'item'));
+    put(changedPath, 'new source\n');
+    put(taskReport, 'Implementation report.\n');
+    assert.equal(recordTaskResult(root, execution, `status: DONE\nartifact: ${taskReport}\nsignals: none\n`).accepted, true);
+    beginReview(root, state, { ...config, execution });
+    put(report, 'Approved replacement.\n');
+    assert.equal(checkReview(root, state, `status: APPROVED\nartifact: ${report}\nsignals: review:clean\n`).accepted, true);
+    assert.equal(inspectReview(root, state).accepted, true);
+    put(changedPath, 'unauthorized review edit\n');
+    assert.equal(inspectReview(root, state).status, 'BLOCKED');
+  }));
+}
+
+test('v2 semantic reviewer response cannot conceal source mutations', () => fixture(({ root, state, config, put, dir, report }) => {
+  const planPath = '.apex/work/plans/topic.md', taskReport = `${dir}/task-4-report.md`, execution = `${dir}/task-4-execution-1`;
+  mkdirSync(join(root, '.apex/work/plans'), { recursive: true }); put(planPath, '# Plan\n');
+  beginTask(root, execution, { runId: config.runId, attempt: config.attempt, task: '4', execution: 1, role: 'implementer', report: taskReport, planPath });
+  put(taskReport, 'Implementation report.\n'); recordTaskResult(root, execution, `status: DONE\nartifact: ${taskReport}\nsignals: none\n`);
+  beginReview(root, state, { ...config, execution }); put(report, 'Approved.\n'); put('code.js', 'unauthorized reviewer change\n');
+  const result = checkReview(root, state, `status: APPROVED\nartifact: ${report}\nsignals: review:clean\n`);
+  assert.equal(result.status, 'BLOCKED'); assert.equal(result.accepted, false);
+}));
+
 test('missing report cannot authorize completion; Markdown is not parsed for verdicts', () => fixture(({ root, state, config, put, report, envelope }) => {
   beginReview(root, state, config);
   assert.equal(checkReview(root, state, envelope()).status, 'BLOCKED');
@@ -247,6 +303,74 @@ function handoffFixture(fn) {
     };
     fn({ ...ctx, planPath, indexPath, plan, index, finalState, finalConfig, verify, approveFinal });
   });
+}
+
+function executionChainFixture(fn) {
+  fixture((ctx) => {
+    const { root, dir, config, state, put, report } = ctx;
+    const planPath = '.apex/work/plans/topic.md', indexPath = `${dir}/task-result-index.md`;
+    mkdirSync(join(root, '.apex/work/plans'), { recursive: true });
+    mkdirSync(join(root, dir, 'context'), { recursive: true });
+    put(planPath, '# Plan\n\n## Task 4\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n');
+    const manifest = (attempt, runId) => ({ runId, attempt, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } });
+    const ancestorManifestPath = `${dir}/context/phase-implement-attempt-1.json`;
+    const ancestorManifest = manifest(1, 'initial-run');
+    put(ancestorManifestPath, JSON.stringify(ancestorManifest));
+    put(`${dir}/context/phase-implement-attempt-3.json`, JSON.stringify(manifest(3, config.runId)));
+    const first = `${dir}/task-4-execution-1`, second = `${dir}/task-4-execution-2`, taskReport = `${dir}/task-4-report.md`;
+    const taskConfig = { runId: 'initial-run', attempt: 1, task: '4', execution: 1, role: 'implementer', report: taskReport, planPath };
+    beginTask(root, first, taskConfig); put('initial-source', 'initial work'); put(taskReport, 'Initial implementation.');
+    const taskResponse = `status: DONE\nartifact: ${taskReport}\nsignals: none\n`;
+    recordTaskResult(root, first, taskResponse);
+    beginTask(root, second, { ...taskConfig, runId: config.runId, attempt: 3, execution: 2, role: 'fix', previousState: first });
+    put('fixed-source', 'fixed work'); put(taskReport, 'Fixed implementation.'); recordTaskResult(root, second, taskResponse);
+    beginReview(root, state, { ...config, execution: second }); put(report, 'Approved latest execution.');
+    checkReview(root, state, `status: APPROVED\nartifact: ${report}\nsignals: review:clean\n`);
+    const finalState = `${dir}/final-review-guard-attempt-3-iteration-1`, finalReport = `${dir}/final-review.md`;
+    put(indexPath, `# Results\nReviewer gate Task 4: ${state}\nReviewer gate final: ${finalState}\n`);
+    projectTaskResults(root, { indexPath, states: [second] });
+    beginReview(root, finalState, { ...config, task: 'final', iteration: 1, report: finalReport,
+      issues: `${dir}/final-review-issues.md`, plan: planPath, index: indexPath });
+    put(finalReport, 'Approved complete chain.');
+    checkReview(root, finalState, `status: APPROVED\nartifact: ${finalReport}\nchanged-paths: none\nsignals: review:clean\n`);
+    const verify = () => verifyImplementReviews(root, { planPath, indexPath, runId: config.runId, attempt: 3 });
+    fn({ ...ctx, verify, planPath, indexPath, ancestorManifestPath, ancestorManifest });
+  });
+}
+
+test('v2 approval accepts verified execution ancestors across conductor attempts', () => executionChainFixture(({ verify }) => {
+  assert.equal(verify().status, 'APPROVED');
+}));
+
+test('retained v2 approval cannot downgrade the resumed attempt without a new execution', () => executionChainFixture(({ root, dir, put, planPath, indexPath }) => {
+  const next = { planPath, indexPath, runId: 'resumed-run', attempt: 4 };
+  const path = `${dir}/context/phase-implement-attempt-4.json`;
+  const manifest = { runId: next.runId, attempt: next.attempt, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } };
+  put(path, JSON.stringify(manifest));
+  const retainedApproval = captureRetainedApproval(root, next);
+  assert.equal(verifyImplementReviews(root, { ...next, retainedApproval }).status, 'APPROVED');
+  manifest.contract.taskResultProtocol = 1; put(path, JSON.stringify(manifest));
+  assert.throws(() => verifyImplementReviews(root, { ...next, retainedApproval }), /protocol/);
+}));
+
+for (const invalid of ['wrong-run', 'missing-manifest', 'legacy-protocol', 'absent-protocol', 'unsupported-protocol', 'future-correlation', 'latest-manifest-downgrade']) {
+  test(`v2 approval refuses ${invalid} on an ancestor hidden by a valid latest fix`, () => executionChainFixture(({ root, dir, put, verify, ancestorManifestPath, ancestorManifest }) => {
+    if (invalid === 'missing-manifest') rmSync(join(root, ancestorManifestPath));
+    else if (invalid === 'latest-manifest-downgrade') {
+      const currentPath = `${dir}/context/phase-implement-attempt-3.json`;
+      const current = JSON.parse(readFileSync(join(root, currentPath)));
+      current.contract.taskResultProtocol = 1; put(currentPath, JSON.stringify(current));
+    }
+    else {
+      if (invalid === 'wrong-run') ancestorManifest.runId = 'wrong-run';
+      if (invalid === 'legacy-protocol') ancestorManifest.contract.taskResultProtocol = 1;
+      if (invalid === 'absent-protocol') delete ancestorManifest.contract;
+      if (invalid === 'unsupported-protocol') ancestorManifest.contract.taskResultProtocol = 3;
+      if (invalid === 'future-correlation') ancestorManifest.attempt = 4;
+      put(ancestorManifestPath, JSON.stringify(ancestorManifest));
+    }
+    assert.throws(verify, /correlation|protocol|missing work artifact/);
+  }));
 }
 
 for (const [field, before, after] of [

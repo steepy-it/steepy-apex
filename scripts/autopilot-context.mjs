@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { assertSafeHubRoot, assertSafeLine, assertSafeRelPath } from './sanitize.mjs';
 import { parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
+import { parseTaskResultProjection } from './task-results.mjs';
 
 export const CONTEXT_MANIFEST_SCHEMA_VERSION = 1;
 export const MODEL_TIERS = Object.freeze(['cheap', 'standard', 'most-capable']);
@@ -237,7 +238,18 @@ export function reviewPhaseContext(planText, resultIndexText) {
   const reviewedIds = [];
   const seen = new Set();
   const normalizedIndex = String(resultIndexText ?? '').replace(/\r\n?/g, '\n');
-  for (const line of normalizedIndex.split('\n')) {
+  const projection = parseTaskResultProjection(normalizedIndex);
+  const recordId = (id) => {
+    const key = id.toLowerCase();
+    if (seen.has(key)) throw new Error(`duplicate reviewed task id '${id}'`);
+    if (!planTasks.has(key)) throw new Error(`unknown reviewed task id '${id}'`);
+    seen.add(key);
+    reviewedIds.push(id);
+  };
+  if (projection !== null) {
+    for (const entry of projection) recordId(entry.task);
+  }
+  for (const line of projection === null ? normalizedIndex.split('\n') : []) {
     if (!/^\s*[-*]\s+Task\b/i.test(line)) continue;
     const match = line.match(/^- Task ([A-Za-z0-9]+): (DONE|DONE_WITH_CONCERNS); artifact: ([^;]+); changed-paths: ([^;]+); signals: ([^;]+)$/);
     if (!match) throw new Error(`malformed reviewed task entry: ${line.trim()}`);
@@ -255,11 +267,7 @@ export function reviewPhaseContext(planText, resultIndexText) {
     if (!/^(?:none|[A-Za-z0-9][A-Za-z0-9:._-]*(?:,\s*[A-Za-z0-9][A-Za-z0-9:._-]*)*)$/.test(match[5])) {
       throw new Error(`malformed reviewed task signals for Task ${id}`);
     }
-    const key = id.toLowerCase();
-    if (seen.has(key)) throw new Error(`duplicate reviewed task id '${id}'`);
-    if (!planTasks.has(key)) throw new Error(`unknown reviewed task id '${id}'`);
-    seen.add(key);
-    reviewedIds.push(id);
+    recordId(id);
   }
   if (reviewedIds.length === 0) throw new Error('task result index contains no reviewed task entries');
   const omittedIds = plan.tasks
@@ -888,6 +896,9 @@ function cliInput(values, repoRoot) {
   const role = safeRole(values.role);
   if (!TASK_ROLES.includes(role)) throw new Error(`CLI only creates task-role manifests, got '${role}'`);
   const allowed = ROLE_OPTIONS[role];
+  if (values['task-result-protocol'] !== undefined && !['1', '2'].includes(values['task-result-protocol'])) {
+    throw new Error('--task-result-protocol must be 1 or 2');
+  }
   for (const option of CLI_PATH_OPTIONS) {
     if (values[option] !== undefined && option !== 'artifact-output' && !allowed.has(option)) {
       throw new Error(`--${option} is not valid for role ${role}`);
@@ -901,6 +912,7 @@ function cliInput(values, repoRoot) {
     testCommand: values['test-command'],
     criterionIds: values.criterion,
     outputs: values['artifact-output'],
+    ...(values['task-result-protocol'] === undefined ? {} : { contract: { taskResultProtocol: Number(values['task-result-protocol']) } }),
   };
   const standards = values.standard ?? [];
   return {
@@ -998,6 +1010,7 @@ export function main(argv = process.argv.slice(2)) {
         role: { type: 'string' },
         'repo-root': { type: 'string' },
         'run-id': { type: 'string' },
+        'task-result-protocol': { type: 'string' },
         task: { type: 'string' },
         'model-tier': { type: 'string' },
         'test-command': { type: 'string' },

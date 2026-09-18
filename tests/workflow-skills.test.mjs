@@ -2514,7 +2514,7 @@ test('task reviewer explicitly rejects a review-file pointer for ISSUES_FOUND', 
 });
 
 
-test('reviewer recovery is wired to task and final review with literal none and a bounded durable reservation', () => {
+test('legacy reviewer recovery retains literal none and a bounded durable reservation', () => {
   const recovery = readFileSync(join(skillsDir, 'implement/reviewer-recovery.md'), 'utf8');
   const schema = JSON.parse(readFileSync(join(skillsDir, 'implement/reviewer-response.schema.json'), 'utf8'));
   assert.equal(schema.properties['changed-paths'].const, 'none');
@@ -2530,4 +2530,40 @@ test('reviewer recovery is wired to task and final review with literal none and 
   assert.match(recovery, /reservation is consumed even if the process crashes/);
   assert.match(recovery, /never another implementation/);
   assert.match(recovery, /do not invent a schema flag/);
+});
+
+test('receipt protocol selects semantic transport and records exact restart capabilities', () => {
+  const protocol = readFileSync(join(skillsDir, 'implement/task-results-protocol.md'), 'utf8');
+  for (const action of ['begin', 'record', 'inspect', 'resume', 'project', 'verify']) {
+    assert.ok(protocol.includes(`--action ${action}`), action);
+  }
+  assert.match(protocol, /manifest\.contract\.taskResultProtocol/);
+  assert.match(protocol, /TASK_RESULT_PROTOCOL/);
+  assert.match(protocol, /before[^]*dispatch[^]*ledger/i);
+  assert.match(protocol, /parentState[^]*all tasks/i);
+  assert.match(protocol, /previousState[^]*same.task/i);
+  assert.match(protocol, /baseline.only[^]*pending/i);
+  assert.match(protocol, /capture[^]*without[^]*redispatch/i);
+  assert.match(protocol, /review.pending/i);
+  assert.match(protocol, /never[^]*manufacture[^]*historical baseline/i);
+  assert.match(protocol, /JSON[^]*changedPaths[^]*executionChangedPaths/);
+  assert.match(protocol, /outputs[^]*not[^]*read permission/i);
+});
+
+test('v2 prompts override four-field legacy examples without changing manual or Gear-4 grammar', () => {
+  for (const file of ['SKILL.md', 'implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md']) {
+    const text = readFileSync(join(skillsDir, 'implement', file), 'utf8');
+    assert.match(text, /taskResultProtocol[^]*2/);
+    assert.match(text, /status[^]*artifact[^]*signals/);
+    assert.match(text, /manual[^]*legacy/i);
+    assert.match(text, /precedence/i);
+    assert.match(text, /changed-paths:/, 'legacy grammar remains documented');
+  }
+  const recovery = readFileSync(join(skillsDir, 'implement/reviewer-recovery.md'), 'utf8');
+  assert.match(recovery, /--execution/);
+  assert.match(recovery, /reviewer-response-v2\.schema\.json/);
+  assert.match(recovery, /path.only[^]*correction/i);
+  const schema = JSON.parse(readFileSync(join(skillsDir, 'implement/reviewer-response-v2.schema.json'), 'utf8'));
+  assert.deepEqual(schema.required, ['status', 'artifact', 'signals']);
+  assert.equal(schema.additionalProperties, false);
 });

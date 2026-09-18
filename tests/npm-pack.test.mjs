@@ -118,11 +118,23 @@ test('npm tarball includes the engine scripts', () => {
     'scripts/new-surface.mjs',
     'scripts/bump-version.mjs',
     'scripts/autopilot.mjs',
+    'scripts/task-results.mjs',
+    'scripts/source-observation.mjs',
     'scripts/capture-review-evidence.mjs',
     'scripts/workflow-state.mjs',
     'scripts/loop-engineer.mjs',
     'scripts/validate-release-evidence.mjs',
   ], 'engine scripts');
+});
+
+test('npm tarball includes receipt instructions and both reviewer transport schemas', () => {
+  assertPacked([
+    'skills/implement/task-results-protocol.md',
+    'skills/implement/reviewer-recovery.md',
+    'skills/implement/reviewer-response.schema.json',
+    'skills/implement/reviewer-response-v2.schema.json',
+    'adapters/reviewer-response.mjs',
+  ]);
 });
 
 test('npm tarball includes the portable scaffold runtime, v1 sources, and canonical dogfood bootstrap', () => {

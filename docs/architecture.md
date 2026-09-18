@@ -27,7 +27,9 @@ Pure Node, no dependencies. The skills and the hook shell out to these.
 
 | Script | Responsibility |
 |---|---|
-| `reviewer-response.mjs` | Gates Gear-3 reviewer responses with Git snapshots, exact envelopes, one changed-paths-only correction, and replay-validated receipts. The conductor requires task/final proof bound to the full plan contract and handoff before accepting implementation. Retained approval keeps its original identity; active references advance atomically without rewriting history. The skill owns dispatch. |
+| `reviewer-response.mjs` | Gates Gear-3 reviewer responses with Git snapshots, version-selected envelopes, one changed-paths-only correction for legacy v1, and replay-validated receipts. V2 uses semantic fields and binds task approval to its latest execution digest. The conductor requires task/final proof bound to the full plan contract and handoff, and verifies every execution ancestor against its exact phase manifest before accepting implementation. Retained approval keeps its original identity; active references advance atomically without rewriting history. The skill owns dispatch. |
+| `source-observation.mjs` | Observes branch, HEAD, index, tracked and nonignored untracked source using exact Git filenames; validates source paths separately from work artifacts and detects source continuation/drift. Unsupported submodules fail closed. |
+| `task-results.mjs` | Begins and captures immutable v2 task executions, freezes reports, resumes durable captured results without writer redispatch, projects JSON task indexes, and verifies lineage, all task reports, and current source. Same-task previous execution and latest global parent are separate links. Explicit retry executions can continue valid NEEDS_CONTEXT/BLOCKED results after a remedy while preserving partial work; malformed or ambiguous evidence cannot authorize retry. |
 | `autopilot-context.mjs` | Builds and validates versioned role-local context manifests, materializes the criteria-only review artifact, derives routed standards, and exposes strict plan/handoff verification commands. |
 | `autopilot-observability.mjs` | Implements the dependency-free observability bridge: incremental framing, safe/exact raw persistence, event curation, redaction, and bounded multi-destination backpressure. |
 | `autopilot.mjs` | The **gear-3 autopilot conductor**. Parses the extended verdict-artifact contract at a spec head, writes deterministic versioned role manifests (including exact modular core/leaf references and scalar contract metadata), derives review evidence it can derive (criteria-only artifact, aggregate `git` diff from the run's baseline commit), then spawns `plan → implement → review` as fresh headless harness sessions — one child per finite phase/task lifecycle. It halts on `BLOCKED`, a mid-run `CONFLICT`, explicit safety/failure conditions, or I/O integrity failure; it always stops before bump/PR. |
@@ -144,7 +146,7 @@ adapters/headless-events.mjs ── decoded event ─► scripts/autopilot.mjs
 scripts/autopilot-observability.mjs ── bridge primitives ─► scripts/autopilot.mjs
 ```
 
-`adapters/headless.mjs` owns only the harness command descriptor and declared native capabilities. `adapters/headless-events.mjs` owns only protocol decoders for one structured output line; it does not choose persistence, timeout, or halt policy. `scripts/autopilot-observability.mjs` owns the common event envelope, line framing, raw serialization/redaction, curated rendering, and the bounded writer. `scripts/autopilot.mjs` owns orchestration: attempts, versioned manifests, artifact timing, status correlation, child lifetime, and the user-facing halt decision. The implement skill/controller validates artifact-first completion and the exact four-field envelope before the next task decision. That controller routes an effective abstract controller tier; adapters apply or degrade the concrete model and return direct provider evidence. The adapters never import conductor policy, and the bridge never selects a harness command.
+`adapters/headless.mjs` owns only the harness command descriptor and declared native capabilities. `adapters/headless-events.mjs` owns only protocol decoders for one structured output line; it does not choose persistence, timeout, or halt policy. `scripts/autopilot-observability.mjs` owns the common event envelope, line framing, raw serialization/redaction, curated rendering, and the bounded writer. `scripts/autopilot.mjs` owns orchestration: attempts, versioned manifests, artifact timing, status correlation, child lifetime, and the user-facing halt decision. The implement skill/controller validates artifact-first completion and the selected envelope before the next task decision: manual/legacy v1 uses four fields, while fresh autopilot v2 uses status/artifact/signals and receipt-derived source paths. That controller routes an effective abstract controller tier; adapters apply or degrade the concrete model and return direct provider evidence. The adapters never import conductor policy, and the bridge never selects a harness command.
 
 For each child stdout/stderr line, the conductor uses a raw-first flow: frame → serialize immutable raw JSONL → decode into the common event envelope where possible → curate the readable per-attempt and aggregate logs → write the same compact curated event to the bounded stdout/stderr live destination. Ordinary plain decoder failures use a source-labelled, redacted, length-limited passthrough; unknown or malformed structured data uses a generic fallback so arbitrary metadata and reasoning cannot enter the readable or live view. Reasoning and token deltas are never promoted.
 
@@ -277,3 +279,28 @@ Claude/Codex/OpenCode agent triads in the target project. This does not promise 
 every command writes only there; review the command family before granting trust.
 
 As with any plugin, review plugin hooks before trusting them: the full hook wiring is three small files, [`hooks/hooks.json`](../hooks/hooks.json) (Claude Code), [`hooks/hooks-codex.json`](../hooks/hooks-codex.json) (Codex), and [`scripts/stop-hook.mjs`](../scripts/stop-hook.mjs).
+
+### Autopilot task execution receipts
+
+Fresh runs record TASK_RESULT_PROTOCOL 2 once and pin it in all phase and task-role manifests;
+retained legacy runs stay on protocol 1. V2 changes neither manual drive nor Gear 4. The controller
+records an exact task execution prefix in the authorized ledger before dispatch, captures the raw
+semantic response and source observation, freezes the report, and publishes the result. Each file
+uses staged fsynced atomic publication under the cooperating-writer lease; this is neither a
+multi-file transaction nor protection from hostile concurrent writers. A durable capture can finish
+publication on restart without repeating implementation. Baseline-only state cannot establish DONE.
+
+JSON receipts are machine authority; the Markdown index is their generated projection, with exact
+changedPaths arrays and retained lifecycle/reviewer references. Git filenames containing spaces,
+commas, semicolons, Unicode, or newlines remain literal JSON strings. No brace expansion or model path
+claim determines the changed set. Legacy extra changed-paths remains ignored raw telemetry; semantic
+status/artifact/signals never come from report prose. Receipts retain cumulative task paths and each
+execution's own paths, frozen reports, and the distinct same-task previous/global parent links.
+
+Exact recorded state and schema-authorized links confined to the same task directory authorize only
+machine replay, never work-directory scanning or extra child inputs. Source discovery remains normal.
+Captured execution is review-pending, not approved. Task approval binds the latest execution; a fix
+invalidates an older approval. Final review and conductor acceptance replay the receipt chain and
+all required task/final approvals. No historical baseline is fabricated and no legacy run silently
+upgrades. Real-Git and isolated regression replay evidence does not certify native model behavior or
+product correctness.
