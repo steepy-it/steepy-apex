@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   chmodSync,
   closeSync,
+  existsSync,
   fsyncSync,
   lstatSync,
   linkSync,
@@ -40,11 +41,16 @@ const FAMILIES = [
   ['ledger', `.apex/work/tasks/${RUN}/resource-usage.jsonl`, 'work-output'],
   ['diff', `.apex/work/tasks/${RUN}/branch-diff.txt`, 'work-output'],
   ['task-result-index', `.apex/work/tasks/${RUN}/task-result-index.md`, 'work-output'],
+  ['task-report', `.apex/work/tasks/${RUN}/task-1-report.md`, 'work-output'],
+  ['task-result', `.apex/work/tasks/${RUN}/task-1-execution-1-baseline.json`, 'work-output'],
+  ['task-result', `.apex/work/tasks/${RUN}/task-1-execution-1-capture.json`, 'work-output'],
+  ['task-result', `.apex/work/tasks/${RUN}/task-1-execution-1-result.json`, 'work-output'],
+  ['task-result-report', `.apex/work/tasks/${RUN}/task-1-execution-1-report.md`, 'work-output'],
   ['evidence', `.apex/work/tasks/${RUN}/evidence-report.md`, 'work-output'],
   ['review-report', `.apex/work/tasks/${RUN}/review-report.md`, 'work-output'],
 ];
 const SYMLINK_FAMILIES = [
-  'manifest', 'criteria', 'status', 'raw', 'ledger', 'diff', 'evidence', 'review-report',
+  'manifest', 'criteria', 'status', 'raw', 'ledger', 'diff', 'evidence', 'review-report', 'task-report', 'task-result', 'task-result-report',
 ];
 const LOOP = '2026-09-03-demo-loop';
 const UUID = '12345678-1234-4234-8234-123456789abc';
@@ -302,6 +308,20 @@ test('loop grammar admits only the dated run directory and closed Gear-4 artifac
   }
 });
 
+test('atomic create-only publication leaves no partial target and refuses replacement', () => {
+  const repo = fixture();
+  const path = `.apex/work/tasks/${RUN}/task-1-execution-1-result.json`;
+  try {
+    assert.throws(() => writeWorkPath(repo, path, 'complete', { createOnly: true, onCheckpoint(event) {
+      if (event.phase === 'before-publish') throw new Error('interrupted staging');
+    } }), /interrupted staging/);
+    assert.equal(existsSync(join(repo, path)), false);
+    writeWorkPath(repo, path, 'complete', { createOnly: true });
+    assert.throws(() => writeWorkPath(repo, path, 'replacement', { createOnly: true }), /already exists/);
+    assert.equal(readWorkPath(repo, path, { encoding: 'utf8' }), 'complete');
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
 test('every loop family supports confined read, write, append, create-new, and atomic replacement', () => {
   const repo = fixture();
   try {
@@ -346,8 +366,8 @@ test('every loop family rejects symlinked ancestors and targets without touching
       const segments = path.split('/').slice(0, -1);
       const targetName = path.split('/').at(-1);
       for (let position = 0; position <= segments.length; position += 1) {
-        const repo = join(outer, `${family}-${position}-repo`);
-        const outside = join(outer, `${family}-${position}-outside`);
+        const repo = join(outer, `${family}-${targetName}-${position}-repo`);
+        const outside = join(outer, `${family}-${targetName}-${position}-outside`);
         mkdirSync(repo);
         mkdirSync(outside);
         const linkPath = position < segments.length
@@ -660,8 +680,8 @@ test('negative symlink matrix: selected path families fail closed at every ances
       const targetName = path.split('/').at(-1);
       for (let position = 0; position <= segments.length; position += 1) {
         const label = `${family} position ${position}`;
-        const repo = join(outer, `${family}-${position}-repo`);
-        const outside = join(outer, `${family}-${position}-outside`);
+        const repo = join(outer, `${family}-${targetName}-${position}-repo`);
+        const outside = join(outer, `${family}-${targetName}-${position}-outside`);
         mkdirSync(repo);
         mkdirSync(outside);
         const linkPath = position < segments.length

@@ -108,6 +108,9 @@ function classifyRest(rest, value) {
     if (!NAME_SEGMENT.test(rest[1])) fail(`invalid task run name in '${value}'`);
     if (rest.length === 2) fail(`'${value}' is not a work artifact file`);
     if (rest.length === 3) {
+      if (/^task-[1-9]\d*-execution-[1-9]\d*-(?:baseline|capture|result)\.json$/.test(rest[2])) return { type: 'work-output', family: 'task-result' };
+      if (/^task-[1-9]\d*-execution-[1-9]\d*-report\.md$/.test(rest[2])) return { type: 'work-output', family: 'task-result-report' };
+      if (/^task-[1-9]\d*-report\.md$/.test(rest[2])) return { type: 'work-output', family: 'task-report' };
       if (/^(?:task-[1-9]\d*|final)-review-guard-attempt-[1-9]\d*-iteration-[1-9]\d*-(?:baseline|original|reserved|corrected)\.json$/.test(rest[2])) return { type: 'work-output', family: 'review-guard' };
       if (/^(?:task-[1-9]\d*-(?:review|issues)|final-review(?:-issues)?)\.md$/.test(rest[2])) return { type: 'work-output', family: 'review-artifact' };
       if (rest[2] === 'success-criteria.md') return { type: 'criteria', family: 'criteria' };
@@ -456,10 +459,12 @@ export function readWorkPath(repoRoot, path, options = {}) {
 
 export function writeWorkPath(repoRoot, path, content, options = {}) {
   parseOptions(options, path);
+  if (options.createOnly !== undefined && typeof options.createOnly !== 'boolean') fail('createOnly must be boolean');
   parseWorkPath(path, options.expect, options.family);
   const bytes = contentBytes(content);
   const root = physicalRoot(repoRoot);
   let bound = walkWorkTarget(root, path);
+  if (options.createOnly && bound.exists) fail(`work artifact already exists '${path}'`);
   if (ensureAncestorDirs(bound, path)) bound = walkWorkTarget(root, path);
   bound = verifyBoundState(root, path, bound, 'before staging');
   invokeCheckpoint(options, 'write', 'after-bind', path);

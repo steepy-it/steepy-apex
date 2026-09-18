@@ -527,6 +527,38 @@ function statusWorkflowFields(record) {
 
 const STATUS_PROTOCOL_VERSION = 1;
 
+// A run keeps its task-result contract across upgrades and resumes. Absence is
+// legacy only after an actual phase reservation/dispatch; a fresh run selects v2.
+export function taskResultProtocol(statusText) {
+  const declarations = String(statusText).split('\n').filter((line) => line.split(FIELD_SEPARATOR)[2] === 'TASK_RESULT_PROTOCOL');
+  const records = normalizeAutopilotStatus(statusText);
+  const matches = records.filter((record) => record.event === 'TASK_RESULT_PROTOCOL');
+  if (declarations.length === 0) return null;
+  if (declarations.length !== 1 || matches.length !== 1 || matches[0].actor !== 'CONDUCTOR'
+    || !/^version=[12]$/.test(matches[0].note)) throw new Error('invalid task result protocol declaration');
+  return Number(matches[0].note.slice(-1));
+}
+
+function selectTaskResultProtocol(cwd, statusText, specName) {
+  const declared = taskResultProtocol(statusText);
+  const replay = replayAutopilotStatus(statusText);
+  const attempted = PHASES.some((phase) => replay.attemptsByScope[phase].length > 0);
+  const selected = declared ?? (attempted ? 1 : 2);
+  // Inspect only status-authorized immutable attempt paths, never scan work.
+  for (const phase of PHASES) {
+    for (const attempt of replay.attemptsByScope[phase]) {
+      const path = `.apex/work/tasks/${specName}/context/phase-${phase}-attempt-${attempt}.json`;
+      if (!existsSync(join(cwd, path))) continue;
+      const manifest = JSON.parse(readWorkPath(cwd, path, { encoding: 'utf8' }));
+      const version = manifest.contract?.taskResultProtocol ?? 1;
+      if (version !== selected || declared === null && version === 2) {
+        throw new Error('task result protocol disagrees with retained phase manifest');
+      }
+    }
+  }
+  return selected;
+}
+
 function acceptedIdentity(record) {
   if (record.actor !== 'CONDUCTOR' || record.event !== 'PHASE_ACCEPTED') return null;
   const match = record.note.match(/^run-id=([^\s]+) phase=(plan|implement|review) attempt=([1-9]\d*) child-event=(DONE|READY_FOR_PR)$/);
@@ -1029,7 +1061,7 @@ function readArtifact(cwd, path) {
   return readFileSync(join(cwd, safePath), 'utf8');
 }
 
-function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, baseline }) {
+function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, baseline, taskResultVersion }) {
   const specPath = repositoryPath(cwd, absSpec, 'spec path');
   const specName = basename(absSpec, '.md');
   const routingPath = '.apex/_INDEX.md';
@@ -1064,6 +1096,7 @@ function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, bas
       harness: contract.harness,
       blastRadius: contract.blastRadius,
       logMode: contract.logMode,
+      taskResultProtocol: taskResultVersion,
     },
   };
 
@@ -2046,6 +2079,13 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
   // forged line surviving into the next run) is distrusted and its phase re-run.
   const statusBeforeRun = readStatus(cwd, statusPath);
   const replayBeforeRun = replayAutopilotStatus(statusBeforeRun);
+  let taskResultVersion;
+  try {
+    taskResultVersion = selectTaskResultProtocol(cwd, statusBeforeRun, specName);
+    if (taskResultProtocol(statusBeforeRun) === null) {
+      appendStatus(cwd, statusPath, 'CONDUCTOR', 'TASK_RESULT_PROTOCOL', `version=${taskResultVersion}`);
+    }
+  } catch (error) { return halt(`task result protocol rejected: ${error.message}`); }
   const priorImplementSpawns = normalizeAutopilotStatus(statusBeforeRun)
     .filter((record) => record.actor === 'CONDUCTOR' && record.event === 'SPAWNED')
     .map((record) => correlatedIdentity(record.note, 'implement'))
@@ -2138,7 +2178,7 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
         throw new Error(`context manifest already exists and will not be overwritten: ${manifestPath}`);
       }
       const prepared = phaseManifestInput({
-        phase, cwd, absSpec, runId, attempt, contract, baseline,
+        phase, cwd, absSpec, runId, attempt, contract, baseline, taskResultVersion,
       });
       route = prepared.route;
       unroutedSurfaces = prepared.unroutedSurfaces;

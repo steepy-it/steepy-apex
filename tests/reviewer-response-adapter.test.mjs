@@ -20,3 +20,12 @@ test('JSON transport rejects duplicate and escaped duplicate verdict keys', () =
     assert.throws(() => decodeReviewerResponse(text, 'json'), /duplicate/);
   }
 });
+
+test('v2 reviewer transport accepts semantic fields and retains legacy path telemetry literally', () => {
+  const text = 'status: APPROVED\nartifact: report.md\nsignals: none\n';
+  assert.equal(decodeReviewerResponse(text, 'text', { protocol: 2 }).status, 'APPROVED');
+  const legacy = text.replace('signals:', 'changed-paths: apps/(protected)/[id]/{page.tsx,page.test.tsx}\nsignals:');
+  assert.equal(decodeReviewerResponse(legacy, 'text', { protocol: 2 })['changed-paths'], 'apps/(protected)/[id]/{page.tsx,page.test.tsx}');
+  assert.deepEqual(reviewerResponseSchema(2).required, ['status', 'artifact', 'signals']);
+  assert.throws(() => decodeReviewerResponse(text + 'extra: no\n', 'text', { protocol: 2 }));
+});

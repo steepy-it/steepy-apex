@@ -100,6 +100,8 @@ Hermetic fake-harness cases may prove parser, redaction, identity, and false-PAS
   deterministic behavioral evidence, not a provider acceptance result. The five-provider LIVE
   matrix remains APEX-P1-04 and stays open while Pi and DeepSeek are `runner-unavailable`.
 
+- Autopilot task-receipt coverage uses real Git and the actual conductor to verify exact Next route, punctuation, whitespace, Unicode, and newline filenames; cumulative fixes; captured-writer restart; report/source drift refusal; and latest-execution approval binding. Subprocess publication crashes prove durable capture resumes without writer redispatch. Legacy run tests prohibit silent upgrade and historical baseline fabrication. Doc locks retain manual/Gear-4 grammar and v1 correction while selecting v2 semantic transport. Packaging includes both receipt helpers, protocol prose, and both reviewer schemas. These are deterministic regression results, not native model or product-correctness evidence.
+
 ## Anti-patterns
 - Don't assert on internal/private structure — an internal refactor with unchanged behavior
   would break such a test; assert observable behavior (exit codes, file contents, emitted
@@ -125,7 +127,7 @@ Hermetic fake-harness cases may prove parser, redaction, identity, and false-PAS
   from one test file.
 - Reviewer-response regression uses real Git, the real conductor and synthetic reviewer responses:
   malformed approval resumes once, advances to the next task, preserves prior logs/progress, and
-  blocks code changes, invalid corrections, receipt bypass, and corrupted replay. Coverage also resumes retained final approval, advances final-review iterations, and rejects changed plan requirements while permitting exact lifecycle transitions. It does not prove native model compliance.
+  blocks code changes, invalid corrections, receipt bypass, and corrupted replay. V2 coverage includes explicit NEEDS_CONTEXT retries preserving partial work and rejection of invalid ancestor provenance hidden behind a valid fix. Coverage also resumes retained final approval, advances final-review iterations, and rejects changed plan requirements while permitting exact lifecycle transitions. It does not prove native model compliance.
 - Autopilot resume coverage composes the real conductor with a synthetic three-task child:
   completed tasks 1–2, task 3 issues and halt, explicit ledger/index capabilities on a new attempt,
   then simulated correction and approval. It verifies fresh absence, resumed availability and

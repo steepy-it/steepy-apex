@@ -685,6 +685,18 @@ test('review routing accepts only the canonical task-result-index bullet grammar
   }
 });
 
+test('review routing reads v2 receipt projections with literal steepysite paths', () => {
+  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** web\n- **Complexity:** integration\n- **Success criteria:** SC1\n';
+  const entry = { task: '1', status: 'DONE', artifact: '.apex/work/tasks/topic/task-1-report.md',
+    changedPaths: ['apps/web/app/admin/(protected)/generation/[id]/page.tsx', 'src/a,b;c è.ts'],
+    signals: [], receipt: '.apex/work/tasks/topic/task-1-execution-1' };
+  const index = `# Results\n<!-- steepy-task-results: v2 -->\n\`\`\`json\n${JSON.stringify([entry])}\n\`\`\`\n<!-- /steepy-task-results -->\n`;
+  assert.deepEqual(reviewPhaseContext(plan, index).tasks.map(({ task }) => task), ['1']);
+  assert.throws(() => reviewPhaseContext(plan, index.replace('"task":"1"', '"task":"2"')), /unknown reviewed task|correlation mismatch/);
+  assert.throws(() => reviewPhaseContext(plan, index.replace('v2', 'v99')), /version|protocol|projection/i);
+  assert.throws(() => reviewPhaseContext(plan, index + '- Task 1: DONE; artifact: x.md; changed-paths: none; signals: none\n'), /mixed|legacy|projection/i);
+});
+
 test('discovery signals survive the real review manifest boundary without loading per-task reports', (t) => {
   const repoRoot = materialize(t);
   const indexPath = '.apex/work/tasks/context-efficient/task-result-index.md';

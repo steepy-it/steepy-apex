@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.0.3 (2026-09-18)
+
+- Derive Gear-3 task changed paths from Git-backed execution receipts so abbreviated
+  implementer paths cannot block otherwise valid results.
+- Preserve immutable task evidence and cumulative changes across fixes, and resume
+  captured work at independent review without repeating implementation.
+- Allow explicit retries after resolving valid NEEDS_CONTEXT or BLOCKED results,
+  while continuing to reject malformed, incomplete, or changed evidence.
+- Validate every execution ancestor against its original phase manifest before
+  accepting implementation, including retained approvals on resume.
+- Keep existing runs on their recorded protocol and use protocol 2 for fresh runs.
+
 ## v1.0.2 (2026-09-18)
 
 - Validate Gear-3 reviewer responses and bind task and final approvals to durable

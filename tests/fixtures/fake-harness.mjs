@@ -41,6 +41,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { execFileSync, spawn } from 'node:child_process';
 import { beginReview, checkReview, reserveRepair, inspectReview, setReviewReference, captureRetainedApproval, verifyImplementReviews } from '../../scripts/reviewer-response.mjs';
 import { reviewPhaseContext } from '../../scripts/autopilot-context.mjs';
+import { beginTask, recordTaskResult, inspectTaskResult, projectTaskResults, parseTaskResultProjection } from '../../scripts/task-results.mjs';
 import { dirname, join } from 'node:path';
 
 const prompt = process.argv[2] ?? '';
@@ -118,7 +119,26 @@ function materializePhaseArtifacts() {
       join(taskDir, 'task-result-index.md'),
       process.env.FAKE_HARNESS_RESULT_INDEX_TEXT ?? resultIndex,
     );
-    if (process.env.FAKE_HARNESS_WORK_FILES === '1') {
+    if (manifest.contract?.taskResultProtocol === 2 && !process.env.FAKE_HARNESS_RESULT_INDEX_TEXT) {
+      const states = [];
+      for (const id of taskIds) {
+        const state = `.apex/work/tasks/${specName}/task-${id}-execution-1`;
+        if (!existsSync(`${state}-baseline.json`)) {
+          beginTask(process.cwd(), state, { runId: manifest.runId, attempt: manifest.attempt, task: id,
+            execution: 1, role: 'implementer', report: `.apex/work/tasks/${specName}/task-${id}-report.md`, planPath,
+            parentState: states.at(-1) ?? null });
+          if (id === taskIds[0] && process.env.FAKE_HARNESS_WORK_FILES === '1') {
+            writeFileSync('tracked.txt', 'implemented\n'); writeFileSync('brand-new.txt', 'created by the implementer\n');
+          }
+          const report = `.apex/work/tasks/${specName}/task-${id}-report.md`;
+          writeFileSync(report, 'Synthetic implementation report.\n');
+          const result = recordTaskResult(process.cwd(), state, `status: DONE\nartifact: ${report}\nsignals: tdd:red-green\n`);
+          if (!result.accepted) throw new Error(`synthetic task result rejected: ${result.reason}`);
+        }
+        states.push(state);
+      }
+      projectTaskResults(process.cwd(), { indexPath: `.apex/work/tasks/${specName}/task-result-index.md`, states });
+    } else if (process.env.FAKE_HARNESS_WORK_FILES === '1') {
       writeFileSync(join(process.cwd(), 'tracked.txt'), 'implemented\n');
       writeFileSync(join(process.cwd(), 'brand-new.txt'), 'created by the implementer\n');
     }
@@ -330,14 +350,17 @@ function reviewEnvelope(config, paths = 'none', status = 'APPROVED') {
 }
 function reviewConfig(manifest, dir, task, iteration = 1) {
   const scope = task === 'final' ? 'final' : `task-${task}`;
+  const entry = task === 'final' || manifest.contract?.taskResultProtocol !== 2 ? null
+    : parseTaskResultProjection(readFileSync(`${dir}/task-result-index.md`, 'utf8'))?.find((item) => item.task === task);
   return { runId: manifest.runId, attempt: manifest.attempt, iteration, task,
-    report: `${dir}/${scope}-review.md`, issues: `${dir}/${task === 'final' ? 'final-review' : scope}-issues.md` };
+    report: `${dir}/${scope}-review.md`, issues: `${dir}/${task === 'final' ? 'final-review' : scope}-issues.md`,
+    ...(entry ? { execution: entry.receipt } : {}) };
 }
 function reviewState(dir, config) {
   return `${dir}/${config.task === 'final' ? 'final' : `task-${config.task}`}-review-guard-attempt-${config.attempt}-iteration-${config.iteration}`;
 }
-function approveTask(manifest, dir, task) {
-  const config = reviewConfig(manifest, dir, task);
+function approveTask(manifest, dir, task, iteration = 1) {
+  const config = reviewConfig(manifest, dir, task, iteration);
   const state = reviewState(dir, config);
   beginReview(process.cwd(), state, config);
   writeFileSync(config.report, '# Review\n**Approved** — synthetic reviewer evidence.\n');
@@ -367,7 +390,21 @@ function materializeReviewGates(manifest, specName) {
     if (checkReview(process.cwd(), state, reviewEnvelope(config, 'none', 'ISSUES_FOUND')).status !== 'ISSUES_FOUND') throw new Error('expected final issues');
     const previousState = state;
     const previousBytes = readFileSync(`${state}-original.json`);
-    writeFileSync('branch-fix.js', 'branch ordering corrected\n');
+    if (manifest.contract?.taskResultProtocol === 2) {
+      const entries = parseTaskResultProjection(readFileSync(indexPath, 'utf8'));
+      const first = entries[0];
+      const execution = `${dir}/task-${first.task}-execution-2`;
+      beginTask(process.cwd(), execution, { runId: manifest.runId, attempt: manifest.attempt, task: first.task,
+        execution: 2, role: 'fix', report: first.artifact, planPath: plan, previousState: first.receipt,
+        parentState: entries.at(-1).receipt });
+      writeFileSync('branch-fix.js', 'branch ordering corrected\n');
+      writeFileSync(first.artifact, 'Synthetic final-review fix.\n');
+      recordTaskResult(process.cwd(), execution, `status: DONE\nartifact: ${first.artifact}\nsignals: none\n`);
+      projectTaskResults(process.cwd(), { indexPath, states: entries.map((entry) => entry.task === first.task ? execution : entry.receipt) });
+      const previousReview = readFileSync(indexPath, 'utf8').match(new RegExp(`^Reviewer gate Task ${first.task}: (\\S+)$`, 'm'))?.[1];
+      const nextReview = approveTask(manifest, dir, first.task, 2);
+      setReviewReference(process.cwd(), { indexPath, state: nextReview, previousState: previousReview ?? null });
+    } else writeFileSync('branch-fix.js', 'branch ordering corrected\n');
     config = { ...config, iteration: 2 }; state = reviewState(dir, config);
     setReviewReference(process.cwd(), { indexPath, state, previousState });
     beginReview(process.cwd(), state, config);
@@ -378,7 +415,7 @@ function materializeReviewGates(manifest, specName) {
   if (!checkReview(process.cwd(), state, reviewEnvelope(config)).accepted) throw new Error('synthetic final gate rejected');
   const mutation = process.env.FAKE_HARNESS_GATE_MUTATION;
   if (mutation === 'drop-task') writeFileSync(indexPath, index.replace(/^Reviewer gate Task 1:.*\n/m, ''));
-  if (mutation === 'change-handoff') writeFileSync(indexPath, index.replace('signals: tdd:red-green', 'signals: none'));
+  if (mutation === 'change-handoff') writeFileSync(indexPath, index.replace(/tdd:red-green/, 'changed-signal'));
   if (mutation === 'change-code') writeFileSync('unapproved.js', 'changed after final review\n');
   if (mutation === 'corrupt-receipt') {
     const recordPath = `${state}-original.json`;
@@ -462,7 +499,91 @@ function reviewerRecoveryScenario() {
   return 0;
 }
 
+// Paths and the rejected abbreviation reproduce steepysite e425507. Source
+// bodies and reviewer decisions are synthetic; no product files are executed.
+function steepysiteReceiptScenario() {
+  const manifest = JSON.parse(readFileSync(manifestPathFromPrompt(), 'utf8'));
+  const dir = '.apex/work/tasks/topic', state = `${dir}/task-1-execution-1`;
+  const indexPath = `${dir}/task-result-index.md`, report = `${dir}/task-1-report.md`;
+  const trace = `${dir}/receipt-trace.txt`;
+  const paths = ['generation', 'issues'].flatMap((route) => ['page.tsx', 'page.test.tsx']
+    .map((file) => `apps/web/app/admin/(protected)/${route}/[id]/${file}`));
+  if (!existsSync(`${state}-baseline.json`)) {
+    beginTask(process.cwd(), state, { runId: manifest.runId, attempt: manifest.attempt, task: '1',
+      execution: 1, role: 'implementer', report, planPath: '.apex/work/plans/topic.md' });
+    appendFileSync(trace, 'implement:1\n');
+    for (const path of paths) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, 'corrected decision context\n'); }
+    execFileSync('git', ['add', '--', ...paths]); execFileSync('git', ['commit', '-qm', 'fix decision context']);
+    writeFileSync(report, '# Implementation\nSynthetic test evidence; independent review pending.\n');
+    const raw = `status: DONE\nartifact: ${report}\nchanged-paths: apps/web/app/admin/(protected)/generation/[id]/{page.tsx,page.test.tsx}, apps/web/app/admin/(protected)/issues/[id]/{page.tsx,page.test.tsx}\nsignals: tdd:red-green\n`;
+    if (!recordTaskResult(process.cwd(), state, raw).accepted) throw new Error('abbreviated legacy transport blocked observed execution');
+    append(phase, 'BLOCKED', correlated('simulated interruption after durable task result, before projection and review'));
+    return 1;
+  }
+  const result = inspectTaskResult(process.cwd(), state);
+  if (!result.accepted) throw new Error('execution has no durable completion');
+  appendFileSync(trace, 'resume:review-pending\n');
+  if (!existsSync(indexPath)) writeFileSync(indexPath, '# Results\n');
+  projectTaskResults(process.cwd(), { indexPath, states: [state] });
+  if (/^## Task 2\b/m.test(readFileSync('.apex/work/plans/topic.md', 'utf8'))) {
+    const taskReview = approveTask(manifest, dir, '1');
+    setReviewReference(process.cwd(), { indexPath, state: taskReview });
+    const nextState = `${dir}/task-2-execution-1`, nextReport = `${dir}/task-2-report.md`;
+    beginTask(process.cwd(), nextState, { runId: manifest.runId, attempt: manifest.attempt, task: '2',
+      execution: 1, role: 'implementer', report: nextReport, planPath: '.apex/work/plans/topic.md', parentState: state });
+    appendFileSync(trace, 'implement:2\n'); writeFileSync('next-task.ts', 'next task\n');
+    writeFileSync(nextReport, 'Synthetic next task report.\n');
+    recordTaskResult(process.cwd(), nextState, `status: DONE\nartifact: ${nextReport}\nsignals: none\n`);
+    projectTaskResults(process.cwd(), { indexPath, states: [state, nextState] });
+  }
+  materializeReviewGates(manifest, 'topic');
+  appendFileSync(trace, 'review:1:APPROVED\nreview:final:APPROVED\n');
+  append(phase, 'DONE', correlated('saved implementation reviewed, no redispatch'));
+  return 0;
+}
+
+function receiptContinuationScenario() {
+  const manifest = JSON.parse(readFileSync(manifestPathFromPrompt(), 'utf8'));
+  const dir = '.apex/work/tasks/topic', first = `${dir}/task-1-execution-1`;
+  const report = `${dir}/task-1-report.md`, planPath = '.apex/work/plans/topic.md';
+  const indexPath = `${dir}/task-result-index.md`, trace = `${dir}/continuation-trace.txt`;
+  const badAncestor = mode === 'receipt-wrong-ancestor';
+  if (!existsSync(`${first}-baseline.json`)) {
+    beginTask(process.cwd(), first, { runId: badAncestor ? 'wrong-original-run' : manifest.runId,
+      attempt: manifest.attempt, task: '1', execution: 1, role: 'implementer', report, planPath });
+    writeFileSync('partial.txt', 'partial task work preserved\n');
+    writeFileSync(report, badAncestor ? 'Synthetic implementation.\n' : 'Need the parent to supply the task configuration.\n');
+    const result = recordTaskResult(process.cwd(), first,
+      `status: ${badAncestor ? 'DONE' : 'NEEDS_CONTEXT'}\nartifact: ${report}\nsignals: none\n`);
+    if (result.status !== (badAncestor ? 'DONE' : 'NEEDS_CONTEXT')) throw new Error('unexpected captured outcome');
+    writeFileSync(trace, 'dispatch:1\n');
+    append(phase, 'BLOCKED', correlated('simulated interruption after captured writer response'));
+    return 1;
+  }
+  inspectTaskResult(process.cwd(), first);
+  const next = `${dir}/task-1-execution-2`;
+  beginTask(process.cwd(), next, { runId: manifest.runId, attempt: manifest.attempt, task: '1',
+    execution: 2, role: badAncestor ? 'fix' : 'retry', report, planPath, previousState: first, parentState: first });
+  appendFileSync(trace, badAncestor ? 'fix:2\n' : 'context:supplied\nretry:2\n');
+  writeFileSync('completed.txt', 'completed with supplied configuration\n');
+  writeFileSync(report, 'Synthetic complete implementation after explicit remedy.\n');
+  if (!recordTaskResult(process.cwd(), next, `status: DONE\nartifact: ${report}\nsignals: none\n`).accepted) throw new Error('continuation did not complete');
+  writeFileSync(indexPath, '# Results\n');
+  projectTaskResults(process.cwd(), { indexPath, states: [next] });
+  materializeReviewGates(manifest, 'topic');
+  appendFileSync(trace, 'review:task:APPROVED\nreview:final:APPROVED\n');
+  append(phase, 'DONE', correlated('synthetic continuation and independent reviews completed'));
+  return 0;
+}
+
 switch (mode) {
+  case 'receipt-needs-context':
+  case 'receipt-wrong-ancestor':
+    process.exit(receiptContinuationScenario());
+    break;
+  case 'steepysite-receipt':
+    process.exit(steepysiteReceiptScenario());
+    break;
   case 'final-approved-resume':
     process.exit(finalApprovedResumeScenario());
     break;

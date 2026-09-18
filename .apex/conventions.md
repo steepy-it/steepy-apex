@@ -118,22 +118,22 @@ value, drive mode says *who pushes the button between phases*. Gear 3 only:
   `required` inventory is read eagerly, while `onDemand` entries require a named missing fact and
   are recorded. This governs eager upstream context, not repository authorization: source files
   needed to implement, test, or verify work remain normally discoverable and readable. Review uses
-  the attributed criteria-only `success-criteria.md`, exact `task-result-index.md` bullets, and
+  the attributed criteria-only `success-criteria.md`, exact `task-result-index.md` projection (v2 JSON or legacy bullets), and
   canonical aggregate `branch-diff.txt`; a full spec is never a required review-criteria input.
   The conductor derives both of those artifacts itself before the review manifest — the criteria
   from the spec's single `## Success criteria` heading, the diff from the run's recorded `BASELINE`
   commit — so the review gate never depends on a child having written derived evidence, and a
   resumed run keeps the original baseline. What a child still authors, it verifies first: implement
   parses its own `task-result-index.md` against the plan before claiming completion, so a malformed
-  bullet fails inside implement where it is fixable instead of at the review gate where it is not.
+  result fails inside implement where it is fixable instead of at the review gate where it is not.
   A fresh implement ledger is an absent `onDemand` resume-state entry and a declared output, not a
   required pre-spawn input. The plan phase writes to its manifest-declared output path exactly.
   A manifest's implicated standards separate two classes: an owning or per-task surface with no
   routing row is a binding error and halts, while an unregistered cross-cutting entry is advisory
   prose, recorded once as `CONTEXT_SURFACE_IGNORED` and skipped — a word in a metadata list never
   refuses a run.
-  Children persist their detailed result before replying with exactly the four-field
-  artifact-first envelope; the implement skill/controller validates it and retains only that
+  Children persist their detailed result before replying with the selected artifact-first
+  envelope (manual/legacy v1 four fields, autopilot v2 status/artifact/signals); the implement skill/controller validates it and retains only that
   envelope until a next decision needs the durable artifact. The controller routes an effective
   abstract tier, and adapters record concrete apply/degrade evidence. A resource-usage ledger is
   observational only: observation identity deduplicates exact retransmissions, while measurement
@@ -154,6 +154,18 @@ value, drive mode says *who pushes the button between phases*. Gear 3 only:
 open design + trusted execution after the spec gate → gear 3 autopilot; otherwise → gear
 3 manual. A harness with no headless mode → autopilot is not offered (explicit
 degradation).
+
+**Autopilot task-result versioning.** Fresh Gear-3 runs pin taskResultProtocol 2 in every manifest;
+retained legacy runs stay on 1. V2 obtains source paths from immutable execution receipts and
+projects exact JSON arrays into the task index. Child changed-paths claims are ignored raw telemetry,
+including legacy brace notation. Semantic status/artifact/signals remain mandatory and never inferred.
+The controller records the exact execution state in its authorized ledger before dispatch; deterministic
+replay follows only schema-authorized same-directory parent/previous links. These machine capabilities
+do not allow work scanning or child report preloading. A durable capture resumes review-pending without
+another implementation; baseline-only state cannot prove completion. Valid captured NEEDS_CONTEXT/BLOCKED may continue in a new retry execution after a recorded remedy, preserving partial work; malformed results and drift cannot. Fixes retain earlier report
+snapshots and cumulative paths, and task approvals bind the latest execution. Final approval and phase
+acceptance require receipt replay plus every applicable task/final gate and exact phase-manifest provenance for every execution ancestor. Never fabricate historical
+baselines or silently upgrade. Manual drive and Gear 4 keep their existing contracts.
 
 **Deterministic workflow-controller foundation.** Gear-3 autopilot and any deterministic
 Gear-4 controller share the same state-safety foundation: repository-confined work-path
