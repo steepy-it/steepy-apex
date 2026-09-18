@@ -129,9 +129,9 @@ Hermetic fake-harness cases may prove parser, redaction, identity, and false-PAS
   malformed approval resumes once, advances to the next task, preserves prior logs/progress, and
   blocks code changes, invalid corrections, receipt bypass, and corrupted replay. V2 coverage includes explicit NEEDS_CONTEXT retries preserving partial work and rejection of invalid ancestor provenance hidden behind a valid fix. Coverage also resumes retained final approval, advances final-review iterations, and rejects changed plan requirements while permitting exact lifecycle transitions. It does not prove native model compliance.
 - Autopilot resume coverage composes the real conductor with a synthetic three-task child:
-  completed tasks 1–2, task 3 issues and halt, explicit ledger/index capabilities on a new attempt,
-  then simulated correction and approval. It verifies fresh absence, resumed availability and
+  completed tasks 1–2, task 3 issues and halt, explicit ledger/index capabilities on a new attempt, then simulated correction and approval. It verifies fresh absence, resumed availability and
   immutable earlier manifest/log bytes; it does not certify native skill/reviewer behavior.
+- Explicit resume-input coverage instruments body reads and directory listing, rejects absent/aliased/foreign/linked paths before conductor mutation, and drives a repeated-option CLI resume through the real conductor with synthetic task evidence. Simulated physical aliases cover duplicate and ledger/index rejection before lease acquisition on every platform; native filesystem cases distinguish case aliases from physically distinct case variants. It preserves old attempt bytes, legacy protocol selection, and reviewer recovery rejection for invalid corrections or source mutation. This proves capability transport, not native model compliance.
 - Autopilot coverage includes comparative reachability and an irrelevant-absence fixture for
   manifests. Each plan/implement/review footprint comparison uses its own matching baseline eager
   inventory and baseline generated prompt, never a shared union baseline or combined arithmetic that

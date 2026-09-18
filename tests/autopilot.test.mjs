@@ -936,7 +936,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
 
   // Runs the conductor with the fixture env set and console captured, so the
   // suite output stays pristine even for the halt cases.
-  async function drive(run, env = {}, opts = {}) {
+  async function drive(run, env = {}, { cliArgs, ...opts } = {}) {
     const fixtureHome = join(run.dir, '.apex', 'work', 'test-home');
     const vars = {
       HOME: fixtureHome,
@@ -961,7 +961,8 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
       },
     });
     try {
-      const code = await autopilot.runConductor(run.specPath, {
+      const invoke = cliArgs === undefined ? autopilot.runConductor : autopilot.main;
+      const code = await invoke(cliArgs ?? run.specPath, {
         commandFor: stubCommandFor,
         cwd: run.dir,
         opencodeConfig: { env: vars, homedir: () => fixtureHome },
@@ -979,6 +980,79 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
       }
     }
   }
+
+  it('rejects invalid explicit resume capabilities before writing run state or dispatching', async () => {
+    const run = makeRun();
+    try {
+      const before = readdirSync(join(run.dir, '.apex', 'work'));
+      for (const resumeInputs of [null, 'bad', ['.apex/work/tasks/another/task-1-report.md'],
+        ['.apex/work/tasks/topic/task-99-report.md'], ['.apex/work/tasks/topic/ledger.md']]) {
+        const result = await drive(run, {}, { resumeInputs, commandFor: () => { throw new Error('must not dispatch'); } });
+        assert.equal(result.code, 1);
+        assert.match(result.err, /resume input/i);
+        assert.equal(existsSync(run.taskDir), false);
+        assert.deepEqual(readdirSync(join(run.dir, '.apex', 'work')), before);
+      }
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('rechecks resume inputs under the lease before creating run state', async () => {
+    const run = makeRun({ legacyTaskResults: true });
+    try {
+      const path = '.apex/work/tasks/topic/task-1-report.md';
+      writeFileSync(join(run.dir, path), 'existing evidence');
+      const before = readFileSync(run.statusFile);
+      const result = await drive(run, {}, {
+        resumeInputs: [path],
+        commandFor: () => { throw new Error('must not dispatch'); },
+        lockTransition: (stage) => { if (stage === 'acquired') rmSync(join(run.dir, path)); },
+      });
+      assert.equal(result.code, 1);
+      assert.match(result.err, /cannot bind resume input/);
+      assert.deepEqual(readFileSync(run.statusFile), before);
+      assert.deepEqual(readdirSync(run.taskDir), ['autopilot-status.md']);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('rejects physical resume aliases before acquiring the lease or changing run state', async () => {
+    const run = makeRun({ legacyTaskResults: true });
+    const original = fs.lstatSync;
+    try {
+      const prefix = '.apex/work/tasks/topic/';
+      const root = fs.realpathSync(run.dir);
+      const aliases = new Map();
+      const variants = [];
+      for (const name of ['ledger.md', 'task-result-index.md', 'task-1-report.md']) {
+        const path = prefix + name;
+        const alias = prefix + 'alias-' + name;
+        writeFileSync(join(run.dir, path), 'existing evidence');
+        writeFileSync(join(run.dir, alias), 'existing evidence');
+        aliases.set(join(root, alias), join(root, path));
+        variants.push(name === 'task-1-report.md' ? [path, alias] : [alias]);
+      }
+      const before = readFileSync(run.statusFile);
+      const files = readdirSync(run.taskDir);
+      fs.lstatSync = (path, ...args) => original(aliases.get(path) ?? path, ...args);
+      syncBuiltinESMExports();
+      for (const resumeInputs of variants) {
+        let acquired = false;
+        const result = await drive(run, {}, {
+          resumeInputs,
+          lockTransition: () => { acquired = true; },
+          commandFor: () => { throw new Error('must not dispatch'); },
+        });
+        assert.equal(result.code, 1);
+        assert.match(result.err, /duplicate or already inventoried resume input/);
+        assert.equal(acquired, false);
+        assert.deepEqual(readFileSync(run.statusFile), before);
+        assert.deepEqual(readdirSync(run.taskDir), files);
+      }
+    } finally {
+      fs.lstatSync = original;
+      syncBuiltinESMExports();
+      rmSync(run.dir, { recursive: true, force: true });
+    }
+  });
 
   it('isolates OpenCode config reads through the conductor environment seam', async () => {
     const run = makeRun({ harness: 'opencode' });
@@ -3353,7 +3427,7 @@ if (process.argv[2] === '--version') {
         const second = await drive(run, { ...env,
           ...(failure === 'bad-correction' ? { FAKE_HARNESS_BAD_CORRECTION: '1' } : {}),
           ...(failure === 'code-change' ? { FAKE_HARNESS_REVIEW_MUTATION: '1' } : {}),
-        });
+        }, { resumeInputs: ['.apex/work/tasks/topic/task-4-review.md', '.apex/work/tasks/topic/task-4-issues.md'] });
         assert.equal(second.code, failure === 'none' ? 0 : 1, second.err);
         paths.forEach((path, i) => assert.deepEqual(readFileSync(join(run.taskDir, path)), saved[i]));
         const trace = readFileSync(join(run.taskDir, 'scenario-trace.txt'), 'utf8');
@@ -3393,10 +3467,17 @@ if (process.argv[2] === '--version') {
       assert.doesNotMatch(beforeIndex, /- Task 3:/);
       const evidencePaths = ['context/phase-implement-attempt-1.json', 'phase-2-attempt-1.log', 'phase-2-attempt-1.raw.jsonl'];
       const evidence = evidencePaths.map((path) => readFileSync(join(run.taskDir, path), 'utf8'));
-      assert.equal((await drive(run, env)).code, 0);
+      const resumeInputs = ['task-3-issues.md', 'task-3-review.md'].map((name) => `.apex/work/tasks/topic/${name}`);
+      assert.equal((await drive(run, env, {
+        cliArgs: ['--resume-input', resumeInputs[0], run.specPath, '--resume-input', resumeInputs[1]],
+      })).code, 0);
       evidencePaths.forEach((path, i) => assert.equal(readFileSync(join(run.taskDir, path), 'utf8'), evidence[i]));
       const manifest = JSON.parse(readFileSync(join(run.taskDir, 'context/phase-implement-attempt-2.json'), 'utf8'));
       assert.equal(manifest.onDemand.find((entry) => entry.path.endsWith('/task-result-index.md')).available, true);
+      assert.deepEqual(manifest.onDemand.slice(-2).map(({ path }) => path), resumeInputs);
+      assert.equal(manifest.contract.taskResultProtocol, 1, 'resume capabilities cannot upgrade retained protocol');
+      const reviewManifest = JSON.parse(readFileSync(join(run.taskDir, 'context/phase-review-attempt-1.json'), 'utf8'));
+      assert.ok(!reviewManifest.onDemand.some(({ path }) => resumeInputs.includes(path)), 'resume inputs stay implement-only');
       assert.equal(readFileSync(join(run.taskDir, 'scenario-trace.txt'), 'utf8'),
         'implement:1\nreview:1:APPROVED\nimplement:2\nreview:2:APPROVED\nimplement:3\nreview:3:ISSUES_FOUND\nfix:3\nreview:3:APPROVED\n');
       assert.equal(readFileSync(indexPath, 'utf8').match(/- Task /g).length, 3);
@@ -4358,6 +4439,14 @@ describe('autopilot main(argv)', () => {
     assert.match(err, /usage/i);
     assert.match(err, /autopilot\.mjs/);
   });
+
+  for (const argv of [['--resume-input'], ['--unknown'], ['one.md', 'two.md']]) {
+    it(`rejects invalid CLI arguments: ${JSON.stringify(argv)}`, async () => {
+      const { code, err } = await captured(argv);
+      assert.equal(code, 1);
+      assert.match(err, /usage|argument|option/i);
+    });
+  }
 
   it('exits 1 when the spec path does not exist', async () => {
     const { code, err } = await captured(['/nonexistent/spec-does-not-exist.md']);

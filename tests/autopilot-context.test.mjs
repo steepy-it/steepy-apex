@@ -1,7 +1,9 @@
 import { test } from 'node:test';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import assert from 'node:assert/strict';
 import {
-  cpSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync,
+  cpSync, existsSync, linkSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -1231,4 +1233,135 @@ test('fixture repositories are removed after subtest cleanup', async (t) => {
     assert.equal(existsSync(repoRoot), true);
   });
   assert.equal(existsSync(repoRoot), false);
+});
+
+function resumeManifestInput(repoRoot, resumeInputs) {
+  return {
+    ...base, repoRoot, resumeInputs,
+    planPath: '.apex/work/plans/context-efficient.md',
+    specPath: '.apex/work/specs/context-efficient.md',
+    ledgerPath: '.apex/work/tasks/context-efficient/ledger.md',
+    taskResultIndexPath: '.apex/work/tasks/context-efficient/task-result-index.md',
+    routingPath: '.apex/_INDEX.md',
+    tasks: [{ surface: 'scripts' }],
+    standardsBySurface: { scripts: '.apex/standards/scripts.md' },
+  };
+}
+
+test('explicit resume inputs add only exact on-demand references without reading bodies or listing siblings', (t) => {
+  const repoRoot = materialize(t);
+  const paths = [
+    '.apex/work/tasks/context-efficient/task-1-brief.md',
+    '.apex/work/tasks/context-efficient/task-1-report.md',
+    '.apex/work/tasks/context-efficient/task-1-diff.txt',
+    '.apex/work/tasks/context-efficient/context/task-1-review.json',
+    '.apex/work/tasks/context-efficient/task-1-review-guard-attempt-1-iteration-1-original.json',
+  ];
+  for (const path of paths) {
+    mkdirSync(dirname(join(repoRoot, path)), { recursive: true });
+    writeFileSync(join(repoRoot, path), 'EXPLICIT_RESUME_BODY_SENTINEL');
+  }
+  const ordinary = buildImplementManifest(resumeManifestInput(repoRoot));
+  const originals = { readFileSync: fs.readFileSync, readdirSync: fs.readdirSync };
+  const accesses = [];
+  let manifest;
+  try {
+    for (const name of Object.keys(originals)) fs[name] = (...args) => {
+      accesses.push([name, args[0]]);
+      throw new Error('resume inventory must inspect metadata only');
+    };
+    syncBuiltinESMExports();
+    manifest = buildImplementManifest(resumeManifestInput(repoRoot, paths));
+  } finally {
+    Object.assign(fs, originals);
+    syncBuiltinESMExports();
+  }
+  assert.deepEqual(accesses, []);
+  assert.deepEqual(manifest.required, ordinary.required);
+  assert.deepEqual(manifest.onDemand.slice(0, ordinary.onDemand.length), ordinary.onDemand);
+  assert.deepEqual(manifest.onDemand.slice(ordinary.onDemand.length).map(({ path, read, available, bytes }) =>
+    ({ path, read, available, bytes })), paths.map((path) =>
+    ({ path, read: 'on-demand', available: true, bytes: Buffer.byteLength('EXPLICIT_RESUME_BODY_SENTINEL') })));
+  assert.doesNotMatch(JSON.stringify(manifest), /EXPLICIT_RESUME_BODY_SENTINEL/);
+});
+
+test('explicit resume inputs reject aliases, globs, other runs, missing files, duplicates and base capabilities', (t) => {
+  const repoRoot = materialize(t);
+  const path = '.apex/work/tasks/context-efficient/task-1-brief.md';
+  for (const paths of [
+    null, path, [path, path], [path.replace('task-1', '*')],
+    [path.replace('context-efficient/', 'another-run/')],
+    [path.replace('/task-1', '/../task-1')], [path.replace('/task-1', '/./task-1')],
+    [path.replace('/task-1', '//task-1')], [path + '/'], [join(repoRoot, path)],
+    [path.replace('task-1', 'task-999')],
+    ['.apex/work/tasks/context-efficient/ledger.md'],
+    ['.apex/work/tasks/context-efficient/task-result-index.md'],
+  ]) assert.throws(() => buildImplementManifest(resumeManifestInput(repoRoot, paths)), undefined, JSON.stringify(paths));
+});
+
+test('explicit resume inputs reject linked ancestors, linked targets, hardlinks and directories', (t) => {
+  const repoRoot = materialize(t);
+  const path = '.apex/work/tasks/context-efficient/task-999-report.md';
+  const outside = join(repoRoot, 'outside');
+  mkdirSync(outside);
+  writeFileSync(join(outside, 'sentinel.md'), 'private');
+  const target = join(repoRoot, path);
+  for (const kind of ['symlink', 'hardlink', 'directory']) {
+    if (kind === 'symlink') symlinkSync(join(outside, 'sentinel.md'), target);
+    if (kind === 'hardlink') linkSync(join(outside, 'sentinel.md'), target);
+    if (kind === 'directory') mkdirSync(target);
+    assert.throws(() => buildImplementManifest(resumeManifestInput(repoRoot, [path])), /symlink|hard.link|ordinary|non-file/);
+    rmSync(target, { recursive: true });
+  }
+  const nested = '.apex/work/tasks/context-efficient/linked';
+  symlinkSync(outside, join(repoRoot, nested));
+  assert.throws(() => buildImplementManifest(resumeManifestInput(repoRoot, [nested + '/sentinel.md'])), /symlink/);
+  assert.equal(readFileSync(join(outside, 'sentinel.md'), 'utf8'), 'private');
+});
+
+test('explicit resume inputs reject physical duplicates and base aliases independent of path spelling', (t) => {
+  const repoRoot = materialize(t);
+  const prefix = '.apex/work/tasks/context-efficient/';
+  const original = fs.lstatSync;
+  for (const name of ['ledger.md', 'task-result-index.md', 'task-1-report.md']) {
+    const path = prefix + name;
+    const alias = prefix + 'alias-' + name;
+    writeFileSync(join(repoRoot, path), 'existing evidence');
+    writeFileSync(join(repoRoot, alias), 'existing evidence');
+    const target = join(fs.realpathSync(repoRoot), path);
+    const aliasTarget = join(fs.realpathSync(repoRoot), alias);
+    // Model a filesystem alias with a single-link target on every CI platform.
+    fs.lstatSync = (candidate, ...args) => original(candidate === aliasTarget ? target : candidate, ...args);
+    syncBuiltinESMExports();
+    try {
+      const variants = name === 'task-1-report.md' ? [[path, alias], [alias, path]] : [[alias]];
+      for (const paths of variants) {
+        assert.throws(() => buildImplementManifest(resumeManifestInput(repoRoot, paths)),
+          /duplicate or already inventoried resume input/, JSON.stringify(paths));
+      }
+    } finally {
+      fs.lstatSync = original;
+      syncBuiltinESMExports();
+    }
+  }
+});
+
+test('explicit resume inputs distinguish native case aliases from physically distinct case variants', (t) => {
+  const repoRoot = materialize(t);
+  const prefix = '.apex/work/tasks/context-efficient/';
+  for (const name of ['ledger.md', 'task-result-index.md', 'task-1-report.md']) {
+    const path = prefix + name;
+    const alias = prefix + name.toUpperCase();
+    writeFileSync(join(repoRoot, path), 'existing evidence');
+    const isAlias = existsSync(join(repoRoot, alias));
+    if (!isAlias) writeFileSync(join(repoRoot, alias), 'distinct evidence');
+    const paths = name === 'task-1-report.md' ? [path, alias] : [alias];
+    if (isAlias) {
+      assert.throws(() => buildImplementManifest(resumeManifestInput(repoRoot, paths)),
+        /duplicate or already inventoried resume input/, name);
+    } else {
+      const manifest = buildImplementManifest(resumeManifestInput(repoRoot, paths));
+      assert.deepEqual(manifest.onDemand.slice(-paths.length).map(({ path }) => path), paths);
+    }
+  }
 });

@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.0.4 (2026-09-18)
+
+- Let halted Gear-3 implementation runs receive exact additional evidence through
+  repeatable `--resume-input` arguments or the `resumeInputs` API option.
+- Bind those files only to the new implementation attempt's on-demand inventory,
+  preserving previous evidence and the run's recorded task-result protocol.
+- Reject missing, foreign-run, linked, or duplicate inputs before changing run state,
+  including physical case aliases of other inputs, the ledger, and the task-result index.
+
 ## v1.0.3 (2026-09-18)
 
 - Derive Gear-3 task changed paths from Git-backed execution receipts so abbreviated

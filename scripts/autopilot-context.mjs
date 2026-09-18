@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import {
-  existsSync, readFileSync, statSync,
+  existsSync, lstatSync, readFileSync, realpathSync, statSync,
 } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { assertSafeHubRoot, assertSafeLine, assertSafeRelPath } from './sanitize.mjs';
@@ -717,6 +717,83 @@ export function buildPlanManifest(input) {
   });
 }
 
+// These are user-delimited capabilities, not discovered work artifacts. Unlike
+// typed controller-owned receipts, a named brief or diff can be a task-local file
+// outside the closed work-output grammar. Inspect metadata only; do not preload
+// bodies or enumerate the run directory to infer a resume point.
+export function inspectResumeInputs({ repoRoot, specPath, resumeInputs = [] }) {
+  if (!Array.isArray(resumeInputs)) throw new Error('resume inputs must be a list');
+  if (resumeInputs.length === 0) return [];
+  parseWorkPath(specPath, 'spec');
+  const prefix = `.apex/work/tasks/${basename(specPath, '.md')}/`;
+  const inventoryPaths = [`${prefix}ledger.md`, `${prefix}task-result-index.md`];
+  const seen = new Set(inventoryPaths);
+  const paths = resumeInputs.map((value) => {
+    const path = assertSafeRelPath(value, 'resume input');
+    if (path.split('/').some((part) => part === '' || part === '.')) {
+      throw new Error(`resume input must be canonical: ${path}`);
+    }
+    if (!path.startsWith(prefix)) throw new Error(`resume input must belong to ${prefix}: ${path}`);
+    if (seen.has(path)) throw new Error(`duplicate or already inventoried resume input: ${path}`);
+    seen.add(path);
+    return path;
+  });
+  const root = realpathSync(safeRoot(repoRoot));
+  const seenFileIdentities = new Set();
+  // Bind the optional base inventory first so case aliases cannot reintroduce it.
+  // Keep comparisons physical: distinct case variants are valid on sensitive filesystems.
+  return [...inventoryPaths, ...paths].flatMap((path, pathIndex) => {
+    const inventoried = pathIndex < inventoryPaths.length;
+    const inspect = () => {
+      let cursor = root;
+      const identities = [];
+      const parts = path.split('/');
+      let stat;
+      for (const [index, part] of parts.entries()) {
+        cursor = join(cursor, part);
+        try {
+          stat = lstatSync(cursor, { bigint: true });
+        } catch (error) {
+          if (inventoried && error.code === 'ENOENT') return null;
+          throw error;
+        }
+        if (stat.isSymbolicLink()) throw new Error(`symlink blocks resume input: ${path}`);
+        if (index < parts.length - 1) {
+          if (!stat.isDirectory()) throw new Error(`non-directory ancestor blocks resume input: ${path}`);
+        } else {
+          if (!stat.isFile()) throw new Error(`non-file resume input: ${path}`);
+          if (stat.nlink !== 1n) throw new Error(`hard-linked resume input: ${path}`);
+        }
+        identities.push(`${stat.dev}:${stat.ino}`);
+      }
+      return { identity: identities.join('|'), fileIdentity: identities.at(-1), bytes: Number(stat.size) };
+    };
+    try {
+      const before = inspect();
+      const after = inspect();
+      if (before?.identity !== after?.identity || before?.bytes !== after?.bytes) {
+        throw new Error(`physical identity or size changed for resume input: ${path}`);
+      }
+      if (after === null) return [];
+      if (!Number.isSafeInteger(after.bytes)) throw new Error(`resume input size is not safely representable: ${path}`);
+      if (seenFileIdentities.has(after.fileIdentity)) {
+        throw new Error(`duplicate or already inventoried resume input: ${path}`);
+      }
+      seenFileIdentities.add(after.fileIdentity);
+      if (inventoried) return [];
+      return [{
+        path,
+        purpose: 'explicit resume evidence if unfinished task state requires it',
+        read: 'on-demand',
+        bytes: after.bytes,
+        available: true,
+      }];
+    } catch (error) {
+      throw new Error(`cannot bind resume input ${path}: ${error.message}`);
+    }
+  });
+}
+
 export function buildImplementManifest(input) {
   // Preserve deterministic routing validation without making task standards eager
   // controller context. Task-local child manifests still load their owning standard.
@@ -735,6 +812,7 @@ export function buildImplementManifest(input) {
       onDemand(root, input.ledgerPath, PURPOSES.ledger),
       ...optionalOnDemand(root, input.taskResultIndexPath, PURPOSES.resultIndex),
       ...optionalOnDemand(root, input.specPath, PURPOSES.upstream),
+      ...inspectResumeInputs(input),
     ],
   });
 }
