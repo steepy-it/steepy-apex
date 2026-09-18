@@ -149,6 +149,19 @@ Each phase has immutable, create-only attempt evidence under `.apex/work/tasks/<
 
 The status stream correlates every run, attempt, and discovered session: `run-id`, phase, attempt, display name, readable/raw filenames, then `session-id` plus the descriptor's native identity/open-resume states and qualification. An `ATTEMPT_RESERVED` event durably claims the attempt number before any create-only manifest or log is written, so a crash in artifact preparation cannot collide with that path on resume. A `BASELINE` event records the commit the run starts from, once, so a resumed run keeps it and the aggregate diff still spans the whole chain. A spec's cross-cutting entry that matches no routing row loads no standard and is recorded as `CONTEXT_SURFACE_IGNORED` rather than halting the phase; an unrouted owning or per-task surface still halts as a binding error. Supported references are labelled `open`/`resume`; an `unproven` command is labelled only as an `open-hint`/`resume-hint`. On resume, already-completed phases are skipped, but an unfinished phase always receives a **new attempt** number and new immutable files; no earlier attempt is overwritten.
 
+When an unfinished implementation needs additional existing evidence, name each exact
+repo-relative path with repeatable `--resume-input <path>` arguments to
+`node scripts/autopilot.mjs <spec-path>` (API: `runConductor(specPath, { resumeInputs })`).
+Each file must be inside the selected spec's task directory. The conductor checks the
+bindings before acquiring the lease and again before publication, then adds them only
+to the new implement manifest's `onDemand` inventory. It reads metadata rather than file
+bodies and never scans for sibling or recent artifacts. Missing files, aliases, globs,
+duplicates (including physical case aliases of inputs or the already inventoried ledger/index), other-run paths, symlinked
+ancestors/targets and hardlinks are rejected. Existing manifests and logs stay immutable;
+plan/review inventories and the run's pinned task-result protocol stay unchanged. These
+capabilities provide context, not approval: malformed results still require the existing
+recovery protocol and fresh valid review evidence.
+
 The conductor routes an effective abstract controller tier. A harness adapter applies the concrete model when available, or records an explicit degrade-to-session-model/unsupported outcome with direct provider evidence. The resource JSONL usage ledger is observational, scoped to run, phase, and attempt: every provider measurement has a non-content-revealing source-event fingerprint and is written once. Exact retransmissions are deduplicated while distinct provider phase aggregates in the same session remain separate. Those distinct phase aggregates must not be summed unless provider evidence establishes disjoint scopes; derived displays read the records without re-recording them but do not infer additivity. The ledger guides efficiency work only; the `budget` field is rejected on fresh and resumed gear-3 contracts, and no fixed resource quota terminates healthy work.
 
 ### Privacy and retention

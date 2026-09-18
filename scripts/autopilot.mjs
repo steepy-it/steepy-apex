@@ -42,6 +42,7 @@ import {
 import { homedir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 import { verifyImplementReviews, captureRetainedApproval } from './reviewer-response.mjs';
 import { headlessCommand } from '../adapters/headless.mjs';
 import { decodeHeadlessEvent } from '../adapters/headless-events.mjs';
@@ -59,6 +60,7 @@ import {
   buildImplementManifest,
   buildPlanManifest,
   buildReviewManifest,
+  inspectResumeInputs,
   manifestReferencePrompt,
   materializeSuccessCriteria,
   planPhaseContext,
@@ -1061,7 +1063,7 @@ function readArtifact(cwd, path) {
   return readFileSync(join(cwd, safePath), 'utf8');
 }
 
-function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, baseline, taskResultVersion }) {
+function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, baseline, taskResultVersion, resumeInputs }) {
   const specPath = repositoryPath(cwd, absSpec, 'spec path');
   const specName = basename(absSpec, '.md');
   const routingPath = '.apex/_INDEX.md';
@@ -1129,6 +1131,7 @@ function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, bas
       ledgerPath,
       taskResultIndexPath,
       specPath,
+      resumeInputs,
       tasks: planRoute.tasks,
       testCommand: planRoute.testCommand,
       criterionIds: planRoute.criterionIds,
@@ -1967,6 +1970,7 @@ export async function runConductor(specPath, opts = {}) {
   // ancestor before anything is created.
   let preflightStatus;
   try {
+    inspectResumeInputs({ repoRoot: cwd, specPath: specRelPath, resumeInputs: opts.resumeInputs });
     preflightStatus = readStatus(cwd, statusPath);
   } catch (err) {
     console.error(`autopilot: refusing to drive ${absSpec}: ${err.message}`);
@@ -2024,6 +2028,7 @@ export async function runConductor(specPath, opts = {}) {
     }
     const existingStatus = readStatus(cwd, statusPath);
     validateStatusProtocol(existingStatus);
+    inspectResumeInputs({ repoRoot: cwd, specPath: specRelPath, resumeInputs: opts.resumeInputs });
     mkdirWorkPath(cwd, statusPath, { expect: 'work-output', family: 'status' });
     if (existingStatus === '') appendStatus(cwd, statusPath, 'CONDUCTOR', 'STATUS_PROTOCOL', `version=${STATUS_PROTOCOL_VERSION}`);
     statusEstablished = true;
@@ -2179,6 +2184,7 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
       }
       const prepared = phaseManifestInput({
         phase, cwd, absSpec, runId, attempt, contract, baseline, taskResultVersion,
+        resumeInputs: opts.resumeInputs,
       });
       route = prepared.route;
       unroutedSurfaces = prepared.unroutedSurfaces;
@@ -2474,11 +2480,19 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
 
 export async function main(argv = process.argv.slice(2), opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
-  const specPath = argv.find((a) => !a.startsWith('--'));
-  if (!specPath) {
-    console.error('usage: node scripts/autopilot.mjs <spec-path>');
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: argv, allowPositionals: true, strict: true,
+      options: { 'resume-input': { type: 'string', multiple: true } },
+    });
+    if (parsed.positionals.length !== 1) throw new Error('expected exactly one spec-path argument');
+  } catch (err) {
+    console.error(`autopilot: ${err.message}`);
+    console.error('usage: node scripts/autopilot.mjs <spec-path> [--resume-input <exact-path>]...');
     return 1;
   }
+  const [specPath] = parsed.positionals;
   const absSpec = resolve(cwd, specPath);
   try {
     canonicalSpecRelPath(cwd, specPath);
@@ -2490,7 +2504,7 @@ export async function main(argv = process.argv.slice(2), opts = {}) {
     console.error(`autopilot: spec not found: ${absSpec}`);
     return 1;
   }
-  return runConductor(absSpec, { cwd });
+  return runConductor(absSpec, { ...opts, cwd, resumeInputs: parsed.values['resume-input'] ?? opts.resumeInputs });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
