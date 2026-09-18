@@ -104,8 +104,8 @@
   ```
 
 - Task-reviewer `ISSUES_FOUND` points directly to `task-N-issues.md`; a review-file link is not
-  a substitute. Malformed envelopes still fail closed without task completion. Automatic envelope
-  retries are deferred until correction attempts have explicit correlation and bounded replay evidence.
+  a substitute. Malformed envelopes still fail closed without task completion. Gear-3 autopilot uses the
+  reviewer-response gate before trusting any reviewer result. Authorized review artifacts are excluded from `changed-paths`, which is literal `none`. One changed-paths-only correction requires a correlated reservation, valid unchanged verdict/artifact/signals, independent Git-state verification, and frozen report bytes. Task/final receipts bind the result index and full plan contract; active references use bind-reference rather than duplicate appends. The conductor verifies retained approvals before phase acceptance without rerunning review. Resume never replenishes the budget or repeats implementation.
 - Each chain skill keeps a phase-local role map: in Gear 2, `brainstorm` produces a READY spec
   directly for `implement`, and an explicitly requested light plan may still insert `plan`; in Gear
   3, `brainstorm` produces a READY spec for `plan`, `plan` produces a READY plan for `implement`,

@@ -108,6 +108,8 @@ function classifyRest(rest, value) {
     if (!NAME_SEGMENT.test(rest[1])) fail(`invalid task run name in '${value}'`);
     if (rest.length === 2) fail(`'${value}' is not a work artifact file`);
     if (rest.length === 3) {
+      if (/^(?:task-[1-9]\d*|final)-review-guard-attempt-[1-9]\d*-iteration-[1-9]\d*-(?:baseline|original|reserved|corrected)\.json$/.test(rest[2])) return { type: 'work-output', family: 'review-guard' };
+      if (/^(?:task-[1-9]\d*-(?:review|issues)|final-review(?:-issues)?)\.md$/.test(rest[2])) return { type: 'work-output', family: 'review-artifact' };
       if (rest[2] === 'success-criteria.md') return { type: 'criteria', family: 'criteria' };
       const fixed = FIXED_TASK_FILES.get(rest[2]);
       if (fixed !== undefined) return { type: 'work-output', family: fixed };

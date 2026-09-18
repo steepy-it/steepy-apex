@@ -59,7 +59,7 @@
   loading unrelated leaves. Phase inventories preserve exact core/leaf order and reachability; the
   plan, implement, and review skill protocols own evidence-based condition matching. This is
   intentional skill behavior, not a claim that the manifest builder deterministically interprets
-  human mini-routing conditions.
+  human mini-routing conditions. `reviewer-response.mjs` gates Gear-3 reviewer envelopes with versioned evidence, one reserved changed-paths-only correction, frozen reports, and independent Git observations. The conductor replays required task/final receipts before implementation acceptance and resumed review; retained final approvals keep their original provenance and require a pre-dispatch digest plus prior conductor dispatch. Active references update atomically; the full plan is bound except validated status/consumed-by lifecycle fields. The skill owns dispatch; ignored files/transient writes are outside observation.
 - Derived review evidence is conductor-derived, never child-reported: the aggregate
   `branch-diff.txt` comes from the run's `BASELINE` commit through `git`, covering committed and
   uncommitted tracked work in one call and naming untracked paths that carry no diff. The baseline

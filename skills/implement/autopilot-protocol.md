@@ -69,7 +69,8 @@ artifacts is unresolvable: append the correlated `BLOCKED` marker from Step 0 an
 When you dispatch the implementer, first create and validate the implementer manifest under the
 task-local manifest protocol below, then pass only its path plus scalar dispatch controls; the child
 reads the manifest's authoritative inventory. When you dispatch the task reviewer, first create and
-validate its iteration manifest. On **Issues Found**, create and validate a fix manifest before
+validate its iteration manifest, then follow `reviewer-recovery.md` before dispatch and after return.
+This deterministic gate also applies to the Step-4 whole-branch reviewer. On **Issues Found**, create and validate a fix manifest before
 dispatching the fix back to the same `<surface>-agent`.
 
 Preserve `discovery:unplanned` from the validated implementer/fix envelope in the compact
@@ -95,7 +96,7 @@ aggregate branch diff, and relevant standards are its exact required inventory.
 ## Step 5 — hand off
 
 **Autopilot:** after the handoff verifies and the SKILL.md → "Step 5 — Hand off" lifecycle completes
-(output READY first, input CONSUMED second), also append `<ISO timestamp> — implement — DONE — run-id=<conductor-supplied> attempt=<positive supplied> <commit range>` to `.apex/work/tasks/<spec-basename>/autopilot-status.md`. The session then simply ends — the conductor spawns the `review` skill next. Resume uses only manifest-authorized paths and the same exact-pair proof; manual resume capabilities do not widen an autopilot manifest or authorize scanning for prior outputs.
+(output READY first, input CONSUMED second), run the `reviewer-recovery.md` verify-handoff command, then append `<ISO timestamp> — implement — DONE — run-id=<conductor-supplied> attempt=<positive supplied> <commit range>` to `.apex/work/tasks/<spec-basename>/autopilot-status.md`. The session then simply ends — the conductor spawns the `review` skill next. Resume uses only manifest-authorized paths and the same exact-pair proof; manual resume capabilities do not widen an autopilot manifest or authorize scanning for prior outputs.
 
 ## Task-local manifest protocol
 
