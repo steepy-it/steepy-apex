@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.0.2 (2026-09-18)
+
+- Validate Gear-3 reviewer responses and bind task and final approvals to durable
+  evidence before accepting implementation completion.
+- Allow one response-only correction for a malformed reviewer changed-paths field,
+  preserving the verdict, artifacts, and implementation.
+- Revalidate retained approvals on resume and advance review references after fixes
+  without overwriting earlier attempt evidence.
+- Accept unstaged directory deletions in review snapshots while continuing to reject
+  symlink ancestors and detect subsequent source changes.
+
 ## v1.0.1 (2026-09-18)
 
 - Authorize the task-result index as an on-demand implementation input, allowing

@@ -42,6 +42,7 @@ import {
 import { homedir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyImplementReviews, captureRetainedApproval } from './reviewer-response.mjs';
 import { headlessCommand } from '../adapters/headless.mjs';
 import { decodeHeadlessEvent } from '../adapters/headless-events.mjs';
 import { resolveProviderFromModel, tierModelsForProvider } from '../adapters/model-mappings.mjs';
@@ -2045,12 +2046,35 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
   // forged line surviving into the next run) is distrusted and its phase re-run.
   const statusBeforeRun = readStatus(cwd, statusPath);
   const replayBeforeRun = replayAutopilotStatus(statusBeforeRun);
+  const priorImplementSpawns = normalizeAutopilotStatus(statusBeforeRun)
+    .filter((record) => record.actor === 'CONDUCTOR' && record.event === 'SPAWNED')
+    .map((record) => correlatedIdentity(record.note, 'implement'))
+    .filter((identity) => identity?.phase === 'implement');
+  const retainedForAttempt = (identity) => {
+    const retained = captureRetainedApproval(cwd, { planPath: `.apex/work/plans/${specName}.md`,
+      indexPath: `.apex/work/tasks/${specName}/task-result-index.md`, runId: identity.runId, attempt: identity.attempt });
+    if (retained && !priorImplementSpawns.some((origin) => origin.runId === retained.runId && origin.attempt === retained.attempt)) {
+      throw new Error('retained approval has no conductor-owned prior dispatch');
+    }
+    return retained;
+  };
   let completedPrefix = 0;
   while (
     completedPrefix < PHASES.length
     && workflowScopeCompleted(replayBeforeRun, PHASES[completedPrefix])
   ) {
     completedPrefix += 1;
+  }
+
+  if (completedPrefix === 2) {
+    try {
+      const accepted = normalizeAutopilotStatus(statusBeforeRun).map(acceptedIdentity)
+        .filter((identity) => identity?.phase === 'implement').at(-1);
+      if (!accepted) throw new Error('missing accepted implement identity');
+      verifyImplementReviews(cwd, { planPath: `.apex/work/plans/${specName}.md`,
+        indexPath: `.apex/work/tasks/${specName}/task-result-index.md`, runId: accepted.runId, attempt: accepted.attempt,
+        retainedApproval: retainedForAttempt(accepted) });
+    } catch (error) { return halt(`resume reviewer evidence rejected: ${error.message}`); }
   }
 
   // Same snapshot, same reason: the aggregate diff must span the whole chain, so a
@@ -2106,6 +2130,7 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
 
     const manifestPath = `.apex/work/tasks/${specName}/context/phase-${phase}-attempt-${attempt}.json`;
     let manifestResult;
+    let retainedApproval = null;
     let route;
     let unroutedSurfaces = [];
     try {
@@ -2121,6 +2146,7 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
         repoRoot: cwd,
         manifestPath,
       });
+      if (phase === 'implement') retainedApproval = retainedForAttempt({ runId, attempt });
     } catch (err) {
       const line = appendStatus(
         cwd,
@@ -2386,6 +2412,19 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
       return halt(
         `${identity}: phase exited 0 without recording its completion marker (${COMPLETION_EVENT[phase]}); see ${readableName} (aggregate ${aggregateName})`,
       );
+    }
+    if (phase === 'implement') {
+      try {
+        const reviewReceipt = verifyImplementReviews(cwd, {
+          planPath: `.apex/work/plans/${specName}.md`,
+          indexPath: `.apex/work/tasks/${specName}/task-result-index.md`, runId, attempt, retainedApproval,
+        });
+        if (reviewReceipt.retainedApproval) appendStatus(cwd, statusPath, 'CONDUCTOR', 'REVIEW_APPROVAL_REUSED',
+          `${identity} origin-run-id=${retainedApproval.runId} origin-attempt=${retainedApproval.attempt} state=${retainedApproval.state} digest=${retainedApproval.digest}`);
+      } catch (error) {
+        appendStatus(cwd, statusPath, 'CONDUCTOR', 'ARTIFACT_FAILED', `${identity} reviewer-evidence=${error.message}`);
+        return halt(`${identity}: reviewer evidence rejected: ${error.message}`);
+      }
     }
     appendStatus(cwd, statusPath, 'CONDUCTOR', 'PHASE_ACCEPTED', `${identity} child-event=${COMPLETION_EVENT[phase]}`);
   }

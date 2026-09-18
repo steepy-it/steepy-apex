@@ -11,7 +11,7 @@ The child response contract is exactly four fields:
 ```text
 status: <enum>
 artifact: <sanitized repo-relative path>
-changed-paths: <comma list or none>
+changed-paths: none
 signals: <short machine-readable IDs or none>
 ```
 
@@ -69,7 +69,10 @@ Subagent (reviewer):
     Issues Found. If Issues Found, also write the complete actionable set to authoritative
     `.apex/work/tasks/<plan-basename>/final-review-issues.md` ([FINAL_ISSUE_FILE]); a fix receives that
     artifact, never inline concern prose. If BLOCKED or NEEDS_CONTEXT, write all detail to
-    [FINAL_REVIEW_FILE]. The review is read-only; `changed-paths` must be `none`.
+    [FINAL_REVIEW_FILE]. The review is read-only with respect to application code and other repository sources.
+    Writing the authorized review and issue artifacts is required and excluded from `changed-paths`;
+    `changed-paths` must always be the literal `none`. Do not edit source, stage files, or commit.
+    A response-only correction must preserve the existing verdict and every artifact byte.
 
     Return exactly the four unbulleted fields below and nothing else. Allowed status values are
     APPROVED | ISSUES_FOUND | BLOCKED | NEEDS_CONTEXT. For APPROVED, BLOCKED, or NEEDS_CONTEXT,
@@ -78,6 +81,6 @@ Subagent (reviewer):
 
     status: <enum>
     artifact: <sanitized repo-relative path>
-    changed-paths: <comma list or none>
+    changed-paths: none
     signals: <short machine-readable IDs or none>
 ```

@@ -589,7 +589,7 @@ test('implement: durable artifacts and exact four-field child envelopes keep det
     'signals: <short machine-readable IDs or none>',
   ].join('\n');
   for (const [index, text] of texts.entries()) {
-    assert.ok(text.includes(envelope), `${files[index]} must carry the exact four-field envelope`);
+    assert.ok(text.includes(index >= 2 ? envelope.replace('changed-paths: <comma list or none>', 'changed-paths: none') : envelope), `${files[index]} must carry the exact four-field envelope`);
     assert.match(text, /exactly four fields/i, `${files[index]} must prohibit extra response fields`);
     assert.match(text, /no headings|headings/i, `${files[index]} must prohibit response headings`);
     assert.match(text, /no .*commits.*tests.*prose concern details.*diff.*report.*test transcript/is,
@@ -617,7 +617,7 @@ test('artifact-first child contracts share ordered fields while status domains a
 
   for (const [relativePath, role] of emitters) {
     const text = readFileSync(join(skillsDir, relativePath), 'utf8');
-    const envelope = text.match(/^[ \t]*status: <[^\n]+>\n[ \t]*artifact: <[^\n]+>\n[ \t]*changed-paths: <[^\n]+>\n[ \t]*signals: <[^\n]+>$/m)?.[0];
+    const envelope = text.match(/^[ \t]*status: <[^\n]+>\n[ \t]*artifact: <[^\n]+>\n[ \t]*changed-paths: (?:<[^\n]+>|none)\n[ \t]*signals: <[^\n]+>$/m)?.[0];
     assert.ok(envelope, `${relativePath} must emit the four-field ${role} result contract`);
     assert.deepEqual(
       envelope.split('\n').map((line) => line.trimStart().slice(0, line.trimStart().indexOf(':'))),
@@ -2511,4 +2511,23 @@ test('task reviewer explicitly rejects a review-file pointer for ISSUES_FOUND', 
   assert.match(text, /ISSUES_FOUND artifact must be task-N-issues\.md/);
   assert.match(text, /A link from the review file to the issue file does not satisfy/);
   assert.match(text, /status: ISSUES_FOUND\n    artifact: \[ISSUE_FILE\]/);
+});
+
+
+test('reviewer recovery is wired to task and final review with literal none and a bounded durable reservation', () => {
+  const recovery = readFileSync(join(skillsDir, 'implement/reviewer-recovery.md'), 'utf8');
+  const schema = JSON.parse(readFileSync(join(skillsDir, 'implement/reviewer-response.schema.json'), 'utf8'));
+  assert.equal(schema.properties['changed-paths'].const, 'none');
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.required, ['status', 'artifact', 'changed-paths', 'signals']);
+  for (const file of ['SKILL.md', 'autopilot-protocol.md']) assert.match(readFileSync(join(skillsDir, 'implement', file), 'utf8'), /reviewer-recovery\.md/);
+  for (const file of ['task-reviewer-prompt.md', 'final-review-prompt.md']) {
+    const prompt = readFileSync(join(skillsDir, 'implement', file), 'utf8');
+    assert.doesNotMatch(prompt, /changed-paths: <comma/);
+    assert.match(prompt, /artifacts is required and excluded from `changed-paths`/);
+  }
+  for (const action of ['begin', 'check', 'reserve', 'correct', 'inspect']) assert.ok(recovery.includes(`--action ${action}`));
+  assert.match(recovery, /reservation is consumed even if the process crashes/);
+  assert.match(recovery, /never another implementation/);
+  assert.match(recovery, /do not invent a schema flag/);
 });

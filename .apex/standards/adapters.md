@@ -79,6 +79,7 @@ Adapters declare configured host wiring, not a timeless host-runtime guarantee. 
   and reload; history-unavailable mode retains only the documented process-local fallback.
 - Pi and DSH do not invent harness-specific specialist directories; their scope is
   generic bootstrap guidance and the host capabilities they actually expose.
+- `reviewer-response.mjs` validates text/JSON reviewer payloads against the shipped role schema and preserves values; native constrained generation is a separate optional dispatch capability.
 - A headless descriptor declares its command, protocol, display/native metadata, and
   capabilities. Its decoder maps only source evidence: it never owns workflow policy or invents
   actor hierarchy, and it preserves unknown or malformed source input for fallback.

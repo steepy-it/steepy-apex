@@ -12,7 +12,7 @@ The child response contract is exactly four fields:
 ```text
 status: <enum>
 artifact: <sanitized repo-relative path>
-changed-paths: <comma list or none>
+changed-paths: none
 signals: <short machine-readable IDs or none>
 ```
 
@@ -41,7 +41,10 @@ Subagent (reviewer):
     never enumerate or infer another `.apex/work/**` input, and record the no-manifest degradation.
 
     Read the diff file once. The implementer report contains unverified claims: verify them against
-    the diff. The review is read-only; `changed-paths` must be `none`.
+    the diff. The review is read-only with respect to application code and other repository sources.
+    Writing the authorized review and issue artifacts is required and excluded from `changed-paths`;
+    `changed-paths` must always be the literal `none`. Do not edit source, stage files, or commit.
+    A response-only correction must preserve the existing verdict and every artifact byte.
 
     ## What to Check
     | Category | What to look for |
@@ -82,6 +85,6 @@ Subagent (reviewer):
     General response shape:
     status: <enum>
     artifact: <sanitized repo-relative path>
-    changed-paths: <comma list or none>
+    changed-paths: none
     signals: <short machine-readable IDs or none>
 ```

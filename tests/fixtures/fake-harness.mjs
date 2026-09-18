@@ -39,6 +39,8 @@
 //              group SIGTERM after the direct child is already gone)
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
+import { beginReview, checkReview, reserveRepair, inspectReview, setReviewReference, captureRetainedApproval, verifyImplementReviews } from '../../scripts/reviewer-response.mjs';
+import { reviewPhaseContext } from '../../scripts/autopilot-context.mjs';
 import { dirname, join } from 'node:path';
 
 const prompt = process.argv[2] ?? '';
@@ -123,6 +125,7 @@ function materializePhaseArtifacts() {
     if (process.env.FAKE_HARNESS_SKIP_BRANCH_DIFF !== '1') {
       writeFileSync(join(taskDir, 'branch-diff.txt'), 'diff --git a/a b/a\n+fake implementation\n');
     }
+    materializeReviewGates(manifest, specName);
   }
 }
 
@@ -317,11 +320,155 @@ function taskResumeScenario() {
   appendFileSync(tracePath, 'fix:3\nreview:3:APPROVED\n');
   appendFileSync(ledgerPath, 'Task 3: complete\n');
   writeFileSync(resultPath, index.replace('status: DRAFT', 'status: READY') + result(3));
+  materializeReviewGates(manifest, 'topic');
   append(phase, 'DONE', correlated('corrected and reviewed Task 3'));
   return 0;
 }
 
+function reviewEnvelope(config, paths = 'none', status = 'APPROVED') {
+  return `status: ${status}\nartifact: ${status === 'ISSUES_FOUND' ? config.issues : config.report}\nchanged-paths: ${paths}\nsignals: ${status === 'ISSUES_FOUND' ? 'review:critical' : 'review:clean'}\n`;
+}
+function reviewConfig(manifest, dir, task, iteration = 1) {
+  const scope = task === 'final' ? 'final' : `task-${task}`;
+  return { runId: manifest.runId, attempt: manifest.attempt, iteration, task,
+    report: `${dir}/${scope}-review.md`, issues: `${dir}/${task === 'final' ? 'final-review' : scope}-issues.md` };
+}
+function reviewState(dir, config) {
+  return `${dir}/${config.task === 'final' ? 'final' : `task-${config.task}`}-review-guard-attempt-${config.attempt}-iteration-${config.iteration}`;
+}
+function approveTask(manifest, dir, task) {
+  const config = reviewConfig(manifest, dir, task);
+  const state = reviewState(dir, config);
+  beginReview(process.cwd(), state, config);
+  writeFileSync(config.report, '# Review\n**Approved** — synthetic reviewer evidence.\n');
+  if (!checkReview(process.cwd(), state, reviewEnvelope(config)).accepted) throw new Error('synthetic task gate rejected');
+  return state;
+}
+function materializeReviewGates(manifest, specName) {
+  if (process.env.FAKE_HARNESS_SKIP_REVIEW_GATE === '1') return;
+  const dir = `.apex/work/tasks/${specName}`;
+  const plan = `.apex/work/plans/${specName}.md`, indexPath = `${dir}/task-result-index.md`;
+  let index = readFileSync(indexPath, 'utf8');
+  let route;
+  try { route = reviewPhaseContext(readFileSync(plan, 'utf8'), index); }
+  catch { return; } // Malformed-index fixtures are rejected by the real conductor.
+  for (const task of route.tasks) {
+    if (index.includes(`Reviewer gate Task ${task.task}: `) || task.complexity === 'mechanical') continue;
+    index += `Reviewer gate Task ${task.task}: ${approveTask(manifest, dir, task.task)}\n`;
+  }
+  let config = { ...reviewConfig(manifest, dir, 'final'), plan, index: indexPath };
+  let state = reviewState(dir, config);
+  writeFileSync(indexPath, index);
+  setReviewReference(process.cwd(), { indexPath, state });
+  beginReview(process.cwd(), state, config);
+  if (process.env.FAKE_HARNESS_FINAL_ISSUES === '1') {
+    writeFileSync(config.report, 'Issues found in branch integration.\n');
+    writeFileSync(config.issues, 'Fix branch ordering.\n');
+    if (checkReview(process.cwd(), state, reviewEnvelope(config, 'none', 'ISSUES_FOUND')).status !== 'ISSUES_FOUND') throw new Error('expected final issues');
+    const previousState = state;
+    const previousBytes = readFileSync(`${state}-original.json`);
+    writeFileSync('branch-fix.js', 'branch ordering corrected\n');
+    config = { ...config, iteration: 2 }; state = reviewState(dir, config);
+    setReviewReference(process.cwd(), { indexPath, state, previousState });
+    beginReview(process.cwd(), state, config);
+    if (!readFileSync(`${previousState}-original.json`).equals(previousBytes)) throw new Error('previous review evidence overwritten');
+  }
+  index = readFileSync(indexPath, 'utf8');
+  writeFileSync(config.report, '## Verdict\nApproved; all task receipts checked.\n');
+  if (!checkReview(process.cwd(), state, reviewEnvelope(config)).accepted) throw new Error('synthetic final gate rejected');
+  const mutation = process.env.FAKE_HARNESS_GATE_MUTATION;
+  if (mutation === 'drop-task') writeFileSync(indexPath, index.replace(/^Reviewer gate Task 1:.*\n/m, ''));
+  if (mutation === 'change-handoff') writeFileSync(indexPath, index.replace('signals: tdd:red-green', 'signals: none'));
+  if (mutation === 'change-code') writeFileSync('unapproved.js', 'changed after final review\n');
+  if (mutation === 'corrupt-receipt') {
+    const recordPath = `${state}-original.json`;
+    const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+    record.envelope.status = 'ISSUES_FOUND';
+    writeFileSync(recordPath, JSON.stringify(record));
+  }
+
+}
+
+function finalApprovedResumeScenario() {
+  const manifest = JSON.parse(readFileSync(manifestPathFromPrompt(), 'utf8'));
+  const dir = '.apex/work/tasks/topic', trace = `${dir}/final-resume-trace.txt`;
+  if (!existsSync(trace)) {
+    materializePhaseArtifacts();
+    writeFileSync(trace, 'implementation-and-final-review\n');
+    append(phase, 'BLOCKED', correlated('synthetic interruption after final approval, before DONE'));
+    return 1;
+  }
+  const options = { planPath: '.apex/work/plans/topic.md', indexPath: `${dir}/task-result-index.md`, runId: manifest.runId, attempt: manifest.attempt };
+  const retainedApproval = captureRetainedApproval(process.cwd(), options);
+  if (process.env.FAKE_HARNESS_FINAL_RESUME_MUTATION === '1') writeFileSync('post-approval.js', 'unexpected code change\n');
+  // Deliberate malformed-child mode leaves the real conductor to refuse the change.
+  if (process.env.FAKE_HARNESS_FINAL_RESUME_MUTATION !== '1') verifyImplementReviews(process.cwd(), { ...options, retainedApproval });
+  appendFileSync(trace, 'resume-existing-approval\n');
+  append(phase, 'DONE', correlated('retained final approval; no new implementation or review'));
+  return 0;
+}
+
+// Real gate + real conductor, synthetic reviewer transport. Attempt 1 pauses
+// after a malformed approval; attempt 2 corrects only that response and advances.
+function reviewerRecoveryScenario() {
+  const manifest = JSON.parse(readFileSync(manifestPathFromPrompt(), 'utf8'));
+  const dir = '.apex/work/tasks/topic';
+  const ledger = `${dir}/ledger.md`, index = `${dir}/task-result-index.md`, trace = `${dir}/scenario-trace.txt`;
+  const resultLine = (id) => `- Task ${id}: DONE; artifact: ${dir}/task-${id}-report.md; changed-paths: none; signals: none\n`;
+  if (!existsSync(ledger)) {
+    writeFileSync(ledger, ''); writeFileSync(index, '# Results\n'); writeFileSync(trace, '');
+    for (const id of ['1', '2', '3']) {
+      appendFileSync(trace, `implement:${id}\n`);
+      const state = approveTask(manifest, dir, id);
+      appendFileSync(index, resultLine(id) + `Reviewer gate Task ${id}: ${state}\n`);
+      appendFileSync(ledger, `Task ${id}: complete\n`);
+    }
+    appendFileSync(trace, 'implement:4\n');
+    writeFileSync('tracked.txt', 'task 4 implementation\n');
+    let config = reviewConfig(manifest, dir, '4');
+    let state = reviewState(dir, config);
+    beginReview(process.cwd(), state, config);
+    writeFileSync(config.report, '# Review\nIssues found.\n'); writeFileSync(config.issues, 'Fix order and test order.\n');
+    if (checkReview(process.cwd(), state, reviewEnvelope(config, 'none', 'ISSUES_FOUND')).status !== 'ISSUES_FOUND') throw new Error('expected issues');
+    appendFileSync(trace, 'review:4:ISSUES_FOUND\nfix:4\n');
+    writeFileSync('tracked.txt', 'task 4 corrected\n');
+    config = reviewConfig(manifest, dir, '4', 2); state = reviewState(dir, config);
+    beginReview(process.cwd(), state, config);
+    writeFileSync(config.report, '# Review\n**Approved**; order tests passed.\n');
+    const response = reviewEnvelope(config, config.report);
+    if (checkReview(process.cwd(), state, response).status !== 'REPAIRABLE') throw new Error('expected recoverable envelope');
+    appendFileSync(trace, 'review:4:malformed-approval\n');
+    appendFileSync(ledger, `Pending reviewer gate: ${state}\n`);
+    append(phase, 'BLOCKED', correlated('synthetic interruption before response correction reservation'));
+    return 1;
+  }
+  const state = readFileSync(ledger, 'utf8').match(/^Pending reviewer gate: (\S+)$/m)?.[1];
+  const before = inspectReview(process.cwd(), state);
+  if (before.status !== 'REPAIRABLE') throw new Error('unexpected pending gate');
+  reserveRepair(process.cwd(), state);
+  if (process.env.FAKE_HARNESS_REVIEW_MUTATION === '1') writeFileSync('tracked.txt', 'unauthorized reviewer mutation\n');
+  const paths = process.env.FAKE_HARNESS_BAD_CORRECTION === '1' ? before.config.report : 'none';
+  const repaired = checkReview(process.cwd(), state, reviewEnvelope(before.config, paths), true);
+  appendFileSync(trace, 'response-only:4\n');
+  if (!repaired.accepted) { append(phase, 'BLOCKED', correlated(repaired.reason)); return 1; }
+  appendFileSync(ledger, 'Task 4: complete\n');
+  appendFileSync(index, resultLine('4') + `Reviewer gate Task 4: ${state}\n`);
+  appendFileSync(trace, 'implement:5\n');
+  const next = approveTask(manifest, dir, '5');
+  appendFileSync(ledger, 'Task 5: complete\n');
+  appendFileSync(index, resultLine('5') + `Reviewer gate Task 5: ${next}\n`);
+  materializeReviewGates(manifest, 'topic');
+  append(phase, 'DONE', correlated('response recovered and task 5 completed'));
+  return 0;
+}
+
 switch (mode) {
+  case 'final-approved-resume':
+    process.exit(finalApprovedResumeScenario());
+    break;
+  case 'reviewer-recovery':
+    process.exit(reviewerRecoveryScenario());
+    break;
   case 'task-resume':
     process.exit(taskResumeScenario());
     break;

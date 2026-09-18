@@ -123,6 +123,9 @@ Hermetic fake-harness cases may prove parser, redaction, identity, and false-PAS
   copy in review. The same tension applies to the `MODEL_SECTION_WITH_REVIEW` /
   `MODEL_SECTION_WITHOUT_REVIEW` canonical strings, which byte-lock the five chain SKILL.mds
   from one test file.
+- Reviewer-response regression uses real Git, the real conductor and synthetic reviewer responses:
+  malformed approval resumes once, advances to the next task, preserves prior logs/progress, and
+  blocks code changes, invalid corrections, receipt bypass, and corrupted replay. Coverage also resumes retained final approval, advances final-review iterations, and rejects changed plan requirements while permitting exact lifecycle transitions. It does not prove native model compliance.
 - Autopilot resume coverage composes the real conductor with a synthetic three-task child:
   completed tasks 1–2, task 3 issues and halt, explicit ledger/index capabilities on a new attempt,
   then simulated correction and approval. It verifies fresh absence, resumed availability and

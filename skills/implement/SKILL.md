@@ -394,7 +394,7 @@ plan basename for plan-backed work and the spec basename for direct Gear 2.
    conversation history.
 2. **Implement.** If your harness provides a task/subagent tool and the registered `<surface>-agent`, dispatch that agent using `implementer-prompt.md`. In autopilot (`drive: autopilot`), create and validate the implementer manifest per `autopilot-protocol.md`, then pass only its path plus scalar dispatch controls. In manual drive, pass the brief path, owning standard, surface test command, report-file path, and commit-authorization flag directly and record this no-manifest degradation in the ledger. Otherwise load the owning surface standard and implement the task inline under the same rigid TDD, then run the Step 3.4 review as a dedicated same-session pass at the end of the task; state the inline degradation in the ledger. Pick the model from the task's `Complexity` line: mechanical → cheap, integration → standard, design → most-capable. To override, record a one-line reason in the ledger. If the plan has no `Complexity` lines, classify the task yourself at dispatch; direct Gear 2 instead uses its mandatory `Feature complexity`. The implementer writes a **failing test** first (rigid TDD), then the minimum code, self-reviews, and reports.
 3. **Diff.** Capture the change to `.apex/work/tasks/<entry-basename>/task-N-diff.txt` — `git diff <base>..<head>` if commits are authorized, else `git diff` of the working tree.
-4. **Review** (**Gear 3 only** — skip in gears 1–2; rely on the implementer's self-review instead). Review only tasks that carry judgment; the task's `Complexity` line decides: `integration`/`design` → review, `mechanical` → skip (the Step 4 whole-branch review catches it). To override either way, record the reason in the ledger. When you do review, dispatch a fresh reviewer subagent using `task-reviewer-prompt.md`. In autopilot (`drive: autopilot`), create and validate its iteration manifest per `autopilot-protocol.md`; in manual drive pass the same four required artifacts directly and record the degradation. The hub index is never eager: include it only as `onDemand`, and read it only for a named suspected routing conflict whose reason is recorded. On **Issues Found**, require `task-N-issues.md`, then create and validate a fix manifest before dispatching the fix back to the same `<surface>-agent` (inline: apply the fix yourself). Regenerate the diff and re-review until **Status: Approved**. Fix loops remain sequential.
+4. **Review** (**Gear 3 only** — skip in gears 1–2; rely on the implementer's self-review instead). Review only tasks that carry judgment; the task's `Complexity` line decides: `integration`/`design` → review, `mechanical` → skip (the Step 4 whole-branch review catches it). In manual drive, to override either way, record the reason in the ledger. Autopilot requires validated receipts for every integration/design task; mechanical tasks may still opt into review. When you do review, dispatch a fresh reviewer subagent using `task-reviewer-prompt.md`. In autopilot (`drive: autopilot`), create and validate its iteration manifest per `autopilot-protocol.md`; in manual drive pass the same four required artifacts directly and record the degradation. The hub index is never eager: include it only as `onDemand`, and read it only for a named suspected routing conflict whose reason is recorded. On **Issues Found**, require `task-N-issues.md`, then create and validate a fix manifest before dispatching the fix back to the same `<surface>-agent` (inline: apply the fix yourself). Regenerate the diff and re-review until **Status: Approved**. Fix loops remain sequential.
 5. **Mark complete.** Append one line to the ledger, recording the model tier used — or `session model` where the harness gives no per-dispatch choice — and any degradation exercised (inline implementation, same-session review pass): `Task N: complete (model: standard, review: 1 iteration, commits <base7>..<head7>)` if authorized, else `Task N: complete (model: cheap, review: skipped (mechanical), no commit)`. On a harness with no task tool the line records the degradation, e.g. `Task N: complete (session model, inline impl + same-session review, 1 iteration, no commit)`. Also append the compact validated implementer outcome to `.apex/work/tasks/<entry-basename>/task-result-index.md` using this exact bullet grammar (one line per task, in execution order):
 
    `- Task <id>: <DONE|DONE_WITH_CONCERNS>; artifact: <sanitized repo-relative path>; changed-paths: <comma list or none>; signals: <short machine-readable IDs or none>`
@@ -438,11 +438,21 @@ diff, report, or test transcript may be in the response. Implementer/fix statuse
 
 Before trusting a child result, validate the four-field shape, status, sanitized repo-relative artifact
 path, and signals; also validate field order and comma-list-or-`none` changed paths.
-A malformed envelope is never trusted: autopilot records correlated `BLOCKED` and exits; manual drive
+A malformed envelope is never trusted: autopilot records correlated `BLOCKED` and exits unless the
+reviewer-only bounded recovery below succeeds; manual drive
 records the explicit same-session/degraded handling in the ledger. The controller opens the artifact only when
 its action status requires the next decision; otherwise it passes the artifact reference to
 the next consumer. The ledger and task-result index record only the compact outcome and artifact reference,
 never full detail.
+
+In Gear-3 autopilot, before every task or whole-branch reviewer dispatch, read and follow
+`reviewer-recovery.md`: establish the deterministic baseline, gate even a valid response, and allow
+at most one reserved response-only correction. Reviewer `changed-paths` is literal `none`, excluding
+the authorized review/issue artifacts. Never normalize it automatically. An accepted APPROVED
+receipt plus independently unchanged code is required before marking complete; a report alone is
+insufficient. Bind task/final receipt references in the result index per `reviewer-recovery.md`;
+the conductor verifies them independently before accepting implement DONE. Preserve existing
+implementation, fixes, completed tasks, and prior attempt evidence.
 
 ### Multi-task artifact-flow proof
 
