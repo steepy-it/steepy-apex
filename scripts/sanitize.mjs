@@ -19,18 +19,25 @@ export const PROJECT_MOUNTS = ['.apex', '.agents', '.claude', '.codex', '.openco
 // workflow state that no stable reader, project mount, or planner scan enters.
 export const LOCAL_AREA_NAMES = Object.freeze(['work', 'inception']);
 
-// Physical identities of each existing local area under the hub directory: the
-// entry itself when it is a directory and, when it resolves to one, its
-// target. An absent or unreadable area has no identity to exclude.
+// Physical identities of each existing local area under the hub directory.
+// `entry` is the literal `.apex/<name>` entry (a directory, or the link itself
+// when the area is a symlink); `target` is a linked area's directory target,
+// which may alias stable content and must be refused loudly, never skipped.
+// An absent or unreadable area has no identity to exclude.
 export function localAreaIdentities(apexDir) {
   const identities = [];
   for (const name of LOCAL_AREA_NAMES) {
-    for (const probe of [lstatSync, statSync]) {
-      let stat;
-      try { stat = probe(join(apexDir, name), { bigint: true }); }
-      catch { continue; }
-      if (stat.isDirectory()) identities.push(Object.freeze({ name, dev: stat.dev, ino: stat.ino }));
-    }
+    const path = join(apexDir, name);
+    let entry;
+    try { entry = lstatSync(path, { bigint: true }); }
+    catch { continue; }
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+    identities.push(Object.freeze({ name, kind: 'entry', dev: entry.dev, ino: entry.ino }));
+    if (!entry.isSymbolicLink()) continue;
+    let target;
+    try { target = statSync(path, { bigint: true }); }
+    catch { continue; }
+    if (target.isDirectory()) identities.push(Object.freeze({ name, kind: 'target', dev: target.dev, ino: target.ino }));
   }
   return identities;
 }

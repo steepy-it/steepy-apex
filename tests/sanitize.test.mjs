@@ -58,7 +58,7 @@ test('the local-area registry names both repository-local .apex areas', () => {
   assert.equal(Object.isFrozen(LOCAL_AREA_NAMES), true);
 });
 
-test('local-area identities bind each existing area and the physical target of a linked area', () => {
+test('local-area identities distinguish each literal area entry from a linked area target', () => {
   withRepo('identities', (root, base) => {
     assert.deepEqual(localAreaIdentities(join(root, '.apex')), []);
     mkdirSync(join(root, '.apex', 'work'));
@@ -67,11 +67,12 @@ test('local-area identities bind each existing area and the physical target of a
     symlinkSync(external, join(root, '.apex', 'inception'), 'dir');
     const identities = localAreaIdentities(join(root, '.apex'));
     const work = lstatSync(join(root, '.apex', 'work'), { bigint: true });
+    const link = lstatSync(join(root, '.apex', 'inception'), { bigint: true });
     const target = lstatSync(external, { bigint: true });
-    assert.deepEqual(identities.map(({ name, dev, ino }) => [name, dev, ino]), [
-      ['work', work.dev, work.ino],
-      ['work', work.dev, work.ino],
-      ['inception', target.dev, target.ino],
+    assert.deepEqual(identities.map(({ name, kind, dev, ino }) => [name, kind, dev, ino]), [
+      ['work', 'entry', work.dev, work.ino],
+      ['inception', 'entry', link.dev, link.ino],
+      ['inception', 'target', target.dev, target.ino],
     ]);
   });
 });

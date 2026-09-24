@@ -1409,7 +1409,10 @@ function recordFsAccess(fn) {
       };
     }
     syncBuiltinESMExports();
-    return { result: fn(), accesses };
+    let result;
+    let error;
+    try { result = fn(); } catch (caught) { error = caught; }
+    return { result, error, accesses };
   } finally {
     Object.assign(fs, originals);
     syncBuiltinESMExports();
@@ -1443,7 +1446,8 @@ test('planner provenance enumeration skips both local areas by name and physical
       symlinkSync(join(outside, 'area-target'), join(hubRoot, '.apex', area), 'dir');
       symlinkSync(outside, join(hubRoot, '.codex'), 'dir');
       const linked = recordFsAccess(() => planProjectScaffold({ hubRoot, model: model(), templatesDir }));
-      assert.equal(JSON.stringify(linked.result.conflicts).includes(`${area}-linked-sentinel`), false, area);
+      assert.match(linked.error?.message ?? '', new RegExp(`\\.codex/area-target aliases excluded \\.apex/${area}`, 'u'),
+        `${area}: a provider directory aliased by a linked area is refused, never silently dropped`);
       assert.deepEqual(accessesUnder(linked.accesses, [
         join(outside, 'area-target'), join(realpathSync.native(outside), 'area-target'),
       ]), [], area);
@@ -1469,5 +1473,26 @@ test('a root instruction mount into inception is a planner symlink conflict whos
     assert.doesNotMatch(JSON.stringify(result), /INCEPTION_MOUNT_BODY_SENTINEL/u);
   } finally {
     rmSync(hubRoot, { recursive: true, force: true });
+  }
+});
+
+test('I1: a provider directory aliased by a linked local area is refused before any canonical read', () => {
+  for (const area of LOCAL_AREA_NAMES) {
+    const hubRoot = tempHub();
+    try {
+      const canonical = renderProjectArtifact('web-agent-claude', normalizeProjectModel(model()));
+      put(hubRoot, '.claude/agents/web-agent.md', canonical);
+      put(hubRoot, '.claude/agents/nested/orphan.md', `<!-- steepy:generated:${area}-aliased-orphan:v1 -->\n`);
+      mkdirSync(join(hubRoot, '.apex'), { recursive: true });
+      symlinkSync('../.claude/agents', join(hubRoot, '.apex', area), 'dir');
+      const { result, error, accesses } = recordFsAccess(() => planProjectScaffold({ hubRoot, model: model(), templatesDir }));
+      assert.equal(result, undefined, area);
+      assert.match(error?.message ?? '', new RegExp(`\\.claude/agents aliases excluded \\.apex/${area}`, 'u'), area);
+      assert.deepEqual(accessesUnder(accesses, [
+        join(hubRoot, '.claude', 'agents'), join(realpathSync.native(hubRoot), '.claude', 'agents'),
+      ]), [], `${area}: nothing inside the aliased provider directory is read first`);
+    } finally {
+      rmSync(hubRoot, { recursive: true, force: true });
+    }
   }
 });

@@ -2787,3 +2787,77 @@ test('case aliases of inception are refused before any hidden byte is consumed',
     assertNoLocalBodyAccess(hub, accesses);
   });
 });
+
+test('I1(a,d): a local area linked to a stable .apex subdirectory is a hub error, never a silent skip', () => {
+  for (const area of ['work', 'inception']) {
+    withTempRepo(`alias-hub-${area}`, (hub) => {
+      putPortable(hub, '.apex/_INDEX.md', '# Index\n');
+      putPortable(hub, '.apex/sub/orphan.md', `# ${LOCAL_SENTINEL}\n[Broken](missing.md)\n`);
+      symlinkSync('sub', join(hub, '.apex', area), 'dir');
+      const { result, accesses } = recordFsAccess(() => classifyHub(hub));
+      assert.equal(result.state, 'hub', area);
+      const messages = errorMessages(result.violations);
+      assert.match(messages, new RegExp(`stable-read: \\.apex/sub aliases excluded \\.apex/${area}`, 'u'), area);
+      assert.doesNotMatch(messages, new RegExp(LOCAL_SENTINEL, 'u'), area);
+      assertNoLocalBodyAccess(hub, accesses);
+      const physical = realpathSync.native(hub);
+      assert.deepEqual(accesses.filter(({ path }) => under(path, join(hub, '.apex', 'sub'))
+        || under(path, join(physical, '.apex', 'sub'))), [], `${area}: the aliased area storage is never read`);
+      const loud = captureMain([hub]);
+      assert.equal(loud.code, 1, area);
+      assert.doesNotMatch(loud.out, /coherent/iu, area);
+    });
+  }
+});
+
+test('I1(b,d): a work area linked to residual routing beside a pre-init descriptor is not a pre-hub', () => {
+  withTempRepo('alias-prehub', (repo) => {
+    seedInception(repo);
+    rmSync(join(repo, '.apex', 'work'), { recursive: true });
+    putPortable(repo, '.apex/decisions/_INDEX.md', '| `web` | [s](../standards/web.md) | `web-agent` |\n');
+    symlinkSync('decisions', join(repo, '.apex', 'work'), 'dir');
+    const { result, accesses } = recordFsAccess(() => classifyHub(repo));
+    assert.equal(result.state, 'invalid');
+    const messages = errorMessages(result.violations);
+    assert.match(messages, /missing _INDEX\.md/u);
+    assert.match(messages, /stable-read: \.apex\/decisions aliases excluded \.apex\/work/u);
+    assertNoLocalBodyAccess(repo, accesses, { descriptor: true });
+    const physical = realpathSync.native(repo);
+    assert.deepEqual(accesses.filter(({ path }) => under(path, join(physical, '.apex', 'decisions'))), []);
+    const hook = captureMain(['--quiet', repo]);
+    assert.equal(hook.code, 1);
+  });
+});
+
+test('M1: a reader-refused stable document is reported once, not also as an orphan', () => {
+  const hub = portableHub();
+  const outside = mkdtempSync(join(tmpdir(), 'steepy-hardlink-outside-'));
+  try {
+    const index = join(hub, '.apex', '_INDEX.md');
+    writeFileSync(index, `${readFileSync(index, 'utf8')}- [Notes](notes.md)\n`);
+    putPortable(hub, '.apex/notes.md', '# Notes\n');
+    putPortable(hub, '.apex/loose.md', '# Loose\n');
+    linkSync(join(hub, '.apex', 'notes.md'), join(outside, 'notes.md'));
+    linkSync(join(hub, '.apex', 'loose.md'), join(outside, 'loose.md'));
+    const messages = errorMessages(collectViolations(hub));
+    assert.match(messages, /stable-read: \.apex\/notes\.md is hard-linked/u);
+    assert.match(messages, /stable-read: \.apex\/loose\.md is hard-linked/u);
+    assert.doesNotMatch(messages, /anti-orphan: \.apex\/(notes|loose)\.md/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('M3: a pre-init descriptor refused only by a stable-read failure carries an inception reason', () => {
+  withTempRepo('prehub-read-failure', (repo) => {
+    seedInception(repo);
+    putPortable(repo, 'notes.md', '# Notes\n');
+    symlinkSync(join(repo, 'notes.md'), join(repo, '.apex', 'stray.md'));
+    const result = classifyHub(repo);
+    assert.equal(result.state, 'invalid');
+    const messages = errorMessages(result.violations);
+    assert.match(messages, /stable-read: \.apex\/stray\.md is symlink/u);
+    assert.match(messages, /inception: pre-hub state not recognized: stable reads failed/u);
+  });
+});

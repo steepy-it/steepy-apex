@@ -702,7 +702,7 @@ test('the physical target of a linked local area is excluded when reached throug
       assert.equal(result.localArea, area.name);
       assert.equal(result.text, undefined);
       assert.deepEqual(accesses, []);
-      assert.equal(messages(diagnostics), `stable-read: .claude/area/x.md enters excluded ${area.path}`);
+      assert.equal(messages(diagnostics), `stable-read: .claude/area/x.md aliases excluded ${area.path}`);
     });
   }
 });
@@ -749,5 +749,40 @@ test('controllers read one stable document through a throwing convenience with t
         return true;
       }, path);
     }
+  });
+});
+
+test('only the literal local-area entries are local-area entries; a linked target alias is a loud refusal', () => {
+  for (const area of LOCAL_AREAS) {
+    withTemp(`literal-${area.name}`, (base) => {
+      const repo = repoWithHub(base, { '.apex/_INDEX.md': '# Index\n', '.apex/sub/orphan.md': '# ALIAS_SENTINEL\n' });
+      symlinkSync('sub', join(repo, ...area.path.split('/')), 'dir');
+      const diagnostics = [];
+      const reader = createStableReader(repo, diagnostics);
+      assert.equal(reader.isLocalAreaEntry(area.path), true, area.name);
+      assert.equal(reader.isLocalAreaEntry('.apex/sub'), false, area.name);
+      assert.equal(reader.isLocalAreaEntry(`.apex/notes/${area.name}`), false, area.name);
+      assert.equal(reader.isLocalAreaEntry('.apex'), false, area.name);
+      assert.deepEqual(diagnostics, []);
+      const { result, accesses } = recordFsAccess(() => reader.inspect('.apex/sub', { kind: 'directory' }));
+      assert.equal(result.state, 'unsafe');
+      assert.equal(result.localArea, area.name);
+      assert.deepEqual(accesses, []);
+      assert.equal(messages(diagnostics), `stable-read: .apex/sub aliases excluded ${area.path}`);
+    });
+  }
+});
+
+test('a stored case alias of a literal local-area entry is still that entry', (t) => {
+  withTemp('literal-case', (base) => {
+    const repo = repoWithHub(base);
+    mkdirSync(join(repo, '.apex', 'INCEPTION'));
+    if (!sameIdentity(join(repo, '.apex', 'inception'), join(repo, '.apex', 'INCEPTION'))) {
+      t.skip('temporary storage keeps case-distinct directory identities');
+      return;
+    }
+    const reader = createStableReader(repo, []);
+    assert.equal(reader.isLocalAreaEntry('.apex/INCEPTION'), true);
+    assert.equal(reader.isLocalAreaEntry('.apex/InCePtIoN'), true);
   });
 });

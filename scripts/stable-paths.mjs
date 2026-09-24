@@ -120,12 +120,14 @@ export function bindApexRoot(root) {
 }
 
 // A local area under the bound hub is excluded by its physical identity too,
-// so neither a case alias nor another mount reaching a linked area's target
-// can enter it.
+// so neither a case alias of its entry nor another path reaching a linked
+// area's target can enter it. `kind` keeps the literal entry apart from a
+// linked target, which aliases stable content and is always refused loudly.
 function bindLocalAreaIdentities(apex) {
   if (apex.state !== 'present') return [];
-  return localAreaIdentities(apex.path).map(({ name, dev, ino }) => ({
+  return localAreaIdentities(apex.path).map(({ name, kind, dev, ino }) => ({
     area: LOCAL_AREAS.find((area) => area.name === name),
+    kind,
     dev,
     ino,
   }));
@@ -167,9 +169,25 @@ export function createStableReader(hubRoot, diagnostics = [], rootAdmission = ad
   };
   if (rootAdmission.state === 'unsafe') report('hub root', rootAdmission.reason);
 
-  function localAreaRefusal(area, display, reportUnsafe) {
-    if (reportUnsafe) report(display, `enters excluded ${area.path}`);
+  function localAreaRefusal(area, display, reportUnsafe, verb = 'enters') {
+    if (reportUnsafe) report(display, `${verb} excluded ${area.path}`);
     return { state: 'unsafe', label: display, physicalReason: area.physicalReason, localArea: area.name };
+  }
+
+  // True only for a literal `.apex/<area>` entry: the exact name, or a stored
+  // case alias whose own lstat identity is that entry. A linked area's target
+  // is never a local-area entry, so callers cannot silently skip stable content.
+  function isLocalAreaEntry(rawPath) {
+    if (rootAdmission.state !== 'present' || apex.state !== 'present' || typeof rawPath !== 'string') return false;
+    const parts = splitNativePath(rawPath).filter((part) => part !== '' && part !== '.');
+    if (parts.length !== 2 || parts[0] !== '.apex' || parts[1] === '..') return false;
+    if (LOCAL_AREAS.some((area) => area.name === parts[1])) return true;
+    try {
+      const stat = lstatSync(join(apex.path, parts[1]), { bigint: true });
+      return localAreaIdentities.some(({ kind, dev, ino }) => kind === 'entry' && stat.dev === dev && stat.ino === ino);
+    } catch {
+      return false;
+    }
   }
 
   function inspect(rawPath, { base = '', kind = 'file', reportUnsafe = true } = {}) {
@@ -244,10 +262,10 @@ export function createStableReader(hubRoot, diagnostics = [], rootAdmission = ad
         if (reportUnsafe) report(display, 'changed physical identity');
         return { state: 'unsafe', label: display };
       }
-      const boundArea = stat.isDirectory()
-        ? localAreaIdentities.find(({ dev, ino }) => stat.dev === dev && stat.ino === ino)?.area
+      const bound = stat.isDirectory()
+        ? localAreaIdentities.find(({ dev, ino }) => stat.dev === dev && stat.ino === ino)
         : undefined;
-      if (boundArea) return localAreaRefusal(boundArea, display, reportUnsafe);
+      if (bound) return localAreaRefusal(bound.area, display, reportUnsafe, bound.kind === 'target' ? 'aliases' : 'enters');
       const hasLaterComponent = index < parts.length - 1;
       if (stat.isSymbolicLink()) {
         if (reportUnsafe) report(display, hasLaterComponent ? 'has symlinked component' : 'is symlink');
@@ -346,7 +364,7 @@ export function createStableReader(hubRoot, diagnostics = [], rootAdmission = ad
   }
 
   const fromAbsolute = (path) => relative(root, path);
-  return { diagnostics, fromAbsolute, inspect, read, report, root };
+  return { diagnostics, fromAbsolute, inspect, isLocalAreaEntry, read, report, root };
 }
 
 // A refusal of one stable document as a throwable error carrying the reader's
