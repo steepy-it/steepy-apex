@@ -138,8 +138,8 @@ test('npm tarball includes the engine scripts', () => {
   ], 'engine scripts');
 });
 
-test('npm tarball includes both inception helpers, which import only Node built-ins and packaged siblings', () => {
-  const helpers = ['scripts/inception-paths.mjs', 'scripts/inception-state.mjs'];
+test('npm tarball includes the inception helpers, which import only Node built-ins and packaged siblings', () => {
+  const helpers = ['scripts/inception-paths.mjs', 'scripts/inception-state.mjs', 'scripts/inception-handoff.mjs'];
   assertPacked(helpers, 'inception helpers');
   for (const helper of helpers) {
     const specifiers = moduleSpecifiers(readFileSync(join(root, helper), 'utf8'));
