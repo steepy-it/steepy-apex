@@ -9,6 +9,7 @@
 // reads only the descriptor and the ignore guard; references are data.
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { lstatSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -176,6 +177,13 @@ export function parseInceptionState(input) {
   return valid;
 }
 
+function sameReference(left, right) {
+  return left?.path === right?.path && left?.sha256 === right?.sha256;
+}
+
+// The static schema stays open so seeded descriptors remain classifiable; the
+// transfer rules apply to transitions: a started init names its handoff and
+// keeps it, and a completed init names its receipt and keeps it.
 export function assertInceptionTransition(previous, next) {
   const before = validateInceptionState(previous);
   const after = validateInceptionState(next);
@@ -184,6 +192,18 @@ export function assertInceptionTransition(previous, next) {
   const to = INCEPTION_INIT_STATUSES.indexOf(after.init.status);
   if (to < from) {
     fail('INCEPTION_STATE_TRANSITION', `init.status cannot move back from ${before.init.status} to ${after.init.status}`);
+  }
+  if (from === 0 && to > 0 && after.init.handoff === null) {
+    fail('INCEPTION_STATE_TRANSITION', 'starting init requires the init.handoff reference');
+  }
+  if (from > 0 && !sameReference(before.init.handoff, after.init.handoff)) {
+    fail('INCEPTION_STATE_TRANSITION', 'init.handoff is immutable once init has started');
+  }
+  if (from < 2 && to === 2 && after.init.receipt === null) {
+    fail('INCEPTION_STATE_TRANSITION', 'completing init requires the init.receipt reference');
+  }
+  if (from === 2 && !sameReference(before.init.receipt, after.init.receipt)) {
+    fail('INCEPTION_STATE_TRANSITION', 'init.receipt is immutable once init is complete');
   }
 }
 
@@ -274,6 +294,46 @@ function runGit(cwd, env, args, input) {
 
 function boundedText(bytes) {
   return Buffer.from(bytes ?? []).toString('utf8').replace(/[\x00-\x1F\x7F]+/g, ' ').trim().slice(0, 200);
+}
+
+function repositoryRoot(root) {
+  if (typeof root !== 'string' || root.length === 0) fail('INCEPTION_ROOT', 'repository root must be a non-empty path');
+  const path = resolve(root);
+  let stat;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    fail('INCEPTION_ROOT', `repository root cannot be inspected (${error.code ?? 'error'})`);
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) fail('INCEPTION_ROOT', 'repository root must be a physical directory');
+  return path;
+}
+
+function gitLine(result, label) {
+  if (result.error || ![0, 1].includes(result.status)) {
+    fail('INCEPTION_STATE_GIT', `${label} failed: ${boundedText(result.stderr) || result.error?.code || 'error'}`);
+  }
+  return result.status === 0 ? Buffer.from(result.stdout).toString('utf8').replace(/\n$/u, '') : null;
+}
+
+// Read-only branch and HEAD of the repository containing `root`, or null when
+// Git is unavailable or `root` is not in a work tree. A detached HEAD has no
+// branch and an unborn branch has no HEAD commit; neither is fabricated.
+export function observeRepositoryRevision(root, { env } = {}) {
+  const cwd = repositoryRoot(root);
+  const childEnv = gitEnvironment(env);
+  const probe = runGit(cwd, childEnv, ['rev-parse', '--is-inside-work-tree']);
+  if (probe.error?.code === 'ENOENT') return null;
+  if (probe.error) fail('INCEPTION_STATE_GIT', `git could not run (${probe.error.code ?? 'error'})`);
+  if (probe.status !== 0) {
+    if (/not a git repository/i.test(boundedText(probe.stderr))) return null;
+    fail('INCEPTION_STATE_GIT', boundedText(probe.stderr) || 'git rev-parse failed');
+  }
+  if (boundedText(probe.stdout) !== 'true') fail('INCEPTION_STATE_GIT', 'the repository root is not inside a Git work tree');
+  const branch = gitLine(runGit(cwd, childEnv, ['symbolic-ref', '--quiet', '--short', 'HEAD']), 'git symbolic-ref');
+  const head = gitLine(runGit(cwd, childEnv, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']), 'git rev-parse HEAD');
+  if (head !== null && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(head)) fail('INCEPTION_STATE_GIT', 'git returned a malformed HEAD commit id');
+  return Object.freeze({ branch: branch || null, head });
 }
 
 // Verifies effective Git exclusion for the physical area and reports already
@@ -397,9 +457,15 @@ function verifyReferences(root, descriptor) {
 
 // Applies explicit changes to the current descriptor. The caller supplies the
 // digest it last observed; every reference is re-verified against its file.
-// Nothing is derived: approval and completion are only what the caller sets.
-export function updateInceptionState(root, { expectedSha256, changes, onCheckpoint } = {}) {
+// Nothing is derived: approval and completion are only what the caller sets,
+// and init completion additionally needs `verifyInitCompletion` (supplied by
+// the init receipt finalization) to accept the exact next descriptor, so the
+// CLI alone can never record it.
+export function updateInceptionState(root, { expectedSha256, changes, onCheckpoint, verifyInitCompletion } = {}) {
   checkpointOption(onCheckpoint);
+  if (verifyInitCompletion !== undefined && typeof verifyInitCompletion !== 'function') {
+    fail('INCEPTION_STATE_ARGUMENT', 'verifyInitCompletion must be a function');
+  }
   if (!isSha256Hex(expectedSha256)) {
     fail('INCEPTION_STATE_ARGUMENT', 'expectedSha256 must be the lowercase SHA-256 digest of the current descriptor');
   }
@@ -417,6 +483,12 @@ export function updateInceptionState(root, { expectedSha256, changes, onCheckpoi
   const next = validateInceptionState({ ...current.descriptor, ...changes });
   assertInceptionTransition(current.descriptor, next);
   verifyReferences(root, next);
+  if (next.init.status === 'complete' && current.descriptor.init.status !== 'complete') {
+    if (verifyInitCompletion === undefined) {
+      fail('INCEPTION_STATE_TRANSITION', 'init completion is recorded only through a verified init receipt (inception-handoff finalize)');
+    }
+    verifyInitCompletion(next);
+  }
   const written = writeInceptionFile(root, INCEPTION_STATE_PATH, serializeInceptionState(next), {
     expectedSha256,
     onCheckpoint,

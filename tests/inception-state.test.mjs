@@ -30,6 +30,7 @@ import {
   inspectInceptionState,
   inspectPreHubState,
   observeInceptionGit,
+  observeRepositoryRevision,
   parseInceptionState,
   serializeInceptionState,
   startInceptionRun,
@@ -217,17 +218,42 @@ test('incompatible combinations are rejected and legal ones accepted', () => {
 test('transitions keep the run identity and init status monotone', () => {
   const approval = ref(PROPOSAL, 'proposal');
   const handoff = ref(HANDOFF, 'handoff');
+  const receipt = ref(RECEIPT, 'receipt');
   const inProgress = descriptor({ phase: 'init', approval, init: { status: 'in-progress', handoff, receipt: null } });
-  const complete = descriptor({ phase: 'init', approval, init: { status: 'complete', handoff, receipt: null } });
+  const complete = descriptor({ phase: 'init', approval, init: { status: 'complete', handoff, receipt } });
   assertInceptionTransition(descriptor(), descriptor({ phase: 'architecture' }));
   assertInceptionTransition(descriptor({ phase: 'bootstrap', approval }), descriptor({ phase: 'architecture' }));
   assertInceptionTransition(descriptor({ phase: 'init', approval }), inProgress);
   assertInceptionTransition(inProgress, complete);
+  assertInceptionTransition(complete, descriptor({ phase: 'complete', status: 'complete', approval, init: complete.init }));
   assertCode(() => assertInceptionTransition(inProgress, descriptor({ phase: 'init', approval })),
     'INCEPTION_STATE_TRANSITION', /init/);
   assertCode(() => assertInceptionTransition(complete, inProgress), 'INCEPTION_STATE_TRANSITION', /init/);
   assertCode(() => assertInceptionTransition(descriptor(), { ...descriptor(), runId: OTHER }),
     'INCEPTION_STATE_TRANSITION', /runId/);
+});
+
+test('the init transfer binds one handoff from its start and one receipt at completion', () => {
+  const approval = ref(PROPOSAL, 'proposal');
+  const handoff = ref(HANDOFF, 'handoff');
+  const receipt = ref(RECEIPT, 'receipt');
+  const ready = descriptor({ phase: 'init', approval });
+  const withInit = (init) => descriptor({ phase: 'init', approval, init });
+  const inProgress = withInit({ status: 'in-progress', handoff, receipt: null });
+
+  assertCode(() => assertInceptionTransition(ready, withInit({ status: 'in-progress', handoff: null, receipt: null })),
+    'INCEPTION_STATE_TRANSITION', /handoff/);
+  assertCode(() => assertInceptionTransition(ready, withInit({ status: 'complete', handoff: null, receipt })),
+    'INCEPTION_STATE_TRANSITION', /handoff/);
+  assertCode(() => assertInceptionTransition(inProgress, withInit({ status: 'in-progress', handoff: ref(HANDOFF, 'other'), receipt: null })),
+    'INCEPTION_STATE_TRANSITION', /handoff/);
+  assertCode(() => assertInceptionTransition(inProgress, withInit({ status: 'complete', handoff, receipt: null })),
+    'INCEPTION_STATE_TRANSITION', /receipt/);
+  const complete = withInit({ status: 'complete', handoff, receipt });
+  assertCode(() => assertInceptionTransition(complete, withInit({ status: 'complete', handoff, receipt: ref(RECEIPT, 'other') })),
+    'INCEPTION_STATE_TRANSITION', /receipt/);
+  // Static combinations stay open: descriptors seeded by other tools remain classifiable.
+  assert.equal(validateInceptionState(withInit({ status: 'in-progress', handoff: null, receipt: null })).init.status, 'in-progress');
 });
 
 test('start writes the guard, verifies Git exclusion, then the descriptor; no Git mutation occurs', () => withTemp('start-git', (root) => {
@@ -276,6 +302,36 @@ test('Git that is not yet initialized honors the local guard at its next initial
   assert.equal(git(root, 'check-ignore', STATE, PROPOSAL, '.apex/inception/.gitignore').trim().split('\n').length, 3);
   assert.deepEqual(observeInceptionGit(root, { runId: RUN, env: gitEnv(root) }), { state: 'ignored', tracked: [], trackedCount: 0 });
 }));
+
+test('the repository revision is read-only branch and HEAD, null without Git, and never a fabricated baseline', () => {
+  withTemp('revision-none', (root) => {
+    assert.equal(observeRepositoryRevision(root, { env: gitEnv(root) }), null, 'not a repository');
+    const emptyPath = join(root, 'no-binaries');
+    mkdirSync(emptyPath);
+    assert.equal(observeRepositoryRevision(root, { env: { ...gitEnv(root), PATH: emptyPath } }), null, 'Git unavailable');
+    assert.equal(existsSync(join(root, '.git')), false, 'observation never initializes Git');
+    assertCode(() => observeRepositoryRevision(join(root, 'absent')), 'INCEPTION_ROOT');
+  });
+
+  withTemp('revision-unborn', (root) => {
+    git(root, 'init', '-q');
+    git(root, 'symbolic-ref', 'HEAD', 'refs/heads/trunk');
+    assert.deepEqual(observeRepositoryRevision(root, { env: gitEnv(root) }), { branch: 'trunk', head: null },
+      'an unborn branch has no baseline commit');
+  });
+
+  withTemp('revision-commit', (root) => {
+    gitInit(root);
+    const head = git(root, 'rev-parse', 'HEAD').trim();
+    const branch = git(root, 'symbolic-ref', '--short', 'HEAD').trim();
+    const status = git(root, 'status', '--porcelain', '--untracked-files=all');
+    assert.deepEqual(observeRepositoryRevision(root, { env: gitEnv(root) }), { branch, head });
+    git(root, 'checkout', '-q', '--detach');
+    assert.deepEqual(observeRepositoryRevision(root, { env: gitEnv(root) }), { branch: null, head });
+    assert.equal(git(root, 'rev-parse', 'HEAD').trim(), head);
+    assert.equal(git(root, 'status', '--porcelain', '--untracked-files=all'), status, 'no Git mutation');
+  });
+});
 
 test('already tracked inception content is reported, never removed from Git', () => withTemp('tracked', (root) => {
   gitInit(root);
@@ -398,7 +454,22 @@ test('update compares the previous digest, verifies references, applies only exp
   assertCode(() => step({ phase: 'verification' }), 'INCEPTION_STATE_INVALID', /init/);
 
   put(root, RECEIPT, '{}\n');
-  const completed = step({ init: { status: 'complete', handoff: ref(HANDOFF, 'handoff\n'), receipt: ref(RECEIPT, '{}\n') } });
+  const completion = { init: { status: 'complete', handoff: ref(HANDOFF, 'handoff\n'), receipt: ref(RECEIPT, '{}\n') } };
+  bytes = stateBytes(root);
+  assertCode(() => step(completion), 'INCEPTION_STATE_TRANSITION', /verified init receipt/);
+  assertCode(() => updateInceptionState(root, {
+    expectedSha256: stateDigest(root),
+    changes: completion,
+    verifyInitCompletion() { throw Object.assign(new Error('receipt is incomplete'), { code: 'RECEIPT_REFUSED' }); },
+  }), 'RECEIPT_REFUSED');
+  assert.deepEqual(stateBytes(root), bytes, 'completion is never recorded without a verifier that accepts it');
+  const seen = [];
+  const completed = updateInceptionState(root, {
+    expectedSha256: stateDigest(root),
+    changes: completion,
+    verifyInitCompletion(next) { seen.push(next); },
+  });
+  assert.deepEqual(seen, [completed.descriptor], 'the verifier sees the exact descriptor to be recorded');
   assert.equal(completed.descriptor.phase, 'init', 'update never advances a phase on its own');
   assert.equal(completed.descriptor.status, 'active', 'update never certifies completion on its own');
   assert.equal(inspectInceptionState(root).state, 'init-complete');
@@ -539,6 +610,22 @@ test('CLI requires explicit root and canonical state, maps usage errors to 2, an
   const secret = runCli(['update', '--root', root, '--state', STATE, '--expected-sha256', stateDigest(root), '--set', '{"apiToken":"sk-live-secret"}'], { env });
   assert.equal(secret.status, 1);
   assert.doesNotMatch(secret.stderr, /sk-live-secret|apiToken/);
+
+  withTemp('cli-complete', (other) => {
+    put(other, PROPOSAL, 'approved\n');
+    put(other, HANDOFF, 'handoff\n');
+    put(other, RECEIPT, 'receipt\n');
+    seedDescriptor(other, descriptor({
+      phase: 'init', approval: ref(PROPOSAL, 'approved\n'),
+      init: { status: 'in-progress', handoff: ref(HANDOFF, 'handoff\n'), receipt: null },
+    }));
+    const before = stateBytes(other);
+    const complete = runCli(['update', '--root', other, '--state', STATE, '--expected-sha256', sha(before), '--set',
+      JSON.stringify({ init: { status: 'complete', handoff: ref(HANDOFF, 'handoff\n'), receipt: ref(RECEIPT, 'receipt\n') } })], { env });
+    assert.equal(complete.status, 1);
+    assert.match(complete.stderr, /verified init receipt/);
+    assert.deepEqual(stateBytes(other), before, 'the state CLI can never record init completion');
+  });
 
   const inspected = runCli(['inspect', '--root', root, '--state', STATE], { env });
   assert.equal(inspected.status, 0);
