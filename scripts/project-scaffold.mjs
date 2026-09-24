@@ -710,8 +710,9 @@ function makeOperation(artifact, classification) {
 
 function boundedGeneratedEntries(hubRoot) {
   const entries = [];
-  // Local areas are excluded state, never a planner input: skip them by their
-  // entry and linked-target identities wherever a provider mount reaches them.
+  // Local areas are excluded state, never a planner input. A literal area
+  // entry reached through a provider mount is skipped; a provider directory
+  // that is a linked area's target aliases stable content and is refused.
   const reserved = localAreaIdentities(join(hubRoot, '.apex'));
   const visit = (absolute, logical) => {
     let stat;
@@ -722,7 +723,11 @@ function boundedGeneratedEntries(hubRoot) {
       throw error;
     }
     if (stat.isSymbolicLink() || !stat.isDirectory()) return;
-    if (reserved.some(({ dev, ino }) => stat.dev === dev && stat.ino === ino)) return;
+    const area = reserved.find(({ dev, ino }) => stat.dev === dev && stat.ino === ino);
+    if (area?.kind === 'target') {
+      throw new Error(`provider directory ${logical} aliases excluded .apex/${area.name}; refusing to plan`);
+    }
+    if (area) return;
     for (const entry of readdirSync(absolute, { withFileTypes: true })) {
       const path = logical ? `${logical}/${entry.name}` : entry.name;
       const target = join(absolute, entry.name);
@@ -750,7 +755,7 @@ function immediateAdapterIdentity(path) {
   return `${agent}-${adapter}`;
 }
 
-function orphanArtifacts(hubRoot, expectedArtifacts) {
+function orphanArtifacts(hubRoot, expectedArtifacts, generatedEntries) {
   const expectedIds = new Set(expectedArtifacts.map(({ artifactId }) => artifactId));
   const expectedPaths = new Set(expectedArtifacts.map(({ path }) => path));
   const expectedByMarker = new Map();
@@ -760,7 +765,7 @@ function orphanArtifacts(hubRoot, expectedArtifacts) {
     }
   }
   const orphans = [];
-  for (const entry of boundedGeneratedEntries(hubRoot)) {
+  for (const entry of generatedEntries) {
     if (expectedPaths.has(entry.path)) continue;
     if (entry.kind === 'symlink') {
       const artifactId = immediateAdapterIdentity(entry.path);
@@ -804,6 +809,8 @@ function assertResolutionSet(resolutions, offered) {
 }
 
 function planArtifacts({ hubRoot, normalized, artifacts, includeOrphans }) {
+  // Enumerate (and refuse aliased local areas) before any artifact is read.
+  const generatedEntries = includeOrphans ? boundedGeneratedEntries(hubRoot) : [];
   const candidates = [];
   for (const artifact of artifacts) {
     const classification = classifyInternal({ hubRoot, artifact, normalizedModel: normalized });
@@ -819,7 +826,7 @@ function planArtifacts({ hubRoot, normalized, artifacts, includeOrphans }) {
     }
   }
   if (includeOrphans) {
-    const orphans = orphanArtifacts(hubRoot, artifacts);
+    const orphans = orphanArtifacts(hubRoot, artifacts, generatedEntries);
     const blockedArtifactIds = new Set(orphans.map(({ artifactId }) => artifactId));
     for (let index = candidates.length - 1; index >= 0; index -= 1) {
       if (blockedArtifactIds.has(candidates[index].artifact.artifactId)

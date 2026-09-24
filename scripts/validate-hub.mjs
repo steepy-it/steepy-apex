@@ -23,8 +23,10 @@ const STANDARD_WARN_LINES = 150;
 
 // Root admission, mount binding, bounded physical reads, and local-area
 // exclusion live in stable-paths.mjs; this linter only walks and judges.
-// `skipLocal` silently skips a local-area entry of any kind (directory or
-// link) by name or physical identity, so local state never becomes a hub error.
+// `skipLocal` silently skips only a literal `.apex/<area>` entry (directory or
+// link, by name or stored case alias), so local state never becomes a hub
+// error. Any other directory that aliases a linked area's target is walked,
+// and the reader refuses it loudly (`aliases excluded`).
 function walkStableFiles(reader, directory, pred, acc = [], opts = {}) {
   const directoryState = reader.inspect(directory, { kind: 'directory' });
   if (directoryState.state !== 'present') return acc;
@@ -37,8 +39,7 @@ function walkStableFiles(reader, directory, pred, acc = [], opts = {}) {
   }
   for (const entry of entries) {
     const relativePath = [directory, entry.name].filter(Boolean).join(sep);
-    if (opts.skipLocal && (entry.isDirectory() || entry.isSymbolicLink())
-      && reader.inspect(relativePath, { kind: 'entry', reportUnsafe: false }).localArea !== undefined) {
+    if (opts.skipLocal && (entry.isDirectory() || entry.isSymbolicLink()) && reader.isLocalAreaEntry(relativePath)) {
       continue;
     }
     if (entry.isDirectory()) {
@@ -692,6 +693,7 @@ function classifyIndexlessHub(reader, admittedRoot, indexPath, violations) {
     if (reasons.length === 0 && violations.length === 0) {
       return { state: 'pre-hub', violations: [], inception };
     }
+    if (reasons.length === 0) reasons.push('inception: pre-hub state not recognized: stable reads failed');
   }
   return {
     state: 'invalid',
@@ -767,6 +769,9 @@ function collectHubViolations(reader, admittedRoot, indexText, opts) {
   for (const fileRelative of apexMarkdownFiles) {
     const file = resolve(admittedRoot, fileRelative);
     if (file === indexPath) continue;
+    // A file the reader refuses (e.g. hard-linked) is reported by its read in
+    // check 4; BFS cannot admit it, so it is not also a false orphan.
+    if (reader.inspect(fileRelative, { reportUnsafe: false }).state !== 'present') continue;
     if (!reachable.has(file)) {
       violations.push({ level: 'error', msg: `anti-orphan: ${displayNativePath(fileRelative)} is not linked from .apex/_INDEX.md` });
     }

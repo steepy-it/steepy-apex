@@ -181,21 +181,24 @@ test('a recognized pre-hub inception keeps the Stop hook silent', () => {
 
 test('init in progress without an index, and a partial hub beside a pre-init descriptor, block the turn', () => {
   const approval = { path: `.apex/inception/${RUN}/proposal.md`, sha256: 'a'.repeat(64) };
-  for (const [label, repo, reason] of [
-    ['init in progress', inceptionRepo('init', {
+  for (const [label, arrange, reason] of [
+    ['init in progress', () => inceptionRepo('init', {
       phase: 'init', approval, init: { status: 'in-progress', handoff: null, receipt: null },
     }), /inception: init is in-progress/u],
-    ['partial hub', (() => {
+    ['partial hub', () => {
       const repo = inceptionRepo('partial');
       put(repo, '.apex/conventions.md', '# Conventions\n');
       return repo;
-    })(), /incompatible with hub artifact \.apex\/conventions\.md/u],
-    ['unknown state', (() => {
+    }, /incompatible with hub artifact \.apex\/conventions\.md/u],
+    ['unknown state', () => {
       const repo = inceptionRepo('unknown');
       put(repo, '.apex/inception/state.json', `${JSON.stringify({ ...createInitialInceptionState(RUN), schemaVersion: 7 }, null, 2)}\n`);
       return repo;
-    })(), /pre-hub state not recognized \(invalid\)/u],
+    }, /pre-hub state not recognized \(invalid\)/u],
   ]) {
+    // Each fixture is created inside its own iteration so `finally` always
+    // removes the repository it made, even if an earlier case fails.
+    const repo = arrange();
     try {
       const blocked = run([repo], '{}', 2_000);
       assert.equal(blocked.status, 0, `${label}: ${blocked.stderr}`);
