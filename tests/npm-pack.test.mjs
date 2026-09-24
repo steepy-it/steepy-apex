@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -125,6 +125,24 @@ test('npm tarball includes the engine scripts', () => {
     'scripts/loop-engineer.mjs',
     'scripts/validate-release-evidence.mjs',
   ], 'engine scripts');
+});
+
+test('npm tarball includes both inception helpers, which import only Node built-ins and packaged siblings', () => {
+  const helpers = ['scripts/inception-paths.mjs', 'scripts/inception-state.mjs'];
+  assertPacked(helpers, 'inception helpers');
+  for (const helper of helpers) {
+    const source = readFileSync(join(root, helper), 'utf8');
+    const specifiers = [...source.matchAll(/^(?:import|export)\s[^'";]*?\sfrom\s+['"]([^'"]+)['"]/gmu)]
+      .map((match) => match[1]);
+    assert.ok(specifiers.length > 0, `${helper} must declare its imports`);
+    for (const specifier of specifiers) {
+      assert.ok(
+        specifier.startsWith('node:') || specifier.startsWith('./'),
+        `${helper} must stay dependency-free, got import '${specifier}'`,
+      );
+      if (specifier.startsWith('./')) assertPacked([`scripts/${specifier.slice(2)}`], `${helper} sibling`);
+    }
+  }
 });
 
 test('npm tarball includes receipt instructions and both reviewer transport schemas', () => {
