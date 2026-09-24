@@ -18,6 +18,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import {
+  LOCAL_AREAS,
   MAX_STABLE_FILE_BYTES,
   admitHubRoot,
   bindApexRoot,
@@ -254,7 +255,7 @@ test('a terminal separator or dot keeps its directory requirement', () => {
   });
 });
 
-test('reads are bounded, including a file that grows past the bound after inspection', () => {
+test('reads are bounded, and a file grown past the bound since an earlier inspection is refused on re-inspection', () => {
   withTemp('bounded', (base) => {
     const repo = repoWithHub(base, {
       '.apex/_INDEX.md': '# Index\n',
@@ -323,7 +324,7 @@ test('a replaced hub or provider mount is a changed physical identity, and a ret
   });
 });
 
-test('the reserved work area is excluded by name before any byte is read', () => {
+test('the reserved work area is refused through direct, base-relative, and parent-relative spellings', () => {
   withTemp('work-name', (base) => {
     const sentinel = 'WORK_NAME_SENTINEL';
     const repo = repoWithHub(base, {
@@ -351,6 +352,66 @@ test('the reserved work area is excluded by name before any byte is read', () =>
     assert.equal(silent.inspect('.apex/work', { kind: 'directory', reportUnsafe: false }).localArea, 'work');
     assert.deepEqual(quiet, []);
   });
+});
+
+// In these cases no bound physical identity exists for the area when the
+// reader is constructed (absent, created later, or a link rather than an
+// ordinary directory), so the logical name is the only defense.
+function assertNameRefusal(result, diagnostics, area, label, sentinel) {
+  assert.deepEqual(result, {
+    state: 'unsafe',
+    label,
+    physicalReason: area.physicalReason,
+    localArea: area.name,
+    text: undefined,
+  });
+  assert.equal(messages(diagnostics), `stable-read: ${label} enters excluded ${area.path}`);
+  if (sentinel) assert.doesNotMatch(messages(diagnostics), new RegExp(sentinel, 'u'));
+}
+
+test('every local area is excluded by name when it appears after the reader was constructed', () => {
+  assert.ok(LOCAL_AREAS.length > 0);
+  for (const area of LOCAL_AREAS) {
+    withTemp(`late-${area.name}`, (base) => {
+      const sentinel = `LATE_${area.name.toUpperCase()}_SENTINEL`;
+      const repo = repoWithHub(base);
+      const diagnostics = [];
+      const reader = createStableReader(repo, diagnostics);
+      mkdirSync(join(repo, ...area.path.split('/')), { recursive: true });
+      writeFileSync(join(repo, ...area.path.split('/'), 'x.md'), `# ${sentinel}\n`);
+      const label = `${area.path}/x.md`;
+      assertNameRefusal(reader.read(label), diagnostics, area, label, sentinel);
+    });
+  }
+});
+
+test('every local area linked to an external directory is excluded by name, not as a symlinked component', () => {
+  for (const area of LOCAL_AREAS) {
+    withTemp(`linked-${area.name}`, (base) => {
+      const sentinel = `LINKED_${area.name.toUpperCase()}_SENTINEL`;
+      const repo = repoWithHub(base);
+      const external = join(base, 'external');
+      mkdirSync(external);
+      writeFileSync(join(external, 'x.md'), `# ${sentinel}\n`);
+      const segments = area.path.split('/');
+      mkdirSync(join(repo, ...segments.slice(0, -1)), { recursive: true });
+      symlinkSync(external, join(repo, ...segments), 'dir');
+      const diagnostics = [];
+      const label = `${area.path}/x.md`;
+      assertNameRefusal(createStableReader(repo, diagnostics).read(label), diagnostics, area, label, sentinel);
+    });
+  }
+});
+
+test('every absent local area is refused by name rather than reported missing', () => {
+  for (const area of LOCAL_AREAS) {
+    withTemp(`absent-${area.name}`, (base) => {
+      const repo = repoWithHub(base);
+      const diagnostics = [];
+      const result = createStableReader(repo, diagnostics).inspect(area.path, { kind: 'directory' });
+      assertNameRefusal({ ...result, text: undefined }, diagnostics, area, area.path);
+    });
+  }
 });
 
 test('lexical local-area recognition normalizes components and never matches near names', () => {

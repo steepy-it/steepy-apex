@@ -50,6 +50,17 @@ after(() => {
   rmSync(cacheDir, { recursive: true, force: true });
 });
 
+// Every module specifier a source can load: static `import`/`export … from`,
+// bare side-effect imports, and dynamic `import(…)` (a non-literal dynamic
+// argument is reported as such so it can never pass a boundary check).
+function moduleSpecifiers(source) {
+  return [
+    ...source.matchAll(/^(?:import|export)\s[^'";]*?\sfrom\s+['"]([^'"]+)['"]/gmu),
+    ...source.matchAll(/^\s*import\s*['"]([^'"]+)['"]/gmu),
+    ...source.matchAll(/\bimport\s*\(\s*(?:['"]([^'"]+)['"]\s*\))?/gu),
+  ].map((match) => match[1] ?? '<non-literal dynamic import>');
+}
+
 function assertPacked(required, label) {
   for (const path of required) {
     assert.ok(paths.includes(path), `${label ? `${label}: ` : ''}tarball must include ${path}`);
@@ -131,9 +142,7 @@ test('npm tarball includes both inception helpers, which import only Node built-
   const helpers = ['scripts/inception-paths.mjs', 'scripts/inception-state.mjs'];
   assertPacked(helpers, 'inception helpers');
   for (const helper of helpers) {
-    const source = readFileSync(join(root, helper), 'utf8');
-    const specifiers = [...source.matchAll(/^(?:import|export)\s[^'";]*?\sfrom\s+['"]([^'"]+)['"]/gmu)]
-      .map((match) => match[1]);
+    const specifiers = moduleSpecifiers(readFileSync(join(root, helper), 'utf8'));
     assert.ok(specifiers.length > 0, `${helper} must declare its imports`);
     for (const specifier of specifiers) {
       assert.ok(
@@ -150,9 +159,7 @@ test('npm tarball includes the stable-paths reader, which imports only Node buil
   // import either of them back (no validate-hub -> project-scaffold cycle).
   const helper = 'scripts/stable-paths.mjs';
   assertPacked([helper, 'scripts/sanitize.mjs'], 'stable-paths reader');
-  const source = readFileSync(join(root, helper), 'utf8');
-  const specifiers = [...source.matchAll(/^(?:import|export)\s[^'";]*?\sfrom\s+['"]([^'"]+)['"]/gmu)]
-    .map((match) => match[1]);
+  const specifiers = moduleSpecifiers(readFileSync(join(root, helper), 'utf8'));
   assert.ok(specifiers.includes('./sanitize.mjs'), `${helper} must reuse sanitize.mjs mount binding`);
   for (const specifier of specifiers) {
     assert.ok(
