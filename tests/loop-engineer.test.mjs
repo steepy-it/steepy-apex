@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import {
+import fs, {
   existsSync,
   lstatSync,
   linkSync,
@@ -18,6 +18,7 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -26,6 +27,7 @@ import {
   createCliGitAdapter,
   main,
   parseGoalContract,
+  resolveLoopRouting,
   runLoopController,
   runStreamingHeadlessDescriptor,
   validateLoopPreflight,
@@ -3694,5 +3696,99 @@ test('process-group convergence timeout is a blocking result after raw stream fi
     assert.throws(() => process.kill(descendantPid, 0));
   } finally {
     rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+const LOCAL_RUN = '0b6f1b8e-3c1a-4e2b-9f3d-5a7c9e1b2d4f';
+
+function recordOpens(fn) {
+  const names = ['openSync', 'readFileSync', 'readdirSync', 'opendirSync'];
+  const originals = Object.fromEntries(names.map((name) => [name, fs[name]]));
+  const accesses = [];
+  try {
+    for (const name of names) {
+      fs[name] = function recorded(...args) {
+        accesses.push(String(args[0]));
+        return originals[name].apply(this, args);
+      };
+    }
+    syncBuiltinESMExports();
+    let error;
+    try { fn(); } catch (caught) { error = caught; }
+    return { error, accesses };
+  } finally {
+    Object.assign(fs, originals);
+    syncBuiltinESMExports();
+  }
+}
+
+function seedLocalStandard(repo) {
+  const local = join(repo, '.apex', 'inception', LOCAL_RUN);
+  mkdirSync(local, { recursive: true });
+  writeFileSync(join(local, 'scripts.md'), '# scripts standard\n\nLOOP_LOCAL_BODY_SENTINEL\n');
+  return join(local, 'scripts.md');
+}
+
+test('loop routing refuses routes, standards, and leaves in or through local areas before any body read', () => {
+  const cases = [
+    ['routed standard inside inception', (repo) => {
+      seedLocalStandard(repo);
+      writeSingleRoute(repo, { standardPath: `.apex/inception/${LOCAL_RUN}/scripts-route.md` });
+      return [`.apex/inception/${LOCAL_RUN}/scripts-route.md`];
+    }, /stable confined \.apex Markdown path/],
+    ['hard-linked routed standard', (repo) => {
+      writeSingleRoute(repo);
+      unlinkSync(join(repo, SCRIPT_STANDARD));
+      linkSync(seedLocalStandard(repo), join(repo, SCRIPT_STANDARD));
+      return [SCRIPT_STANDARD];
+    }, /hard-linked/],
+    ['routed standard linked into inception', (repo) => {
+      writeSingleRoute(repo);
+      unlinkSync(join(repo, SCRIPT_STANDARD));
+      seedLocalStandard(repo);
+      symlinkSync(`../inception/${LOCAL_RUN}/scripts.md`, join(repo, SCRIPT_STANDARD));
+      return [SCRIPT_STANDARD];
+    }, /symlink/],
+    ['modular leaf entering and leaving inception', (repo) => {
+      seedLocalStandard(repo);
+      writeSingleRoute(repo, {
+        standardPath: '.apex/standards/scripts-core.md',
+        standardText: [
+          '# Scripts core standard', '', '| Sub-area | When | Doc |', '|---|---|---|',
+          '| leaf | always | [leaf](../inception/../standards/scripts-leaf.md) |', '',
+        ].join('\n'),
+      });
+      writeFileSync(join(repo, '.apex', 'standards', 'scripts-leaf.md'), '# Scripts leaf standard\n');
+      return ['.apex/standards/scripts-core.md', '.apex/standards/scripts-leaf.md'];
+    }, /enters excluded \.apex\/inception/],
+  ];
+  for (const [label, arrange, reason] of cases) {
+    const repo = fixture();
+    try {
+      const standardPaths = arrange(repo);
+      const { error, accesses } = recordOpens(() => resolveLoopRouting(repo, 'scripts', ROUTING_PATH, standardPaths));
+      assert.ok(error instanceof LoopControllerError, `${label}: ${error}`);
+      assert.equal(error.code, 'INVALID_ROUTING', label);
+      assert.match(error.message, reason, label);
+      assert.doesNotMatch(error.message, /LOOP_LOCAL_BODY_SENTINEL/u, label);
+      assert.deepEqual(accesses.filter((path) => path.toLowerCase().includes(join('.apex', 'inception'))), [], label);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
+test('loop routing reads a mounted hub through the shared stable capability', () => {
+  const repo = fixture();
+  const external = mkdtempSync(join(tmpdir(), 'steepy-loop-hub-mount-'));
+  try {
+    writeSingleRoute(repo);
+    renameSync(join(repo, '.apex'), join(external, 'hub'));
+    symlinkSync(join(external, 'hub'), join(repo, '.apex'), 'dir');
+    const routing = resolveLoopRouting(repo, 'scripts', ROUTING_PATH, [SCRIPT_STANDARD]);
+    assert.deepEqual([...routing.standardPaths], [SCRIPT_STANDARD]);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(external, { recursive: true, force: true });
   }
 });

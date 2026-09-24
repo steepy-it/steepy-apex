@@ -2480,6 +2480,59 @@ if (process.argv[2] === '--version') {
     }
   });
 
+  it('reads hub documents only through the stable reader and never through a local inception area', async () => {
+    const inceptionRun = '0b6f1b8e-3c1a-4e2b-9f3d-5a7c9e1b2d4f';
+    const seedLocal = (run) => {
+      const local = join(run.dir, '.apex', 'inception', inceptionRun);
+      mkdirSync(local, { recursive: true });
+      writeFileSync(join(run.dir, '.apex', 'inception', '.gitignore'), '*\n');
+      writeFileSync(join(local, 'standard.md'), '# Scripts\n\nCONDUCTOR_LOCAL_BODY_SENTINEL\n');
+      return local;
+    };
+    const cases = [
+      ['hard-linked routing index', (run) => {
+        linkSync(join(run.dir, '.apex', '_INDEX.md'), join(seedLocal(run), 'index-copy.md'));
+      }, /hard-linked/],
+      ['routed standard linked into inception', (run) => {
+        seedLocal(run);
+        rmSync(join(run.dir, '.apex', 'standards', 'scripts.md'));
+        symlinkSync(`../inception/${inceptionRun}/standard.md`, join(run.dir, '.apex', 'standards', 'scripts.md'));
+        execFileSync('git', ['add', '-A', '.apex/standards'], { cwd: run.dir });
+        execFileSync('git', ['commit', '-q', '-m', 'link standard'], { cwd: run.dir });
+      }, /symlink/],
+    ];
+    for (const [label, mutate, reason] of cases) {
+      const run = makeRun();
+      const originals = { openSync: fs.openSync, readFileSync: fs.readFileSync, readdirSync: fs.readdirSync };
+      const accesses = [];
+      try {
+        mutate(run);
+        for (const [name, original] of Object.entries(originals)) {
+          fs[name] = function recorded(...args) {
+            accesses.push(String(args[0]));
+            return original.apply(this, args);
+          };
+        }
+        syncBuiltinESMExports();
+        let result;
+        try {
+          result = await drive(run, { FAKE_HARNESS_MODE: 'done' });
+        } finally {
+          Object.assign(fs, originals);
+          syncBuiltinESMExports();
+        }
+        assert.equal(result.code, 1, label);
+        const status = statusOf(run);
+        assert.match(linesWith(status, ' — ARTIFACT_FAILED — ')[0] ?? '', reason, label);
+        assert.equal(linesWith(status, ' — SPAWNED — ').length, 0, label);
+        assert.doesNotMatch(`${status}\n${result.out}\n${result.err}`, /CONDUCTOR_LOCAL_BODY_SENTINEL/u, label);
+        assert.deepEqual(accesses.filter((path) => path.toLowerCase().includes(`${join('.apex', 'inception')}`.toLowerCase())), [], label);
+      } finally {
+        rmSync(run.dir, { recursive: true, force: true });
+      }
+    }
+  });
+
   it('resumes when unrelated notes and prose mention STATUS_PROTOCOL', async () => {
     const run = makeRun();
     try {

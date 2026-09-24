@@ -70,6 +70,7 @@ import {
   writeContextManifest,
 } from './autopilot-context.mjs';
 import { assertSafeLine, assertSafeRelPath } from './sanitize.mjs';
+import { readStableDocument } from './stable-paths.mjs';
 import {
   classifyWorkflowStart,
   nextWorkflowAttempt,
@@ -1053,14 +1054,15 @@ function repositoryPath(cwd, absolutePath, label) {
 
 // Work-path inputs (.apex/work/specs/**, .apex/work/plans/**, run artifacts)
 // ride the typed confined read; hub-doc reads (routing index, testing checklist,
-// conventions, standards) keep their lexical guard — they sit outside the
-// .apex/work/ contract of work-paths.mjs.
+// conventions, standards) go through the shared stable reader — they sit
+// outside the .apex/work/ contract of work-paths.mjs, and a local area is never
+// a hub input.
 function readArtifact(cwd, path) {
   if (path.startsWith('.apex/work/')) {
     return readWorkPath(cwd, path, { encoding: 'utf8' });
   }
   const safePath = assertSafeRelPath(path, 'artifact path');
-  return readFileSync(join(cwd, safePath), 'utf8');
+  return readStableDocument(cwd, safePath, 'artifact path');
 }
 
 function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, baseline, taskResultVersion, resumeInputs }) {

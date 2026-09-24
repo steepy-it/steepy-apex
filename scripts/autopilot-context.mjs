@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 import {
-  existsSync, lstatSync, readFileSync, realpathSync, statSync,
+  existsSync, lstatSync, realpathSync, statSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { assertSafeHubRoot, assertSafeLine, assertSafeRelPath } from './sanitize.mjs';
+import {
+  createStableReader,
+  rawPathEntersLocalArea,
+  readStableDocument,
+  stableReadError,
+} from './stable-paths.mjs';
 import { parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
 import { parseTaskResultProjection } from './task-results.mjs';
 
@@ -399,6 +405,11 @@ export function materializeSuccessCriteria({ repoRoot, specPath, outputPath }) {
   };
 }
 
+function assertOutsideLocalAreas(base, target, label) {
+  const area = rawPathEntersLocalArea(base, target);
+  if (area) throw new Error(`${label} enters excluded ${area.path}`);
+}
+
 export function standardsBySurfaceFromRouting(routingText, { repoRoot } = {}) {
   const result = {};
   for (const line of String(routingText ?? '').split('\n')) {
@@ -406,18 +417,34 @@ export function standardsBySurfaceFromRouting(routingText, { repoRoot } = {}) {
     if (!match) continue;
     const surface = assertSafeLine(match[1], 'routing surface');
     const linked = assertSafeRelPath(match[2], `standard path for ${surface}`);
+    assertOutsideLocalAreas('.apex', linked, `standard path for ${surface}`);
     const core = assertSafeRelPath(join('.apex', linked), `standard path for ${surface}`);
-    if (repoRoot === undefined || !core.endsWith('-core.md')) {
+    if (repoRoot === undefined) {
       result[surface] = core;
       continue;
     }
-    const root = safeRoot(repoRoot);
-    const coreText = readFileSync(join(root, core), 'utf8');
+    const diagnostics = [];
+    const reader = createStableReader(safeRoot(repoRoot), diagnostics);
+    if (!core.endsWith('-core.md')) {
+      // Never read here; verified on metadata so no child is sent to local bytes.
+      const admitted = reader.inspect(core);
+      if (admitted.state === 'unsafe') throw stableReadError(`standard path for ${surface}`, admitted, diagnostics);
+      result[surface] = core;
+      continue;
+    }
+    const coreResult = reader.read(core);
+    if (coreResult.text === undefined) throw stableReadError(`standard core for ${surface}`, coreResult, diagnostics);
     const leaves = [];
-    for (const row of coreText.split('\n')) {
+    for (const row of coreResult.text.split('\n')) {
       const leaf = row.match(/^\s*\|[^|]+\|[^|]+\|[^|]*\]\(([^)]+)\)\s*\|/);
       if (!leaf) continue;
-      const leafPath = assertSafeRelPath(join(dirname(core), leaf[1]), `leaf standard path for ${surface}`);
+      const label = `leaf standard path for ${surface}`;
+      // Verify the raw link and its physical target on metadata alone; a leaf
+      // body is read only later, on demand, by the child that needs it.
+      assertOutsideLocalAreas(dirname(core), leaf[1], label);
+      const admitted = reader.inspect(leaf[1], { base: dirname(core) });
+      if (admitted.state === 'unsafe') throw stableReadError(label, admitted, diagnostics);
+      const leafPath = assertSafeRelPath(join(dirname(core), leaf[1]), label);
       if (leafPath === core || leaves.includes(leafPath)) continue;
       leaves.push(leafPath);
     }
@@ -1024,14 +1051,15 @@ function suppliedOptionsOutside(values, accepted) {
 }
 
 // Work-path inputs (.apex/work/**) ride the typed confined read, mirroring the
-// conductor's readArtifact boundary; any other input keeps the lexical guard,
-// because hub docs sit outside the .apex/work/ contract of work-paths.mjs.
+// conductor's readArtifact boundary; any other input goes through the shared
+// stable reader, because hub docs sit outside the .apex/work/ contract of
+// work-paths.mjs and local areas are never a stable input.
 function readRepoFile(repoRoot, path, label) {
   const safePath = assertSafeRelPath(path, label);
   if (safePath.startsWith('.apex/work/')) {
     return readWorkPath(repoRoot, safePath, { expect: 'work-output', encoding: 'utf8' });
   }
-  return readFileSync(join(repoRoot, safePath), 'utf8');
+  return readStableDocument(repoRoot, safePath, label);
 }
 
 function verifyPlan(values) {

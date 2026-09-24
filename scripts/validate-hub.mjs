@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { join, dirname, relative, resolve, basename, sep, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -8,6 +8,7 @@ import {
   displayNativePath,
   rawPathEntersLocalArea,
 } from './stable-paths.mjs';
+import { inspectPreHubState } from './inception-state.mjs';
 import {
   countActiveClaudeImports,
   normalizeProjectModel,
@@ -19,10 +20,11 @@ import {
 // (a directory of smaller files instead of one long one). This is a `warn`, not
 // an `error`: it never affects the exit code (see check 8 below).
 const STANDARD_WARN_LINES = 150;
-const ROOT_ADMISSION = Symbol('root-admission');
 
 // Root admission, mount binding, bounded physical reads, and local-area
 // exclusion live in stable-paths.mjs; this linter only walks and judges.
+// `skipLocal` silently skips a local-area entry of any kind (directory or
+// link) by name or physical identity, so local state never becomes a hub error.
 function walkStableFiles(reader, directory, pred, acc = [], opts = {}) {
   const directoryState = reader.inspect(directory, { kind: 'directory' });
   if (directoryState.state !== 'present') return acc;
@@ -35,6 +37,10 @@ function walkStableFiles(reader, directory, pred, acc = [], opts = {}) {
   }
   for (const entry of entries) {
     const relativePath = [directory, entry.name].filter(Boolean).join(sep);
+    if (opts.skipLocal && (entry.isDirectory() || entry.isSymbolicLink())
+      && reader.inspect(relativePath, { kind: 'entry', reportUnsafe: false }).localArea !== undefined) {
+      continue;
+    }
     if (entry.isDirectory()) {
       if (opts.skipDir && opts.skipDir(relativePath)) continue;
       walkStableFiles(reader, relativePath, pred, acc, opts);
@@ -633,37 +639,107 @@ function validatePortableV1(hubRoot, indexText, reader) {
   return violations;
 }
 
-export function collectViolations(hubRoot, opts = {}) {
+// Steepy provenance in root instructions or provider namespaces: a managed
+// block, a generated marker, or the legacy block. User documents without it do
+// not prove a hub on their own.
+const STEEPY_PROVENANCE_RE = /steepy:(?:managed|generated):[^:\s>]+:v[^\s>]+|<!-- steepy:(?:start|end) -->/u;
+
+// Stable hub artifacts that make an index-less `.apex` a partial hub rather
+// than a pre-hub: a standards entry of any kind, any stable Markdown document
+// outside the local areas (conventions, glossary, residual routing indexes),
+// and Steepy provenance at the root or in a provider namespace. Non-Markdown
+// residue such as `.DS_Store` is not a hub artifact. Local bodies are never read.
+function preHubIncompatibilities(reader) {
+  const artifacts = [];
+  if (reader.inspect(join('.apex', 'standards'), { kind: 'entry', reportUnsafe: false }).state !== 'missing') {
+    artifacts.push('.apex/standards');
+  }
+  for (const file of walkStableFiles(reader, '.apex', (path) => path.endsWith('.md'), [], { skipLocal: true })) {
+    const path = displayNativePath(file);
+    if (!path.startsWith('.apex/standards/')) artifacts.push(path);
+  }
+  const candidates = [
+    ...['AGENTS.md', 'CLAUDE.md'].filter((name) => reader.inspect(name, { kind: 'entry', reportUnsafe: false }).state !== 'missing'),
+    ...['.agents', '.claude', '.codex', '.opencode'].flatMap((provider) => walkProviderFiles(reader, provider, () => true)),
+  ];
+  for (const file of candidates) {
+    if (STEEPY_PROVENANCE_RE.test(reader.read(file).text ?? '')) artifacts.push(displayNativePath(file));
+  }
+  return artifacts;
+}
+
+function bounded(text) {
+  return String(text ?? '').replace(/[\x00-\x1F\x7F]+/gu, ' ').slice(0, 300);
+}
+
+// Spec §8 for an `.apex` without `_INDEX.md`. Only a valid, guarded,
+// not-started v1 descriptor beside no hub artifact is a recognized pre-hub;
+// any other observation keeps today's missing-index error plus its reason.
+// The descriptor's references are never followed.
+function classifyIndexlessHub(reader, admittedRoot, indexPath, violations) {
+  const missing = { level: 'error', msg: `missing _INDEX.md at ${indexPath}` };
+  const inception = inspectPreHubState(admittedRoot);
+  if (inception.state === 'absent') return { state: 'invalid', violations: [missing] };
+  const reasons = [];
+  if (inception.state === 'init-in-progress' || inception.state === 'init-complete') {
+    reasons.push(`inception: init is ${inception.state.slice('init-'.length)}; an activated hub requires .apex/_INDEX.md and never returns to pre-hub`);
+  } else if (inception.state !== 'pre-hub') {
+    reasons.push(`inception: pre-hub state not recognized (${inception.state}): ${bounded(inception.reason)}`);
+  } else {
+    for (const artifact of preHubIncompatibilities(reader)) {
+      reasons.push(`inception: pre-hub state is incompatible with hub artifact ${artifact}`);
+    }
+    if (reasons.length === 0 && violations.length === 0) {
+      return { state: 'pre-hub', violations: [], inception };
+    }
+  }
+  return {
+    state: 'invalid',
+    violations: [missing, ...reasons.map((msg) => ({ level: 'error', msg })), ...violations],
+  };
+}
+
+// One classification drives the linter, main(), and (through
+// collectViolations) the Stop hook: `no-hub` (no `.apex`), `pre-hub` (a
+// recognized inception without an index), `hub` (index present: every check
+// runs and local areas are excluded), or `invalid`.
+export function classifyHub(hubRoot, opts = {}) {
   const violations = [];
-  const rootAdmission = opts[ROOT_ADMISSION] ?? admitHubRoot(hubRoot);
+  const rootAdmission = admitHubRoot(hubRoot);
   const reader = createStableReader(hubRoot, violations, rootAdmission);
-  if (rootAdmission.state === 'unsafe') return violations;
+  if (rootAdmission.state === 'unsafe') return { state: 'invalid', violations };
   const admittedRoot = rootAdmission.root;
   const apexDir = join(admittedRoot, '.apex');
   const indexPath = join(apexDir, '_INDEX.md');
-  const skipLocalAreaDir = (dir) => reader.inspect(dir, {
-    kind: 'directory',
-    reportUnsafe: false,
-  }).localArea !== undefined;
   // Uninitialized repo: no .apex/ hub at all. steepy was never run here, so there is
   // nothing to validate. Stay silent (no violations) — this keeps the Stop hook a
   // no-op in every project that has not opted into steepy. An .apex/ that exists but
-  // lacks _INDEX.md is a genuine error: the repo opted in but the hub is broken.
+  // lacks _INDEX.md is a genuine error unless it is a recognized pre-hub inception.
   const apexState = reader.inspect('.apex', { kind: 'directory' });
-  if (apexState.state === 'missing') return [];
-  if (apexState.state !== 'present') return violations;
+  if (apexState.state === 'missing') return { state: 'no-hub', violations: [] };
+  if (apexState.state !== 'present') return { state: 'invalid', violations };
   const indexResult = reader.read(join('.apex', '_INDEX.md'));
-  if (indexResult.state === 'missing') {
-    return [{ level: 'error', msg: `missing _INDEX.md at ${indexPath}` }];
-  }
-  if (indexResult.text === undefined) return violations;
-  const indexText = indexResult.text;
+  if (indexResult.state === 'missing') return classifyIndexlessHub(reader, admittedRoot, indexPath, violations);
+  if (indexResult.text === undefined) return { state: 'invalid', violations };
+  return { state: 'hub', violations: collectHubViolations(reader, admittedRoot, indexResult.text, opts) };
+}
+
+export function collectViolations(hubRoot, opts = {}) {
+  return classifyHub(hubRoot, opts).violations;
+}
+
+// Every check of an operational hub (index present). Local areas are excluded
+// from enumeration and reads; their state is never an input.
+function collectHubViolations(reader, admittedRoot, indexText, opts) {
+  const violations = reader.diagnostics;
+  const apexDir = join(admittedRoot, '.apex');
+  const indexPath = join(apexDir, '_INDEX.md');
   const apexMarkdownFiles = walkStableFiles(
     reader,
     '.apex',
     (file) => file.endsWith('.md'),
     [],
-    { skipDir: skipLocalAreaDir },
+    { skipLocal: true },
   );
   violations.push(...validatePortableV1(admittedRoot, indexText, reader));
   const routingRowTokens = backtickTokens(indexText, isRoutingTableRow);
@@ -985,20 +1061,21 @@ export function main(argv = process.argv.slice(2)) {
   const quiet = argv.includes('--quiet');
   const enforceSingleClaudeMd = argv.includes('--single-claude');
   const root = argv.find((a) => !a.startsWith('--')) || process.cwd();
-  const rootAdmission = admitHubRoot(root);
-  const all = collectViolations(root, { enforceSingleClaudeMd, [ROOT_ADMISSION]: rootAdmission });
+  const classified = classifyHub(root, { enforceSingleClaudeMd });
+  const all = classified.violations;
   const errors = all.filter((v) => v.level === 'error');
   const warns = all.filter((v) => v.level === 'warn');
   if (errors.length === 0) {
-    // No .apex/ hub means the repo never opted into steepy — there is genuinely
-    // nothing to validate, so don't claim the doc graph is "coherent". In --quiet
-    // mode (the Stop hook, which runs in every repo) stay a silent no-op regardless.
+    // Only an operational hub is "coherent". No .apex/ hub means the repo never
+    // opted into steepy, and a recognized pre-hub inception has no hub yet —
+    // neither has a doc graph to call coherent. In --quiet mode (the Stop hook,
+    // which runs in every repo) stay a silent no-op regardless.
     if (!quiet) {
-      console.log(
-        rootAdmission.state === 'present' && existsSync(join(rootAdmission.root, '.apex'))
-          ? 'steepy validate-hub: OK — doc graph is coherent'
-          : 'steepy validate-hub: no .apex hub found — run /steepy-apex:init to create one'
-      );
+      const { inception } = classified;
+      console.log({
+        hub: 'steepy validate-hub: OK — doc graph is coherent',
+        'pre-hub': `steepy validate-hub: valid pre-hub inception state (run ${inception?.runId}, phase ${inception?.phase}) — no hub yet; init creates .apex/_INDEX.md`,
+      }[classified.state] ?? 'steepy validate-hub: no .apex hub found — run /steepy-apex:init to create one');
       for (const v of warns) console.warn(`  - warn: ${v.msg}`);
     }
     return 0;

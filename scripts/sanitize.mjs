@@ -5,8 +5,8 @@
 //  - escapeYamlDouble escapes the residual meta-chars for a YAML double-quoted
 //    scalar;
 //  - assertSafeHubRoot guards the write-root itself. Zero dependencies (Node built-ins).
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { lstatSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { lstatSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 
 const CONTROL = /[\x00-\x1F\x7F]/;
 const SAFE_PATH_CHARS = /^[A-Za-z0-9.@_/-]+$/;
@@ -14,6 +14,77 @@ const SAFE_PATH_CHARS = /^[A-Za-z0-9.@_/-]+$/;
 // These repository entries are explicit mounts, including external hub/provider
 // storage. Descendant links remain subject to each caller's ordinary-file checks.
 export const PROJECT_MOUNTS = ['.apex', '.agents', '.claude', '.codex', '.opencode', 'AGENTS.md', 'CLAUDE.md'];
+
+// The single registry of repository-local `.apex/<name>` areas: gitignored
+// workflow state that no stable reader, project mount, or planner scan enters.
+export const LOCAL_AREA_NAMES = Object.freeze(['work', 'inception']);
+
+// Physical identities of each existing local area under the hub directory: the
+// entry itself when it is a directory and, when it resolves to one, its
+// target. An absent or unreadable area has no identity to exclude.
+export function localAreaIdentities(apexDir) {
+  const identities = [];
+  for (const name of LOCAL_AREA_NAMES) {
+    for (const probe of [lstatSync, statSync]) {
+      let stat;
+      try { stat = probe(join(apexDir, name), { bigint: true }); }
+      catch { continue; }
+      if (stat.isDirectory()) identities.push(Object.freeze({ name, dev: stat.dev, ino: stat.ino }));
+    }
+  }
+  return identities;
+}
+
+function identityArea(identities, stat) {
+  return identities.find(({ dev, ino }) => stat.dev === dev && stat.ino === ino)?.name ?? null;
+}
+
+function pathParts(path) {
+  return path.split(sep === '\\' ? /[\\/]+/u : '/').filter((part) => part !== '');
+}
+
+function partsPath(parts) {
+  return sep === '/' ? `/${parts.join('/')}` : parts.join(sep);
+}
+
+// Replays a mount's link text component by component from the repository
+// root (or the filesystem root when absolute), before `..` can erase a local
+// component: a lexical `.apex/<area>` prefix or a prefix whose metadata is a
+// bound area identity (case aliases included) means the text enters an area.
+function linkTextLocalArea(root, text, identities) {
+  const rootParts = pathParts(resolve(root));
+  const stack = isAbsolute(text) ? [] : [...rootParts];
+  for (const part of pathParts(text)) {
+    if (part === '.') continue;
+    if (part === '..') {
+      stack.pop();
+      continue;
+    }
+    stack.push(part);
+    if (stack.length === rootParts.length + 2
+      && rootParts.every((value, index) => stack[index] === value)
+      && stack[rootParts.length] === '.apex'
+      && LOCAL_AREA_NAMES.includes(part)) return part;
+    if (identities.length === 0) continue;
+    try {
+      const area = identityArea(identities, lstatSync(partsPath(stack), { bigint: true }));
+      if (area) return area;
+    } catch {
+      // A prefix that does not exist yet cannot be an area.
+    }
+  }
+  return null;
+}
+
+// Physical landing: the resolved target or any ancestor is a bound area.
+function physicalLocalArea(physical, identities) {
+  if (identities.length === 0) return null;
+  for (let cursor = physical; ; cursor = dirname(cursor)) {
+    const area = identityArea(identities, lstatSync(cursor, { bigint: true }));
+    if (area) return area;
+    if (dirname(cursor) === cursor) return null;
+  }
+}
 
 export function bindProjectMount(root, artifactPath) {
   const [name, ...rest] = artifactPath.split('/');
@@ -36,14 +107,13 @@ export function bindProjectMount(root, artifactPath) {
     throw new Error(`symlink mount ${name} has wrong target type`);
   }
   if (name !== '.apex') {
-    let work;
-    try { work = realpathSync.native(join(root, '.apex', 'work')); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
-    if (work) {
-      const rel = relative(work, physical);
-      if (rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) {
-        throw new Error(`symlink mount ${name} enters excluded .apex/work`);
-      }
+    const identities = localAreaIdentities(join(root, '.apex'));
+    const area = linkTextLocalArea(root, readlinkSync(logical), identities)
+      ?? physicalLocalArea(physical, identities);
+    if (area) {
+      const error = new Error(`symlink mount ${name} enters excluded .apex/${area}`);
+      error.localArea = area;
+      throw error;
     }
   }
   return {

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import {
+import fs, {
   lstatSync,
   chmodSync,
   cpSync,
@@ -10,15 +10,19 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
+  rmSync,
   statSync,
   readdirSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
+import { LOCAL_AREA_NAMES } from '../scripts/sanitize.mjs';
 import { fileURLToPath } from 'node:url';
 import {
   applyProjectScaffold,
@@ -1390,5 +1394,80 @@ test('conflicts have closed provenance, coherent choices, canonical order, uniqu
     assert.throws(() => previewProjectScaffold(plan), undefined, `${name}: preview`);
     assert.throws(() => applyProjectScaffold({ hubRoot, plan }), undefined, `${name}: apply`);
     assert.deepEqual(snapshot(hubRoot), before, `${name}: zero write`);
+  }
+});
+
+function recordFsAccess(fn) {
+  const names = ['openSync', 'readFileSync', 'readdirSync', 'opendirSync'];
+  const originals = Object.fromEntries(names.map((name) => [name, fs[name]]));
+  const accesses = [];
+  try {
+    for (const name of names) {
+      fs[name] = function recorded(...args) {
+        accesses.push({ name, path: String(args[0]) });
+        return originals[name].apply(this, args);
+      };
+    }
+    syncBuiltinESMExports();
+    return { result: fn(), accesses };
+  } finally {
+    Object.assign(fs, originals);
+    syncBuiltinESMExports();
+  }
+}
+
+function accessesUnder(accesses, directories) {
+  return accesses.filter(({ path }) => directories.some((directory) => {
+    const candidate = path.toLowerCase();
+    const prefix = directory.toLowerCase();
+    return candidate === prefix || candidate.startsWith(`${prefix}${sep}`);
+  }));
+}
+
+test('planner provenance enumeration skips both local areas by name and physical identity, through mounts and linked areas', () => {
+  for (const area of LOCAL_AREA_NAMES) {
+    const hubRoot = tempHub();
+    const outside = tempHub();
+    try {
+      put(hubRoot, `.apex/${area}/decoy.md`, `<!-- steepy:generated:${area}-sentinel:v1 -->\n`);
+      symlinkSync('.apex', join(hubRoot, '.claude'), 'dir');
+      const aliased = recordFsAccess(() => planProjectScaffold({ hubRoot, model: model(), templatesDir }));
+      assert.equal(JSON.stringify(aliased.result.conflicts).includes(`${area}-sentinel`), false, area);
+      assert.ok(aliased.result.operations.some(({ path }) => path === '.claude/agents/web-agent.md'), area);
+      assert.deepEqual(accessesUnder(aliased.accesses, [
+        join(hubRoot, '.apex', area), join(realpathSync.native(hubRoot), '.apex', area),
+      ]), [], area);
+
+      rmSync(join(hubRoot, '.apex', area), { recursive: true });
+      put(outside, 'area-target/x.toml', `# steepy:generated:${area}-linked-sentinel:v1\n`);
+      symlinkSync(join(outside, 'area-target'), join(hubRoot, '.apex', area), 'dir');
+      symlinkSync(outside, join(hubRoot, '.codex'), 'dir');
+      const linked = recordFsAccess(() => planProjectScaffold({ hubRoot, model: model(), templatesDir }));
+      assert.equal(JSON.stringify(linked.result.conflicts).includes(`${area}-linked-sentinel`), false, area);
+      assert.deepEqual(accessesUnder(linked.accesses, [
+        join(outside, 'area-target'), join(realpathSync.native(outside), 'area-target'),
+      ]), [], area);
+    } finally {
+      rmSync(hubRoot, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  }
+});
+
+test('a root instruction mount into inception is a planner symlink conflict whose target is never read', () => {
+  const hubRoot = tempHub();
+  try {
+    const run = '0b6f1b8e-3c1a-4e2b-9f3d-5a7c9e1b2d4f';
+    put(hubRoot, `.apex/inception/${run}/agents.md`, '# INCEPTION_MOUNT_BODY_SENTINEL\n');
+    symlinkSync(`.apex/inception/${run}/agents.md`, join(hubRoot, 'AGENTS.md'));
+    const { result, accesses } = recordFsAccess(() => planProjectScaffold({ hubRoot, model: model(), templatesDir }));
+    assert.ok(result.conflicts.some(({ path, reason }) => path === 'AGENTS.md' && reason === 'symlink'),
+      JSON.stringify(result.conflicts));
+    assert.deepEqual(accessesUnder(accesses, [
+      join(hubRoot, '.apex', 'inception'), join(realpathSync.native(hubRoot), '.apex', 'inception'),
+    ]), []);
+    assert.doesNotMatch(JSON.stringify(result), /INCEPTION_MOUNT_BODY_SENTINEL/u);
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
   }
 });

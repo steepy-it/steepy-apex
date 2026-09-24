@@ -10,9 +10,11 @@
 // Every inspection validates raw native path components before `..` is
 // resolved, refuses descendant links and non-files, and never enters a
 // repository-local area (LOCAL_AREAS) by name or by bound physical identity.
-// Reads open no-follow/non-blocking, bind the descriptor to the inspected
-// identity, and stay bounded even if a file grows. Failures are collected as
-// deduplicated diagnostics; nothing is ever written.
+// A file admitted for reading must have exactly one link, checked on metadata
+// before any open, so a hard link can never alias local-area bytes. Reads open
+// no-follow/non-blocking, bind the descriptor to the inspected identity, and
+// stay bounded even if a file grows. Failures are collected as deduplicated
+// diagnostics; nothing is ever written.
 import {
   closeSync,
   constants as FS_CONSTANTS,
@@ -23,16 +25,23 @@ import {
   realpathSync,
 } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { bindProjectMount, PROJECT_MOUNTS } from './sanitize.mjs';
+import {
+  bindProjectMount,
+  LOCAL_AREA_NAMES,
+  localAreaIdentities,
+  PROJECT_MOUNTS,
+} from './sanitize.mjs';
 
 export const MAX_STABLE_FILE_BYTES = 1024 * 1024;
 
-// The single registry of repository-local `.apex` areas that stable readers
-// never enter. `path` is the logical repository-relative directory named by the
+// The reader's view of the shared local-area registry (sanitize.mjs). `path`
+// is the logical repository-relative directory named by the
 // `enters excluded <path>` diagnostic; `physicalReason` tags the refusal.
-export const LOCAL_AREAS = Object.freeze([
-  Object.freeze({ name: 'work', path: '.apex/work', physicalReason: 'work-path' }),
-]);
+export const LOCAL_AREAS = Object.freeze(LOCAL_AREA_NAMES.map((name) => Object.freeze({
+  name,
+  path: `.apex/${name}`,
+  physicalReason: `${name}-path`,
+})));
 
 export function displayNativePath(path) {
   return sep === '/' ? path : path.split(sep).join('/');
@@ -110,20 +119,16 @@ export function bindApexRoot(root) {
   }
 }
 
-// A local area that is an ordinary directory under the bound hub is excluded by
-// its physical identity too, so a case alias cannot reach it.
+// A local area under the bound hub is excluded by its physical identity too,
+// so neither a case alias nor another mount reaching a linked area's target
+// can enter it.
 function bindLocalAreaIdentities(apex) {
   if (apex.state !== 'present') return [];
-  const identities = [];
-  for (const area of LOCAL_AREAS) {
-    try {
-      const stat = lstatSync(join(apex.path, ...area.path.split('/').slice(1)), { bigint: true });
-      if (stat.isDirectory()) identities.push({ area, dev: stat.dev, ino: stat.ino });
-    } catch {
-      // An absent or unreadable area has no identity to exclude.
-    }
-  }
-  return identities;
+  return localAreaIdentities(apex.path).map(({ name, dev, ino }) => ({
+    area: LOCAL_AREAS.find((area) => area.name === name),
+    dev,
+    ino,
+  }));
 }
 
 // Stable documentation is read through one physical capability. It admits raw
@@ -140,8 +145,11 @@ export function createStableReader(hubRoot, diagnostics = [], rootAdmission = ad
       try {
         const mount = bindProjectMount(root, name);
         if (mount) mounts.set(name, { state: 'present', ...mount });
-      } catch {
-        mounts.set(name, { state: 'unsafe' });
+      } catch (error) {
+        mounts.set(name, {
+          state: 'unsafe',
+          localArea: LOCAL_AREAS.find((area) => area.name === error?.localArea),
+        });
       }
     }
   }
@@ -201,9 +209,20 @@ export function createStableReader(hubRoot, diagnostics = [], rootAdmission = ad
         if (apex.state === 'unsafe' && reportUnsafe) report(display, apex.reason);
         return { state: apex.state, label: display };
       }
-      if (mounts.get(candidateRel)?.state === 'unsafe') {
-        if (reportUnsafe) report(display, 'symlink mount could not be resolved safely');
-        return { state: 'unsafe', label: display, physicalReason: 'symlink' };
+      const unsafeMount = mounts.get(candidateRel)?.state === 'unsafe' ? mounts.get(candidateRel) : null;
+      if (unsafeMount) {
+        const { localArea } = unsafeMount;
+        if (reportUnsafe) {
+          report(display, localArea
+            ? `symlink mount enters excluded ${localArea.path}`
+            : 'symlink mount could not be resolved safely');
+        }
+        return {
+          state: 'unsafe',
+          label: display,
+          physicalReason: 'symlink',
+          ...(localArea ? { localArea: localArea.name } : {}),
+        };
       }
       cursor = physicalPath(candidateStack);
       let stat;
@@ -266,6 +285,12 @@ export function createStableReader(hubRoot, diagnostics = [], rootAdmission = ad
         physicalReason: kind === 'directory' ? 'non-directory' : 'non-file',
       };
     }
+    // A second link could name local-area bytes; refuse it on metadata alone,
+    // never by enumerating a local area for the other name.
+    if (kind === 'file' && finalStat.nlink !== 1n) {
+      if (reportUnsafe) report(display, 'is hard-linked');
+      return { state: 'unsafe', label: display, physicalReason: 'hardlink' };
+    }
     return { state: 'present', label: display, path: join(root, ...stack), physicalPath: cursor, stat: finalStat };
   }
 
@@ -285,6 +310,7 @@ export function createStableReader(hubRoot, diagnostics = [], rootAdmission = ad
       fd = openSync(admitted.physicalPath, FS_CONSTANTS.O_RDONLY | noFollow | nonBlock);
       const opened = fstatSync(fd, { bigint: true });
       if (!opened.isFile()
+        || opened.nlink !== 1n
         || opened.dev !== admitted.stat.dev
         || opened.ino !== admitted.stat.ino) {
         if (reportUnsafe) report(admitted.label, 'changed physical identity during open');
@@ -321,4 +347,22 @@ export function createStableReader(hubRoot, diagnostics = [], rootAdmission = ad
 
   const fromAbsolute = (path) => relative(root, path);
   return { diagnostics, fromAbsolute, inspect, read, report, root };
+}
+
+// A refusal of one stable document as a throwable error carrying the reader's
+// bounded diagnostics (never file bytes).
+export function stableReadError(label, result, diagnostics) {
+  const detail = diagnostics.map(({ msg }) => msg).join('; ') || `is ${result.state}`;
+  const error = new Error(`${label} cannot be read as a stable document: ${detail}`);
+  error.code = 'STABLE_READ';
+  return error;
+}
+
+// Throwing convenience for controllers that need exactly one stable document:
+// the same root admission, local-area exclusion, and single-link admission.
+export function readStableDocument(hubRoot, path, label = path) {
+  const diagnostics = [];
+  const result = createStableReader(hubRoot, diagnostics).read(path);
+  if (result.text === undefined) throw stableReadError(label, result, diagnostics);
+  return result.text;
 }

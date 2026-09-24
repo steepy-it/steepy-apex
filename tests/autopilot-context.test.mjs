@@ -1365,3 +1365,153 @@ test('explicit resume inputs distinguish native case aliases from physically dis
     }
   }
 });
+
+const INCEPTION_RUN = '0b6f1b8e-3c1a-4e2b-9f3d-5a7c9e1b2d4f';
+
+function recordFsAccess(fn) {
+  const names = ['openSync', 'readFileSync', 'readdirSync', 'opendirSync'];
+  const originals = Object.fromEntries(names.map((name) => [name, fs[name]]));
+  const accesses = [];
+  try {
+    for (const name of names) {
+      fs[name] = function recorded(...args) {
+        accesses.push({ name, path: String(args[0]) });
+        return originals[name].apply(this, args);
+      };
+    }
+    syncBuiltinESMExports();
+    let result;
+    let error;
+    try { result = fn(); } catch (caught) { error = caught; }
+    return { result, error, accesses };
+  } finally {
+    Object.assign(fs, originals);
+    syncBuiltinESMExports();
+  }
+}
+
+function inceptionAccesses(repoRoot, accesses) {
+  const areas = [join(repoRoot, '.apex', 'inception'), join(fs.realpathSync.native(repoRoot), '.apex', 'inception')]
+    .map((path) => path.toLowerCase());
+  return accesses.filter(({ path }) => areas.some((area) => {
+    const candidate = path.toLowerCase();
+    return candidate === area || candidate.startsWith(`${area}/`);
+  }));
+}
+
+function modularRepo(t) {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'steepy-context-stable-'));
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  cpSync(modularFixtureRoot, repoRoot, { recursive: true });
+  mkdirSync(join(repoRoot, '.apex', 'inception', INCEPTION_RUN), { recursive: true });
+  writeFileSync(join(repoRoot, '.apex', 'inception', '.gitignore'), '*\n');
+  writeFileSync(join(repoRoot, '.apex', 'inception', INCEPTION_RUN, 'local.md'), '# CONTEXT_LOCAL_BODY_SENTINEL\n');
+  return repoRoot;
+}
+
+const CORE = '.apex/standards/web/web-core.md';
+const AUTH = '.apex/standards/web/web-auth.md';
+const LOCAL = `.apex/inception/${INCEPTION_RUN}/local.md`;
+
+test('modular routing reads the core and verifies every leaf through the stable reader before any body read', (t) => {
+  const routing = (repoRoot) => fs.readFileSync(join(repoRoot, '.apex/_INDEX.md'), 'utf8');
+  const replaceLeafLink = (repoRoot, link) => {
+    const path = join(repoRoot, CORE);
+    writeFileSync(path, fs.readFileSync(path, 'utf8').replace('[web-auth.md](web-auth.md)', `[web-auth.md](${link})`));
+  };
+  const cases = [
+    ['hard-linked core', (repoRoot) => {
+      rmSync(join(repoRoot, CORE));
+      linkSync(join(repoRoot, LOCAL), join(repoRoot, CORE));
+    }, /hard-linked/],
+    ['symlinked core', (repoRoot) => {
+      rmSync(join(repoRoot, CORE));
+      symlinkSync(join(repoRoot, LOCAL), join(repoRoot, CORE));
+    }, /symlink/],
+    ['leaf entering inception', (repoRoot) => replaceLeafLink(repoRoot, `../../inception/${INCEPTION_RUN}/local.md`),
+      /enters excluded \.apex\/inception/],
+    ['leaf entering and leaving inception', (repoRoot) => replaceLeafLink(repoRoot, '../../inception/../standards/web/web-auth.md'),
+      /enters excluded \.apex\/inception/],
+    ['leaf entering and leaving work', (repoRoot) => replaceLeafLink(repoRoot, '../../work/../standards/web/web-auth.md'),
+      /enters excluded \.apex\/work/],
+    ['symlinked leaf', (repoRoot) => {
+      rmSync(join(repoRoot, AUTH));
+      symlinkSync(join(repoRoot, LOCAL), join(repoRoot, AUTH));
+    }, /symlink/],
+    ['hard-linked leaf', (repoRoot) => {
+      rmSync(join(repoRoot, AUTH));
+      linkSync(join(repoRoot, LOCAL), join(repoRoot, AUTH));
+    }, /hard-linked/],
+  ];
+  for (const [label, mutate, reason] of cases) {
+    const repoRoot = modularRepo(t);
+    mutate(repoRoot);
+    const { error, accesses } = recordFsAccess(() => standardsBySurfaceFromRouting(routing(repoRoot), { repoRoot }));
+    assert.ok(error, `${label} must be refused`);
+    assert.match(error.message, reason, label);
+    assert.doesNotMatch(error.message, /CONTEXT_LOCAL_BODY_SENTINEL/u, label);
+    assert.deepEqual(inceptionAccesses(repoRoot, accesses), [], label);
+  }
+
+  const repoRoot = modularRepo(t);
+  assert.deepEqual(standardsBySurfaceFromRouting(routing(repoRoot), { repoRoot }).web, {
+    core: CORE,
+    leaves: [AUTH, '.apex/standards/web/web-data.md'],
+  }, 'ordinary modular routing is unchanged');
+  fs.rmSync(join(repoRoot, AUTH));
+  assert.deepEqual(standardsBySurfaceFromRouting(routing(repoRoot), { repoRoot }).web.leaves,
+    [AUTH, '.apex/standards/web/web-data.md'], 'a missing leaf stays an unavailable on-demand reference');
+});
+
+test('routing rows into local areas are refused even without a repository root', () => {
+  for (const [target, area] of [
+    [`inception/${INCEPTION_RUN}/web.md`, 'inception'],
+    ['work/specs/web.md', 'work'],
+  ]) {
+    assert.throws(
+      () => standardsBySurfaceFromRouting(`| \`web\` | [web](${target}) | \`web-agent\` |\n`),
+      new RegExp(`standard path for web enters excluded \\.apex/${area}`, 'u'),
+      target,
+    );
+  }
+});
+
+test('the plan verifier reads non-work inputs only through the stable reader', (t) => {
+  const repoRoot = modularRepo(t);
+  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `web`\n- **Complexity:** `integration`\n- **Success criteria:** SC1\n';
+  const verify = (planPath) => spawnSync(process.execPath, [scriptPath,
+    '--verify-plan', '--repo-root', repoRoot, '--plan', planPath,
+  ], { encoding: 'utf8' });
+
+  writeFileSync(join(repoRoot, '.apex', 'inception', INCEPTION_RUN, 'plan.md'), plan);
+  const local = verify(`.apex/inception/${INCEPTION_RUN}/plan.md`);
+  assert.equal(local.status, 1, local.stdout);
+  assert.match(local.stderr, /plan rejected:.*enters excluded \.apex\/inception/u);
+
+  mkdirSync(join(repoRoot, 'docs'));
+  linkSync(join(repoRoot, '.apex', 'inception', INCEPTION_RUN, 'plan.md'), join(repoRoot, 'docs', 'linked-plan.md'));
+  const hardLinked = verify('docs/linked-plan.md');
+  assert.equal(hardLinked.status, 1, hardLinked.stdout);
+  assert.match(hardLinked.stderr, /plan rejected:.*hard-linked/u);
+
+  writeFileSync(join(repoRoot, 'docs', 'plan.md'), plan);
+  const ordinary = verify('docs/plan.md');
+  assert.equal(ordinary.status, 0, ordinary.stderr);
+  assert.match(ordinary.stdout, /plan OK — 1 task\(s\): 1/u);
+});
+
+test('a routed single-file standard is verified on metadata before any child can read it', (t) => {
+  const repoRoot = materialize(t);
+  const routing = '| `scripts` | [standards/scripts.md](standards/scripts.md) | `scripts-agent` |\n';
+  assert.deepEqual(standardsBySurfaceFromRouting(routing, { repoRoot }), { scripts: '.apex/standards/scripts.md' });
+  mkdirSync(join(repoRoot, '.apex', 'inception', INCEPTION_RUN), { recursive: true });
+  writeFileSync(join(repoRoot, '.apex', 'inception', INCEPTION_RUN, 'local.md'), '# CONTEXT_LOCAL_BODY_SENTINEL\n');
+  rmSync(join(repoRoot, '.apex', 'standards', 'scripts.md'));
+  symlinkSync(`../inception/${INCEPTION_RUN}/local.md`, join(repoRoot, '.apex', 'standards', 'scripts.md'));
+  const { error, accesses } = recordFsAccess(() => standardsBySurfaceFromRouting(routing, { repoRoot }));
+  assert.match(error?.message ?? '', /standard path for scripts cannot be read as a stable document: .*is symlink/u);
+  assert.deepEqual(inceptionAccesses(repoRoot, accesses), []);
+  rmSync(join(repoRoot, '.apex', 'standards', 'scripts.md'));
+  assert.deepEqual(standardsBySurfaceFromRouting(routing, { repoRoot }), { scripts: '.apex/standards/scripts.md' },
+    'a missing single-file standard stays for the manifest builder to report');
+});

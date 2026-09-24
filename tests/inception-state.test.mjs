@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import fs, {
   chmodSync,
   existsSync,
   lstatSync,
@@ -15,6 +15,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { devNull, tmpdir } from 'node:os';
@@ -27,6 +28,7 @@ import {
   assertInceptionTransition,
   createInitialInceptionState,
   inspectInceptionState,
+  inspectPreHubState,
   observeInceptionGit,
   parseInceptionState,
   serializeInceptionState,
@@ -555,3 +557,86 @@ test('this repository ignores its own local inception area; targets rely on the 
   assert.ok(lines.includes('/.apex/inception/'), 'repository .gitignore must ignore /.apex/inception/');
   assert.ok(lines.includes('/.apex/work/'), 'the existing work-area rule is preserved');
 });
+
+// Writes a guarded descriptor directly (no Git), as a hub fixture would.
+function seedDescriptor(root, value) {
+  put(root, '.apex/inception/.gitignore', '*\n');
+  put(root, STATE, serializeInceptionState(value));
+}
+
+function recordOpens(fn) {
+  const names = ['openSync', 'readFileSync', 'readdirSync', 'opendirSync'];
+  const originals = Object.fromEntries(names.map((name) => [name, fs[name]]));
+  const accesses = [];
+  try {
+    for (const name of names) {
+      fs[name] = function recorded(...args) {
+        accesses.push({ name, path: String(args[0]) });
+        return originals[name].apply(this, args);
+      };
+    }
+    syncBuiltinESMExports();
+    return { result: fn(), accesses };
+  } finally {
+    Object.assign(fs, originals);
+    syncBuiltinESMExports();
+  }
+}
+
+test('the linter view of inception state is reference-free, bounded to descriptor and guard, and never throws', () => {
+  withTemp('prehub-view', (root) => {
+    assert.deepEqual({ ...inspectPreHubState(root) }, { state: 'absent' });
+    mkdirSync(join(root, '.apex/inception'), { recursive: true });
+    assert.equal(inspectPreHubState(root).state, 'incomplete', 'a directory alone is no authorization');
+
+    put(root, PROPOSAL, 'PREHUB_REFERENCE_BODY_SENTINEL\n');
+    seedDescriptor(root, descriptor({ phase: 'bootstrap', status: 'blocked', approval: ref(PROPOSAL, 'x') }));
+    const { result, accesses } = recordOpens(() => inspectPreHubState(root));
+    assert.deepEqual({ ...result }, {
+      state: 'pre-hub', runId: RUN, phase: 'bootstrap', status: 'blocked',
+    }, 'no descriptor, digest, or reference leaves the view');
+    assert.equal(Object.isFrozen(result), true);
+    const physical = realpathSync.native(root);
+    assert.deepEqual(accesses.map(({ name, path }) => [name, path]).sort(), [
+      ['openSync', join(physical, '.apex/inception/.gitignore')],
+      ['openSync', join(physical, STATE)],
+    ], 'only the descriptor and its guard are opened; nothing is enumerated');
+
+    const approval = ref(PROPOSAL, 'x');
+    const handoff = ref(HANDOFF, 'h');
+    for (const [init, expected] of [
+      [{ status: 'in-progress', handoff, receipt: null }, 'init-in-progress'],
+      [{ status: 'complete', handoff, receipt: ref(RECEIPT, 'r') }, 'init-complete'],
+    ]) {
+      seedDescriptor(root, descriptor({ phase: 'init', approval, init }));
+      assert.equal(inspectPreHubState(root).state, expected);
+    }
+
+    writeFileSync(join(root, STATE), `${JSON.stringify({ ...createInitialInceptionState(RUN), schemaVersion: 2 }, null, 2)}\n`);
+    const unknown = inspectPreHubState(root);
+    assert.equal(unknown.state, 'invalid');
+    assert.match(unknown.reason, /schemaVersion/);
+  });
+
+  withTemp('prehub-view-root', (root) => {
+    const missing = join(root, 'absent-root');
+    assert.throws(() => inspectInceptionState(missing), /repository root/);
+    const view = inspectPreHubState(missing);
+    assert.equal(view.state, 'invalid');
+    assert.match(view.reason, /could not be inspected safely/);
+  });
+});
+
+test('an unreadable descriptor is an invalid pre-hub view, not an exemption', {
+  skip: process.platform === 'win32' || process.getuid?.() === 0,
+}, () => withTemp('prehub-view-io', (root) => {
+  seedDescriptor(root, createInitialInceptionState(RUN));
+  chmodSync(join(root, STATE), 0o000);
+  try {
+    const view = inspectPreHubState(root);
+    assert.equal(view.state, 'invalid');
+    assert.doesNotMatch(JSON.stringify(view), /reconnaissance/);
+  } finally {
+    chmodSync(join(root, STATE), 0o600);
+  }
+}));
