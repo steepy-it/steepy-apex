@@ -238,6 +238,23 @@ export function inspectInceptionState(root) {
   }
 }
 
+// The hub linter's view: the same descriptor-and-guard classification,
+// reduced to what pre-hub recognition needs. It never throws, never returns
+// the descriptor's references, and never follows them. Only `pre-hub` can
+// qualify for the linter's exemption; hub compatibility is the linter's call.
+export function inspectPreHubState(root) {
+  let inspected;
+  try {
+    inspected = inspectInceptionState(root);
+  } catch (error) {
+    const code = typeof error?.code === 'string' && /^[A-Z_]+$/u.test(error.code) ? ` (${error.code})` : '';
+    return Object.freeze({ state: 'invalid', reason: `inception state could not be inspected safely${code}` });
+  }
+  if (!DESCRIPTOR_STATES.includes(inspected.state)) return inspected;
+  const { runId, phase, status } = inspected.descriptor;
+  return Object.freeze({ state: inspected.state, runId, phase, status });
+}
+
 function gitEnvironment(env) {
   const result = { ...(env ?? process.env), LC_ALL: 'C', LANGUAGE: 'C' };
   for (const key of GIT_LOCATION_VARIABLES) delete result[key];

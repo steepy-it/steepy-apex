@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import fs, {
   appendFileSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -14,9 +15,11 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
+import { LOCAL_AREA_NAMES } from '../scripts/sanitize.mjs';
 import {
   LOCAL_AREAS,
   MAX_STABLE_FILE_BYTES,
@@ -24,6 +27,7 @@ import {
   bindApexRoot,
   createStableReader,
   rawPathEntersLocalArea,
+  readStableDocument,
 } from '../scripts/stable-paths.mjs';
 
 function withTemp(suffix, fn) {
@@ -515,5 +519,235 @@ test('diagnostics are deduplicated, suppressible, and collected without writing'
     assert.equal(reader.diagnostics, diagnostics);
     assert.deepEqual(treeSnapshot(base), before);
     assert.equal(existsSync(join(repo, '.apex', 'work', 'draft.md')), true);
+  });
+});
+
+// Records every body-read or enumeration attempt made while `fn` runs; the
+// wrapped built-ins still perform the real operation unless `before` throws.
+function recordFsAccess(fn, before = () => {}) {
+  const names = ['openSync', 'readFileSync', 'readdirSync', 'opendirSync'];
+  const originals = Object.fromEntries(names.map((name) => [name, fs[name]]));
+  const accesses = [];
+  try {
+    for (const name of names) {
+      fs[name] = function recorded(...args) {
+        accesses.push({ name, path: String(args[0]) });
+        before(name, args);
+        return originals[name].apply(this, args);
+      };
+    }
+    syncBuiltinESMExports();
+    return { result: fn(), accesses };
+  } finally {
+    Object.assign(fs, originals);
+    syncBuiltinESMExports();
+  }
+}
+
+function under(path, directory) {
+  const candidate = path.toLowerCase();
+  const prefix = directory.toLowerCase();
+  return candidate === prefix || candidate.startsWith(`${prefix}${sep}`);
+}
+
+const RUN = '0b6f1b8e-3c1a-4e2b-9f3d-5a7c9e1b2d4f';
+
+test('the reader registry covers work and inception, derived from the shared sanitize registry', () => {
+  assert.deepEqual(LOCAL_AREAS.map(({ name }) => name), [...LOCAL_AREA_NAMES]);
+  assert.deepEqual(LOCAL_AREAS.map((area) => ({ ...area })), [
+    { name: 'work', path: '.apex/work', physicalReason: 'work-path' },
+    { name: 'inception', path: '.apex/inception', physicalReason: 'inception-path' },
+  ]);
+});
+
+test('lexical inception recognition refuses entering and enter-then-exit spellings, never near names', () => {
+  for (const [base, target] of [
+    ['.apex', 'inception/state.json'],
+    ['.apex/notes', '../inception'],
+    ['', '.apex/inception'],
+    ['.apex', `inception/${RUN}/proposal.md`],
+    ['.apex', 'inception/../leaf.md'],
+    ['.apex/standards', '../inception/../standards/web.md'],
+  ]) {
+    assert.equal(rawPathEntersLocalArea(base, target)?.name, 'inception', `${base} + ${target}`);
+    assert.equal(rawPathEntersLocalArea(base, target)?.path, '.apex/inception', `${base} + ${target}`);
+  }
+  for (const [base, target] of [
+    ['.apex', 'inceptions.md'],
+    ['.apex', 'notes/inception/x.md'],
+    ['.apex', 'INCEPTION/x.md'],
+    ['', 'inception/x.md'],
+  ]) {
+    assert.equal(rawPathEntersLocalArea(base, target), null, `${base} + ${target}`);
+  }
+});
+
+test('the inception area is refused through direct, base-relative, parent-relative, and traversal spellings without opening it', () => {
+  withTemp('inception-name', (base) => {
+    const sentinel = 'INCEPTION_NAME_SENTINEL';
+    const repo = repoWithHub(base, {
+      '.apex/_INDEX.md': '# Index\n',
+      '.apex/leaf.md': '# Leaf\n',
+      '.apex/notes/leaf.md': '# Leaf\n',
+      [`.apex/inception/${RUN}/proposal.md`]: `# ${sentinel}\n`,
+      '.apex/inception/state.json': `{"${sentinel}":true}\n`,
+    });
+    const diagnostics = [];
+    const reader = createStableReader(repo, diagnostics);
+    const { accesses } = recordFsAccess(() => {
+      for (const [path, options] of [
+        [`.apex/inception/${RUN}/proposal.md`, {}],
+        ['.apex/inception/state.json', {}],
+        ['state.json', { base: '.apex/inception' }],
+        ['../inception', { base: '.apex/notes', kind: 'directory' }],
+        ['.apex/inception/../leaf.md', {}],
+      ]) {
+        const result = options.kind ? reader.inspect(path, options) : reader.read(path, options);
+        assert.equal(result.state, 'unsafe', path);
+        assert.equal(result.physicalReason, 'inception-path', path);
+        assert.equal(result.localArea, 'inception', path);
+        assert.equal(result.text, undefined, path);
+      }
+    });
+    assert.deepEqual(accesses, []);
+    assert.match(messages(diagnostics), /stable-read: \.apex\/inception\/state\.json enters excluded \.apex\/inception/u);
+    assert.doesNotMatch(messages(diagnostics), new RegExp(sentinel, 'u'));
+  });
+});
+
+test('a stable file with more than one hard link is refused before any body read, without enumerating local areas', () => {
+  withTemp('hardlink', (base) => {
+    const sentinel = 'HARDLINKED_INCEPTION_BODY_SENTINEL';
+    const repo = repoWithHub(base, {
+      '.apex/_INDEX.md': '# Index\n',
+      [`.apex/inception/${RUN}/proposal.md`]: `# ${sentinel}\n`,
+    });
+    mkdirSync(join(repo, '.apex', 'standards'));
+    linkSync(join(repo, '.apex', 'inception', RUN, 'proposal.md'), join(repo, '.apex', 'standards', 'web.md'));
+    linkSync(join(repo, '.apex', '_INDEX.md'), join(base, 'outside-index.md'));
+
+    const diagnostics = [];
+    const reader = createStableReader(repo, diagnostics);
+    const { result, accesses } = recordFsAccess(() => [
+      reader.read('.apex/standards/web.md'),
+      reader.read('.apex/_INDEX.md'),
+      reader.inspect('.apex/standards/web.md'),
+      reader.inspect('.apex/standards/web.md', { kind: 'entry' }),
+    ]);
+    const [standard, index, admission, entry] = result;
+    for (const [label, refused] of [['standard', standard], ['index', index], ['admission', admission]]) {
+      assert.equal(refused.state, 'unsafe', label);
+      assert.equal(refused.physicalReason, 'hardlink', label);
+      assert.equal(refused.text, undefined, label);
+    }
+    assert.equal(entry.state, 'present', 'existence-only admission is not a body read');
+    assert.deepEqual(accesses, [], 'refusal happens on metadata before any open or enumeration');
+    assert.match(messages(diagnostics), /stable-read: \.apex\/standards\/web\.md is hard-linked/u);
+    assert.match(messages(diagnostics), /stable-read: \.apex\/_INDEX\.md is hard-linked/u);
+    assert.doesNotMatch(messages(diagnostics), new RegExp(sentinel, 'u'));
+  });
+});
+
+test('a hard link created between admission and open is refused by the opened descriptor', () => {
+  withTemp('hardlink-race', (base) => {
+    const sentinel = 'RACED_HARDLINK_SENTINEL';
+    const repo = repoWithHub(base, { '.apex/_INDEX.md': `# ${sentinel}\n` });
+    const diagnostics = [];
+    const reader = createStableReader(repo, diagnostics);
+    let linked = false;
+    const { result } = recordFsAccess(() => reader.read('.apex/_INDEX.md'), (name, args) => {
+      if (name === 'openSync' && !linked && String(args[0]).endsWith('_INDEX.md')) {
+        linked = true;
+        linkSync(args[0], join(base, 'late-link.md'));
+      }
+    });
+    assert.equal(linked, true);
+    assert.equal(result.state, 'unsafe');
+    assert.equal(result.text, undefined);
+    assert.match(messages(diagnostics), /stable-read: \.apex\/_INDEX\.md changed physical identity during open/u);
+    assert.doesNotMatch(messages(diagnostics), new RegExp(sentinel, 'u'));
+  });
+});
+
+test('a project mount into a local area is a symlink refusal that names the area', () => {
+  for (const area of LOCAL_AREAS) {
+    withTemp(`mount-into-${area.name}`, (base) => {
+      const sentinel = `MOUNT_INTO_${area.name.toUpperCase()}_SENTINEL`;
+      const repo = repoWithHub(base, { [`${area.path}/agents/x.md`]: `# ${sentinel}\n` });
+      symlinkSync(area.path, join(repo, '.claude'), 'dir');
+      const diagnostics = [];
+      const { result, accesses } = recordFsAccess(() => createStableReader(repo, diagnostics).read('.claude/agents/x.md'));
+      assert.equal(result.state, 'unsafe');
+      assert.equal(result.localArea, area.name);
+      assert.equal(result.physicalReason, 'symlink', 'a refused mount keeps its symlink reason');
+      assert.deepEqual(accesses, []);
+      assert.equal(messages(diagnostics), `stable-read: .claude/agents/x.md symlink mount enters excluded ${area.path}`);
+    });
+  }
+});
+
+test('the physical target of a linked local area is excluded when reached through another mount', () => {
+  for (const area of LOCAL_AREAS) {
+    withTemp(`linked-target-${area.name}`, (base) => {
+      const sentinel = `LINKED_TARGET_${area.name.toUpperCase()}_SENTINEL`;
+      const repo = repoWithHub(base);
+      const provider = join(base, 'provider');
+      mkdirSync(join(provider, 'area'), { recursive: true });
+      writeFileSync(join(provider, 'area', 'x.md'), `# ${sentinel}\n`);
+      symlinkSync(join(provider, 'area'), join(repo, ...area.path.split('/')), 'dir');
+      symlinkSync(provider, join(repo, '.claude'), 'dir');
+      const diagnostics = [];
+      const { result, accesses } = recordFsAccess(() => createStableReader(repo, diagnostics).read('.claude/area/x.md'));
+      assert.equal(result.state, 'unsafe');
+      assert.equal(result.localArea, area.name);
+      assert.equal(result.text, undefined);
+      assert.deepEqual(accesses, []);
+      assert.equal(messages(diagnostics), `stable-read: .claude/area/x.md enters excluded ${area.path}`);
+    });
+  }
+});
+
+test('a case alias of the inception area is excluded by physical identity', (t) => {
+  withTemp('inception-alias', (base) => {
+    const sentinel = 'INCEPTION_ALIAS_SENTINEL';
+    const repo = repoWithHub(base, { '.apex/_INDEX.md': '# Index\n', '.apex/inception/state.json': `${sentinel}\n` });
+    if (!sameIdentity(join(repo, '.apex', 'inception'), join(repo, '.apex', 'INCEPTION'))) {
+      t.skip('temporary storage keeps case-distinct directory identities');
+      return;
+    }
+    const diagnostics = [];
+    const reader = createStableReader(repo, diagnostics);
+    const { accesses } = recordFsAccess(() => {
+      for (const path of ['.apex/INCEPTION/state.json', '.apex/InCePtIoN/../_INDEX.md']) {
+        const result = reader.read(path);
+        assert.equal(result.state, 'unsafe', path);
+        assert.equal(result.localArea, 'inception', path);
+      }
+    });
+    assert.deepEqual(accesses, []);
+    assert.doesNotMatch(messages(diagnostics), new RegExp(sentinel, 'u'));
+  });
+});
+
+test('controllers read one stable document through a throwing convenience with the same admission', () => {
+  withTemp('document', (base) => {
+    const repo = repoWithHub(base, {
+      '.apex/_INDEX.md': '# Index\n',
+      [`.apex/inception/${RUN}/plan.md`]: '# DOCUMENT_LOCAL_SENTINEL\n',
+    });
+    assert.equal(readStableDocument(repo, '.apex/_INDEX.md', 'routing index'), '# Index\n');
+    linkSync(join(repo, '.apex', '_INDEX.md'), join(base, 'second-name.md'));
+    for (const [path, reason] of [
+      ['.apex/_INDEX.md', /routing index cannot be read as a stable document: stable-read: \.apex\/_INDEX\.md is hard-linked/u],
+      [`.apex/inception/${RUN}/plan.md`, /enters excluded \.apex\/inception/u],
+      ['.apex/absent.md', /routing index cannot be read as a stable document: is missing/u],
+    ]) {
+      assert.throws(() => readStableDocument(repo, path, 'routing index'), (error) => {
+        assert.match(error.message, reason, path);
+        assert.doesNotMatch(error.message, /DOCUMENT_LOCAL_SENTINEL/u, path);
+        assert.equal(error.code, 'STABLE_READ', path);
+        return true;
+      }, path);
+    }
   });
 });

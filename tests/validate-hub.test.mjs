@@ -2,22 +2,26 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, relative } from 'node:path';
-import {
+import { dirname, join, relative, sep } from 'node:path';
+import fs, {
   chmodSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { collectViolations, main } from '../scripts/validate-hub.mjs';
+import { classifyHub, collectViolations, main } from '../scripts/validate-hub.mjs';
+import { createInitialInceptionState, serializeInceptionState } from '../scripts/inception-state.mjs';
 import { scaffold } from '../scripts/new-surface.mjs';
 import { applyProjectScaffold, planProjectScaffold } from '../scripts/project-scaffold.mjs';
 
@@ -2408,4 +2412,378 @@ test('permission-denied package metadata returns controlled violations without t
   } finally {
     chmodSync(manifest, 0o600);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Pre-hub inception state (spec §8 state matrix) and local-area exclusion.
+// ---------------------------------------------------------------------------
+
+const RUN = '0b6f1b8e-3c1a-4e2b-9f3d-5a7c9e1b2d4f';
+const PROPOSAL = `.apex/inception/${RUN}/proposal.md`;
+const LOCAL_SENTINEL = 'LOCAL_AREA_BODY_SENTINEL';
+const APPROVAL = Object.freeze({ path: PROPOSAL, sha256: 'a'.repeat(64) });
+
+function withTempRepo(suffix, fn) {
+  const repo = mkdtempSync(join(tmpdir(), `steepy-prehub-${suffix}-`));
+  try {
+    return fn(repo);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+function descriptorBytes(overrides = {}) {
+  return serializeInceptionState({ ...createInitialInceptionState(RUN), ...overrides });
+}
+
+// A guarded descriptor plus local run and work documents whose bodies must
+// never be read by the linter.
+function seedInception(repo, overrides = {}) {
+  putPortable(repo, '.apex/inception/.gitignore', '*\n');
+  putPortable(repo, PROPOSAL, `# ${LOCAL_SENTINEL}\n- [Leaf](../../leaf.md)\n`);
+  putPortable(repo, '.apex/work/specs/draft.md', `# ${LOCAL_SENTINEL}\n[Broken](missing.md)\n`);
+  putPortable(repo, '.apex/inception/state.json', descriptorBytes(overrides));
+}
+
+const initDescriptor = (status) => ({
+  phase: 'init',
+  approval: APPROVAL,
+  init: { status, handoff: null, receipt: null },
+});
+
+function recordFsAccess(fn) {
+  const names = ['openSync', 'readFileSync', 'readdirSync', 'opendirSync'];
+  const originals = Object.fromEntries(names.map((name) => [name, fs[name]]));
+  const accesses = [];
+  try {
+    for (const name of names) {
+      fs[name] = function recorded(...args) {
+        accesses.push({ name, path: String(args[0]) });
+        return originals[name].apply(this, args);
+      };
+    }
+    syncBuiltinESMExports();
+    return { result: fn(), accesses };
+  } finally {
+    Object.assign(fs, originals);
+    syncBuiltinESMExports();
+  }
+}
+
+function under(path, directory) {
+  const candidate = path.toLowerCase();
+  const prefix = directory.toLowerCase();
+  return candidate === prefix || candidate.startsWith(`${prefix}${sep}`);
+}
+
+// Zero body reads and zero enumeration inside either local area; only the
+// canonical descriptor and its guard may be opened, and only when allowed.
+function assertNoLocalBodyAccess(repo, accesses, { descriptor = false } = {}) {
+  const physical = realpathSync.native(repo);
+  const areas = ['inception', 'work'].flatMap((name) => [join(repo, '.apex', name), join(physical, '.apex', name)]);
+  const allowed = new Set(descriptor
+    ? ['state.json', '.gitignore'].map((file) => join(physical, '.apex', 'inception', file).toLowerCase())
+    : []);
+  const offending = accesses.filter(({ name, path }) => areas.some((area) => under(path, area))
+    && !(name === 'openSync' && allowed.has(path.toLowerCase())));
+  assert.deepEqual(offending, []);
+}
+
+function errorMessages(violations) {
+  return violations.filter(({ level }) => level === 'error').map(({ msg }) => msg).join('\n');
+}
+
+test('pre-hub matrix: a valid pre-init descriptor without hub artifacts is recognized, never called coherent', () => {
+  for (const overrides of [{}, { phase: 'bootstrap', status: 'blocked', approval: APPROVAL }]) {
+    withTempRepo('valid', (repo) => {
+      seedInception(repo, overrides);
+      putPortable(repo, 'AGENTS.md', '# My app\n\nPlain user notes without provenance.\n');
+      putPortable(repo, 'CLAUDE.md', '# Claude notes\n\nSee [agents](AGENTS.md).\n');
+      putPortable(repo, '.claude/settings.json', '{"permissions":{}}\n');
+      putPortable(repo, '.claude/agents/helper.md', '# A user agent\n');
+      writeFileSync(join(repo, '.apex', '.DS_Store'), Buffer.from([0, 1, 2]));
+
+      const { result, accesses } = recordFsAccess(() => classifyHub(repo));
+      assert.equal(result.state, 'pre-hub', JSON.stringify(result));
+      assert.deepEqual(result.violations, []);
+      assert.deepEqual(collectViolations(repo), []);
+      assertNoLocalBodyAccess(repo, accesses, { descriptor: true });
+
+      const loud = captureMain([repo]);
+      assert.equal(loud.code, 0, loud.err);
+      assert.match(loud.out, /pre-hub/i);
+      assert.match(loud.out, new RegExp(RUN, 'u'));
+      assert.doesNotMatch(loud.out, /coherent/i);
+      assert.doesNotMatch(loud.out, /no \.apex hub found/i);
+      assert.doesNotMatch(`${loud.out}\n${loud.err}`, new RegExp(LOCAL_SENTINEL, 'u'));
+
+      const quiet = captureMain(['--quiet', repo]);
+      assert.deepEqual(quiet, { code: 0, out: '', err: '' });
+    });
+  }
+});
+
+test('pre-hub matrix: no .apex stays uninitialized and a coherent hub stays coherent', () => {
+  withTempRepo('none', (repo) => {
+    assert.deepEqual({ ...classifyHub(repo) }, { state: 'no-hub', violations: [] });
+  });
+  const hub = portableHub();
+  try {
+    const classified = classifyHub(hub);
+    assert.equal(classified.state, 'hub');
+    assert.deepEqual(classified.violations.filter(({ level }) => level === 'error'), []);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub matrix: .apex without an index and without a valid inception keeps the missing-index error', {
+  skip: process.platform === 'win32',
+}, () => {
+  const cases = [
+    ['area directory only', (repo) => mkdirSync(join(repo, '.apex', 'inception'), { recursive: true }), /incomplete/],
+    ['guard without descriptor', (repo) => putPortable(repo, '.apex/inception/.gitignore', '*\n'), /incomplete/],
+    ['descriptor without guard', (repo) => {
+      seedInception(repo);
+      rmSync(join(repo, '.apex', 'inception', '.gitignore'));
+    }, /guard/],
+    ['foreign guard', (repo) => {
+      seedInception(repo);
+      writeFileSync(join(repo, '.apex', 'inception', '.gitignore'), '*\n!state.json\n');
+    }, /guard/],
+    ['malformed descriptor', (repo) => {
+      seedInception(repo);
+      writeFileSync(join(repo, '.apex', 'inception', 'state.json'), `{"${LOCAL_SENTINEL}":`);
+    }, /JSON/],
+    ['unknown descriptor version', (repo) => {
+      seedInception(repo);
+      writeFileSync(join(repo, '.apex', 'inception', 'state.json'),
+        `${JSON.stringify({ ...createInitialInceptionState(RUN), schemaVersion: 2 }, null, 2)}\n`);
+    }, /schemaVersion/],
+    ['noncanonical descriptor bytes', (repo) => {
+      seedInception(repo);
+      writeFileSync(join(repo, '.apex', 'inception', 'state.json'), JSON.stringify(createInitialInceptionState(RUN)));
+    }, /canonical/],
+    ['symlinked descriptor', (repo) => {
+      seedInception(repo);
+      renameSync(join(repo, '.apex', 'inception', 'state.json'), join(repo, 'state.json'));
+      symlinkSync(join(repo, 'state.json'), join(repo, '.apex', 'inception', 'state.json'));
+    }, /symlink/],
+    ['hard-linked descriptor', (repo) => {
+      seedInception(repo);
+      linkSync(join(repo, '.apex', 'inception', 'state.json'), join(repo, 'state-copy.json'));
+    }, /hard-linked/],
+    ['symlinked area', (repo) => {
+      const external = join(repo, 'external-inception');
+      putPortable(repo, 'external-inception/.gitignore', '*\n');
+      putPortable(repo, 'external-inception/state.json', descriptorBytes());
+      mkdirSync(join(repo, '.apex'), { recursive: true });
+      symlinkSync(external, join(repo, '.apex', 'inception'), 'dir');
+    }, /symlink/],
+    ['unreadable descriptor', (repo) => {
+      seedInception(repo);
+      if (process.getuid?.() !== 0) chmodSync(join(repo, '.apex', 'inception', 'state.json'), 0o000);
+    }, /inception/],
+  ];
+  for (const [label, mutate, reason] of cases) {
+    withTempRepo('invalid', (repo) => {
+      mutate(repo);
+      try {
+        const { result, accesses } = recordFsAccess(() => classifyHub(repo));
+        assert.equal(result.state, 'invalid', label);
+        const messages = errorMessages(result.violations);
+        assert.match(messages, /missing _INDEX\.md/u, label);
+        assert.match(messages, /inception: pre-hub state not recognized \((incomplete|invalid)\)/u, label);
+        assert.match(messages, reason, label);
+        assert.doesNotMatch(messages, new RegExp(LOCAL_SENTINEL, 'u'), label);
+        assertNoLocalBodyAccess(repo, accesses, { descriptor: true });
+        const quiet = captureMain(['--quiet', repo]);
+        assert.equal(quiet.code, 1, label);
+        assert.match(quiet.err, /missing _INDEX\.md/u, label);
+      } finally {
+        const state = join(repo, '.apex', 'inception', 'state.json');
+        if (existsSync(state)) chmodSync(state, 0o600);
+      }
+    });
+  }
+});
+
+test('pre-hub matrix: init in progress or complete without an index is always an error', () => {
+  for (const status of ['in-progress', 'complete']) {
+    withTempRepo(`init-${status}`, (repo) => {
+      seedInception(repo, initDescriptor(status));
+      const { result, accesses } = recordFsAccess(() => classifyHub(repo));
+      assert.equal(result.state, 'invalid', status);
+      const messages = errorMessages(result.violations);
+      assert.match(messages, /missing _INDEX\.md/u, status);
+      assert.match(messages, new RegExp(`inception: init is ${status}; an activated hub requires \\.apex/_INDEX\\.md`, 'u'), status);
+      assertNoLocalBodyAccess(repo, accesses, { descriptor: true });
+      assert.equal(captureMain([repo]).code, 1, status);
+    });
+  }
+});
+
+test('pre-hub matrix: hub artifacts beside a pre-init descriptor are a partial hub, not an inception', () => {
+  const cases = [
+    ['.apex/standards', (repo) => mkdirSync(join(repo, '.apex', 'standards'))],
+    ['.apex/standards', (repo) => putPortable(repo, '.apex/standards/web.md', '# web — Technical Standard\n')],
+    ['.apex/conventions.md', (repo) => putPortable(repo, '.apex/conventions.md', '# Conventions\n')],
+    ['.apex/glossary.md', (repo) => putPortable(repo, '.apex/glossary.md', '# Glossary\n')],
+    ['.apex/decisions/_INDEX.md', (repo) => putPortable(repo, '.apex/decisions/_INDEX.md', '| `web` | [s](../standards/web.md) | `web-agent` |\n')],
+    ['AGENTS.md', (repo) => putPortable(repo, 'AGENTS.md', '<!-- steepy:managed:project-instructions:v1:start -->\n# x\n<!-- steepy:managed:project-instructions:v1:end -->\n')],
+    ['CLAUDE.md', (repo) => putPortable(repo, 'CLAUDE.md', '<!-- steepy:managed:claude-import:v1:start -->\n@AGENTS.md\n<!-- steepy:managed:claude-import:v1:end -->\n')],
+    ['CLAUDE.md', (repo) => putPortable(repo, 'CLAUDE.md', '<!-- steepy:start -->\nlegacy\n<!-- steepy:end -->\n')],
+    ['.claude/agents/web-agent.md', (repo) => putPortable(repo, '.claude/agents/web-agent.md', '<!-- steepy:generated:web-agent-claude:v1 -->\n')],
+    ['.codex/agents/web-agent.toml', (repo) => putPortable(repo, '.codex/agents/web-agent.toml', '# steepy:generated:web-agent-codex:v1\n')],
+    ['.agents/skills/demo-bootstrap/SKILL.md', (repo) => putPortable(repo, '.agents/skills/demo-bootstrap/SKILL.md', '<!-- steepy:generated:demo-bootstrap:v1 -->\n')],
+    ['.opencode/nested/any.txt', (repo) => putPortable(repo, '.opencode/nested/any.txt', 'steepy:generated:web-agent-opencode:v2\n')],
+  ];
+  for (const [artifact, mutate] of cases) {
+    withTempRepo('partial', (repo) => {
+      seedInception(repo);
+      mutate(repo);
+      const { result, accesses } = recordFsAccess(() => classifyHub(repo));
+      assert.equal(result.state, 'invalid', artifact);
+      const messages = errorMessages(result.violations);
+      assert.match(messages, /missing _INDEX\.md/u, artifact);
+      assert.ok(messages.includes(`inception: pre-hub state is incompatible with hub artifact ${artifact}`), `${artifact}\n${messages}`);
+      assertNoLocalBodyAccess(repo, accesses, { descriptor: true });
+    });
+  }
+});
+
+test('an index removed from an operational hub stays an error even beside a surviving pre-init descriptor', () => {
+  const hub = portableHub();
+  try {
+    seedInception(hub);
+    unlinkSync(join(hub, '.apex', '_INDEX.md'));
+    const { result, accesses } = recordFsAccess(() => classifyHub(hub));
+    assert.equal(result.state, 'invalid');
+    const messages = errorMessages(result.violations);
+    assert.match(messages, /missing _INDEX\.md/u);
+    for (const artifact of ['.apex/standards', 'AGENTS.md', 'CLAUDE.md', '.claude/agents/web-agent.md']) {
+      assert.ok(messages.includes(`incompatible with hub artifact ${artifact}`), `${artifact}\n${messages}`);
+    }
+    assertNoLocalBodyAccess(hub, accesses, { descriptor: true });
+    const hook = captureMain(['--quiet', hub]);
+    assert.equal(hook.code, 1);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('an operational hub applies every check and never depends on local inception or work state', {
+  skip: process.platform === 'win32',
+}, () => {
+  const variants = [
+    ['absent', () => {}],
+    ['valid pre-init', (hub) => seedInception(hub)],
+    ['malformed', (hub) => {
+      seedInception(hub);
+      writeFileSync(join(hub, '.apex', 'inception', 'state.json'), '{');
+    }],
+    ['unknown version', (hub) => {
+      seedInception(hub);
+      writeFileSync(join(hub, '.apex', 'inception', 'state.json'),
+        `${JSON.stringify({ ...createInitialInceptionState(RUN), schemaVersion: 9 }, null, 2)}\n`);
+    }],
+    ['init in progress', (hub) => seedInception(hub, initDescriptor('in-progress'))],
+    ['symlinked areas', (hub) => {
+      const external = mkdtempSync(join(tmpdir(), 'steepy-prehub-external-'));
+      putPortable(external, 'inception/doc.md', `# ${LOCAL_SENTINEL}\n[Broken](missing.md)\n`);
+      putPortable(external, 'work/doc.md', `# ${LOCAL_SENTINEL}\n[Broken](missing.md)\n`);
+      symlinkSync(join(external, 'inception'), join(hub, '.apex', 'inception'), 'dir');
+      symlinkSync(join(external, 'work'), join(hub, '.apex', 'work'), 'dir');
+      return () => rmSync(external, { recursive: true, force: true });
+    }],
+    ['unreadable area', (hub) => {
+      seedInception(hub);
+      if (process.getuid?.() !== 0) chmodSync(join(hub, '.apex', 'inception'), 0o000);
+      return () => chmodSync(join(hub, '.apex', 'inception'), 0o700);
+    }],
+  ];
+  for (const [label, mutate] of variants) {
+    const hub = portableHub();
+    let cleanup;
+    try {
+      const baseline = collectViolations(hub);
+      assert.deepEqual(baseline.filter(({ level }) => level === 'error'), [], label);
+      cleanup = mutate(hub);
+      const { result, accesses } = recordFsAccess(() => classifyHub(hub));
+      assert.equal(result.state, 'hub', label);
+      assert.deepEqual(result.violations, baseline, label);
+      assertNoLocalBodyAccess(hub, accesses);
+      const loud = captureMain([hub]);
+      assert.equal(loud.code, 0, `${label}: ${loud.err}`);
+      assert.match(loud.out, /OK — doc graph is coherent/u, label);
+    } finally {
+      cleanup?.();
+      rmSync(hub, { recursive: true, force: true });
+    }
+  }
+});
+
+test('stable docs never reach inception through links, traversal, hard links, routing, or mounts', () => {
+  const hub = portableHub();
+  try {
+    seedInception(hub);
+    putPortable(hub, '.apex/leaf.md', '# Leaf\n');
+    const index = join(hub, '.apex', '_INDEX.md');
+    writeFileSync(index, [
+      readFileSync(index, 'utf8'),
+      `- [Proposal](inception/${RUN}/proposal.md)`,
+      '- [Traversal](inception/../leaf.md)',
+      `| \`ghost\` | [standards/ghost.md](inception/${RUN}/ghost.md) | \`ghost-agent\` | — |`,
+      '',
+    ].join('\n'));
+    putPortable(hub, '.apex/notes.md', '# Notes\n');
+    writeFileSync(index, `${readFileSync(index, 'utf8')}- [Notes](notes.md)\n`);
+    unlinkSync(join(hub, '.apex', 'notes.md'));
+    linkSync(join(hub, PROPOSAL), join(hub, '.apex', 'notes.md'));
+    writeFileSync(join(hub, 'AGENTS.md'), `${readFileSync(join(hub, 'AGENTS.md'), 'utf8')}\n- [State](.apex/inception/state.json)\n`);
+    putPortable(hub, `.apex/inception/${RUN}/claude.md`, `# ${LOCAL_SENTINEL}\n`);
+    unlinkSync(join(hub, 'CLAUDE.md'));
+    symlinkSync(`.apex/inception/${RUN}/claude.md`, join(hub, 'CLAUDE.md'));
+    rmSync(join(hub, '.opencode'), { recursive: true });
+    symlinkSync(`.apex/inception/${RUN}`, join(hub, '.opencode'), 'dir');
+
+    const { result, accesses } = recordFsAccess(() => classifyHub(hub));
+    const messages = errorMessages(result.violations);
+    assert.equal(result.state, 'hub');
+    assert.match(messages, /stable docs must not link into \.apex\/inception: \.apex\/_INDEX\.md -> inception\/.*proposal\.md/u);
+    assert.match(messages, /stable docs must not link into \.apex\/inception: \.apex\/_INDEX\.md -> inception\/\.\.\/leaf\.md/u);
+    assert.match(messages, /anti-orphan: \.apex\/leaf\.md/u, 'enter-and-exit links never establish reachability');
+    assert.match(messages, /stable docs must not link into \.apex\/inception: \.apex\/_INDEX\.md -> inception\/.*ghost\.md/u);
+    assert.match(messages, /stable-read: \.apex\/notes\.md is hard-linked/u);
+    assert.match(messages, /stable-read: \.apex\/inception\/state\.json enters excluded \.apex\/inception/u);
+    assert.match(messages, /stable-read: CLAUDE\.md symlink mount enters excluded \.apex\/inception/u);
+    assert.match(messages, /stable-read: \.opencode.* symlink mount enters excluded \.apex\/inception/u);
+    assert.doesNotMatch(messages, new RegExp(LOCAL_SENTINEL, 'u'));
+    assertNoLocalBodyAccess(hub, accesses);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('case aliases of inception are refused before any hidden byte is consumed', (t) => {
+  withTempRepo('case', (hub) => {
+    if (!storageAliasesCase(hub)) {
+      t.skip('temporary storage keeps case-distinct directory identities');
+      return;
+    }
+    seedInception(hub);
+    putPortable(hub, '.apex/leaf.md', '# Leaf\n');
+    putPortable(hub, '.apex/_INDEX.md', [
+      '# Index',
+      `- [Hidden](INCEPTION/${RUN}/proposal.md)`,
+      '- [Traversal](InCePtIoN/../leaf.md)',
+      '',
+    ].join('\n'));
+    const { result, accesses } = recordFsAccess(() => classifyHub(hub));
+    const messages = errorMessages(result.violations);
+    assert.match(messages, /enters excluded \.apex\/inception/u);
+    assert.match(messages, /anti-orphan: \.apex\/leaf\.md/u);
+    assert.doesNotMatch(messages, new RegExp(LOCAL_SENTINEL, 'u'));
+    assertNoLocalBodyAccess(hub, accesses);
+  });
 });

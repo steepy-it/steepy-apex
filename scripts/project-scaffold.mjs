@@ -20,7 +20,12 @@ import {
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { assertSafeRelPath, assertSafeTestCommand, bindProjectMount } from './sanitize.mjs';
+import {
+  assertSafeRelPath,
+  assertSafeTestCommand,
+  bindProjectMount,
+  localAreaIdentities,
+} from './sanitize.mjs';
 import { renderTemplate } from './template.mjs';
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -705,19 +710,19 @@ function makeOperation(artifact, classification) {
 
 function boundedGeneratedEntries(hubRoot) {
   const entries = [];
-  let reservedWork;
-  try { reservedWork = lstatSync(join(hubRoot, '.apex', 'work')); }
-  catch { /* Work is excluded local state, never a required planner input. */ }
+  // Local areas are excluded state, never a planner input: skip them by their
+  // entry and linked-target identities wherever a provider mount reaches them.
+  const reserved = localAreaIdentities(join(hubRoot, '.apex'));
   const visit = (absolute, logical) => {
     let stat;
     try {
-      stat = lstatSync(absolute);
+      stat = lstatSync(absolute, { bigint: true });
     } catch (error) {
       if (error.code === 'ENOENT') return;
       throw error;
     }
     if (stat.isSymbolicLink() || !stat.isDirectory()) return;
-    if (reservedWork && stat.dev === reservedWork.dev && stat.ino === reservedWork.ino) return;
+    if (reserved.some(({ dev, ino }) => stat.dev === dev && stat.ino === ino)) return;
     for (const entry of readdirSync(absolute, { withFileTypes: true })) {
       const path = logical ? `${logical}/${entry.name}` : entry.name;
       const target = join(absolute, entry.name);
