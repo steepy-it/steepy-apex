@@ -145,6 +145,23 @@ test('npm tarball includes both inception helpers, which import only Node built-
   }
 });
 
+test('npm tarball includes the stable-paths reader, which imports only Node built-ins and sanitize', () => {
+  // The linter and later scaffold readers share this module, so it must not
+  // import either of them back (no validate-hub -> project-scaffold cycle).
+  const helper = 'scripts/stable-paths.mjs';
+  assertPacked([helper, 'scripts/sanitize.mjs'], 'stable-paths reader');
+  const source = readFileSync(join(root, helper), 'utf8');
+  const specifiers = [...source.matchAll(/^(?:import|export)\s[^'";]*?\sfrom\s+['"]([^'"]+)['"]/gmu)]
+    .map((match) => match[1]);
+  assert.ok(specifiers.includes('./sanitize.mjs'), `${helper} must reuse sanitize.mjs mount binding`);
+  for (const specifier of specifiers) {
+    assert.ok(
+      specifier.startsWith('node:') || specifier === './sanitize.mjs',
+      `${helper} may import only Node built-ins and sanitize.mjs, got '${specifier}'`,
+    );
+  }
+});
+
 test('npm tarball includes receipt instructions and both reviewer transport schemas', () => {
   assertPacked([
     'skills/implement/task-results-protocol.md',
