@@ -186,7 +186,7 @@ Scenarios A, B, and C were not re-run on the fixed payload.
 
 | Scenario | Result | Observed on | Harness and version | Plugin revision | Approver | Limits |
 |---|---|---|---|---|---|---|
-| A | PARTIAL | 2026-09-25 | Claude Code 2.1.280 | `8b84555` | model: the driving model; no human approval observed | The page leg in a browser was not executed. The surface standard kept template placeholders. The driver ran one planner apply that the sandbox refused. |
+| A | PARTIAL | 2026-09-25 | Claude Code 2.1.280 | `8b84555` | model: the driving model; no human approval observed | The page leg in a browser was not executed. The surface standard kept template placeholders. The sandbox refused the nested session's writes under `.claude/`, so the driver ran the planner apply the skill asked for. |
 | B | PARTIAL | 2026-09-25 | Claude Code 2.1.280 | `8b84555` | model: the driving model; no human approval observed | Both surface standards kept template placeholders. There was no interruption or resume. |
 | C | PARTIAL | 2026-09-25 | Claude Code 2.1.280 | `8b84555` | model: the driving model; no human approval observed | The surface standard and the Version policy section kept template placeholders. No external effect had an uncertain outcome. |
 
@@ -341,8 +341,10 @@ credential.
 
 **Limits:**
 - The interruption was a stop signal sent to the harness process, not a usage limit.
-- The resolution restored the approved bytes. A new approval at a new path and a checkpoint
-  divergence at resume were therefore not exercised.
+- The resolution restored the approved bytes, so a new approval at a new path was not
+  exercised.
+- No code checkpoint was bound when the run was interrupted, so a checkpoint divergence at
+  resume was not exercised either.
 - Not run: CI and any remote.
 
 **Defects found:**
@@ -379,7 +381,7 @@ surfaces, an HTTP API and a command-line client.
 | Approval before bootstrap | PARTIAL | The whole project was approved and bound by digest before the bootstrap; the approver was the driving model. |
 | Transfer to init | PASS | The handoff was verified on its six roles, and no approved fact was asked again; the only stop was a harness refusal on the copy gate. |
 | Populated hub | PASS | Both surface standards fill Scope, Conventions, and Anti-patterns, and both project documents fill every section, Version policy included; a search found no template guidance line, and the projection kept the five Project model v1 keys. |
-| Promotion outcomes | PASS | All 25 decisions have an outcome (20 promoted, 5 excluded with reasons); a file the harness refused to write was disclosed, and the promoted text matches the code. |
+| Promotion outcomes | PASS | All 25 decisions have an outcome (20 promoted, 5 excluded with reasons); a file the harness refused to write was disclosed but not put to a targeted decision, and the promoted text matches the code. |
 | Versioned-only copy | PASS | A clone passes `validate-hub` with code-anchor warnings only, and its tests (API 20, client 19, end-to-end 1) and the representative path run from it. |
 
 ## Harness discovery and invocation matrix
@@ -392,7 +394,7 @@ repository it reports no hub and no run (`inspect` → `absent`) and proceeds to
 |---|---|---|---|---|---|---|
 | Claude Code | `/steepy-apex:inception` | OBSERVED | 2026-09-25 | Claude Code 2.1.280 | `8b84555` | Listed with the other nine skills. A plain request started it: `inspect` reported `absent`, and it routed to a new run, never to `init`. The probe ran in plan mode and stopped before the first write, and the command itself was not typed. Scenarios A, B, and C started runs in this harness on the same payload. |
 | Codex | `$inception` | NOT RUN | 2026-09-25 | Codex CLI 0.155.0-alpha.9.2 | `8b84555` | No per-invocation load of a local plugin exists: adding a plugin persists it to the Codex home. An isolated temporary home has no usable credential, and copying one into it was refused. An older installed copy without `inception` is not evidence for this payload. |
-| OpenCode | `/steepy-apex-inception` | OBSERVED | 2026-09-25 | OpenCode 1.18.32 | `8b84555` | The `inception` skill and the `steepy-apex-inception` command were listed with the other nine. A plain request loaded the skill: `inspect` reported `absent`, `start` created the ignored run area inside the temporary project only, and the first reconnaissance question arrived. The command itself was not typed. The pre-hub fallback sentence was read from the adapter source, not observed in a session. |
+| OpenCode | `/steepy-apex-inception` | OBSERVED | 2026-09-25 | OpenCode 1.18.32 | `8b84555` | The `inception` skill and the `steepy-apex-inception` command were listed with the other nine. A plain request loaded the skill: `inspect` reported `absent`, `start` created the ignored run area inside the temporary project only, and the first reconnaissance question arrived. The command itself was not typed. An older, globally configured steepy-apex copy with no `inception` loaded alongside the payload. The pre-hub fallback sentence was read from the adapter source, not observed in a session. |
 | Pi | `/skill:inception` | NOT RUN | 2026-09-25 | Pi 0.80.7 | `8b84555` | Pi's only configured provider has no usable credential. A bare prompt without the plugin fails the same way. Getting a credential was out of scope. The pre-hub fallback sentence was read from the adapter source only. |
 | DeepSeek Harness | `steepy_skill` with `skill: "inception"` | NOT RUN | 2026-09-25 | DeepSeek Harness, not installed | `8b84555` | `dsh` is not installed in this environment, and nothing was installed for the probe. |
 

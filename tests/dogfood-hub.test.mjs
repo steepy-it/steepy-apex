@@ -867,37 +867,43 @@ function markdownTable(text, heading) {
   return rows.slice(2).map((line) => Object.fromEntries(cells(line).map((cell, index) => [header[index], cell])));
 }
 
-function assertObservedResult(row, label, vocabulary = ACCEPTANCE_RESULTS) {
+// A result table that records runs names every run's approver, first word
+// `model` or `human`; only a human approver who is not a model can pass the
+// approval criterion.
+function assertObservedResult(row, label, { vocabulary = ACCEPTANCE_RESULTS, approver = false } = {}) {
   assert.ok(vocabulary.includes(row.Result), `${label}: result '${row.Result}' is outside the closed vocabulary`);
+  if (approver) assert.ok(Object.hasOwn(row, 'Approver'), `${label}: the table keeps its Approver column`);
   if (row.Result === 'PENDING') return;
   assert.match(row['Observed on'], /^\d{4}-\d{2}-\d{2}$/u, `${label}: a ${row.Result} needs its observation date`);
   if (!(row.Result === 'NOT RUN' && /\bnot installed\b/iu.test(row['Harness and version']))) {
     assert.match(row['Harness and version'], /\S+ \S*\d/u, `${label}: a ${row.Result} needs the harness and its version`);
   }
   assert.match(row['Plugin revision'], /^`[0-9a-f]{7,40}`$/u, `${label}: a ${row.Result} needs the plugin revision`);
-  if (Object.hasOwn(row, 'Approver')) {
-    assert.match(row.Approver, /\b(?:model|human)\b/iu, `${label}: a ${row.Result} names its approver, a model or a human`);
+  if (approver) {
+    assert.match(row.Approver, /^(?:model|human)\b/iu, `${label}: a ${row.Result} names its approver first, a model or a human`);
   }
   if (!['PASS', 'OBSERVED'].includes(row.Result)) {
     assert.match(row.Limits ?? row.Notes ?? '', /\w{3}/u, `${label}: a ${row.Result} states its reason`);
   }
 }
 
-// Each observed scenario lists every criterion, in the legend's order, with an
-// outcome from its own closed vocabulary and a reason. A model approval is
-// never recorded as a passed approval gate.
-function assertCriterionTable(text, scenario, criteria) {
-  const label = `scenario ${scenario.Scenario}`;
-  const rows = markdownTable(text, `### Scenario ${scenario.Scenario} result`);
-  assert.deepEqual(rows.map((row) => row.Criterion), criteria, `${label} lists every criterion in order`);
+const humanApprover = (approver) => /^human\b/iu.test(approver ?? '') && !/\bmodel\b/iu.test(approver);
+
+// A criterion table uses legend criteria, an outcome from its own closed
+// vocabulary, and a reason per row. Unless every approver is a human, the
+// approval criterion is never PASS.
+function assertCriterionTable(text, heading, criteria, approvers, label) {
+  const rows = markdownTable(text, heading);
   for (const row of rows) {
+    assert.ok(criteria.includes(row.Criterion), `${label}: '${row.Criterion}' is a legend criterion`);
     assert.ok(CRITERION_OUTCOMES.includes(row.Outcome), `${label} / ${row.Criterion}: outcome '${row.Outcome}' is outside the closed vocabulary`);
     assert.match(row.Reason ?? '', /\w{3}/u, `${label} / ${row.Criterion}: the outcome states its reason`);
   }
-  if (/^model\b/iu.test(scenario.Approver)) {
+  if (!approvers.every(humanApprover)) {
     const approval = rows.find((row) => /^Approval\b/u.test(row.Criterion));
     assert.notEqual(approval?.Outcome, 'PASS', `${label}: a model approval never passes the approval gate`);
   }
+  return rows;
 }
 
 test('docs/inception-acceptance.md is a reproducible native protocol whose results only native observation fills', () => {
@@ -931,14 +937,30 @@ test('docs/inception-acceptance.md is a reproducible native protocol whose resul
 
   const scenarios = markdownTable(text, '## Scenario results');
   assert.deepEqual(scenarios.map((row) => row.Scenario), ['A', 'B', 'C']);
-  scenarios.forEach((row) => assertObservedResult(row, `scenario ${row.Scenario}`));
-  scenarios.filter((row) => row.Result !== 'PENDING').forEach((row) => assertCriterionTable(text, row, criteria));
+  scenarios.forEach((row) => assertObservedResult(row, `scenario ${row.Scenario}`, { approver: true }));
+  let resultTables = 2;
+  let criterionTables = 0;
+  for (const scenario of scenarios.filter((row) => row.Result !== 'PENDING')) {
+    const label = `scenario ${scenario.Scenario}`;
+    const rows = assertCriterionTable(text, `### Scenario ${scenario.Scenario} result`, criteria, [scenario.Approver], label);
+    assert.deepEqual(rows.map((row) => row.Criterion), criteria, `${label} lists every criterion in order`);
+    criterionTables += 1;
+  }
   if (text.includes('\n## Populated-hub re-check\n')) {
-    markdownTable(text, '## Populated-hub re-check').forEach((row) => assertObservedResult(row, `re-check ${row.Run}`));
+    const runs = markdownTable(text, '## Populated-hub re-check');
+    runs.forEach((row) => assertObservedResult(row, `re-check ${row.Run}`, { approver: true }));
+    assertCriterionTable(text, '### Re-check criteria', criteria, runs.map((row) => row.Approver), 're-check');
+    resultTables += 1;
+    criterionTables += 1;
   }
   const harnesses = markdownTable(text, '## Harness discovery and invocation matrix');
   assert.deepEqual(harnesses.map((row) => row.Harness), ['Claude Code', 'Codex', 'OpenCode', 'Pi', 'DeepSeek Harness']);
-  harnesses.forEach((row) => assertObservedResult(row, row.Harness, HARNESS_RESULTS));
+  harnesses.forEach((row) => assertObservedResult(row, row.Harness, { vocabulary: HARNESS_RESULTS }));
+  const headers = text.split('\n').filter((line) => line.startsWith('|'));
+  assert.equal(headers.filter((line) => /\|\s*Result\s*\|\s*Observed on\s*\|/u.test(line)).length, resultTables,
+    'every result table sits under a checked heading');
+  assert.equal(headers.filter((line) => /^\|\s*Criterion\s*\|\s*Outcome\s*\|/u.test(line)).length, criterionTables,
+    'every criterion table sits under a checked heading');
   assert.match(flat, /fake-host[^.]*not native evidence/i, 'fixture and fake-host tests are not native evidence');
 
   assert.match(flat, /model approver/i, 'must state the approver used by native runs of this release');
@@ -957,6 +979,10 @@ test('docs/inception-acceptance.md is a reproducible native protocol whose resul
 
   assert.doesNotMatch(text, /\]\([^)]*\.apex\/(?:work|inception)\//u, 'must not link local artifacts');
   assert.doesNotMatch(text, /\/(?:Users|home)\/[a-z]|[A-Z]:\\\\Users|\/private\/var\/|\/tmp\/steepy/u, 'must not carry local absolute paths');
+  assert.doesNotMatch(text, /\/var\/folders\/|\/private\/tmp\/|(?:^|[\s(`'"])\/tmp\/|~\/\.[a-z]|\$(?:TMPDIR|HOME)\b/u,
+    'must not carry a temporary, workspace, or home path');
+  assert.doesNotMatch(text, /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/iu, 'must not carry a session or run ID');
+  assert.doesNotMatch(text, /[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}\b/iu, 'must not carry an email address');
   assert.doesNotMatch(text, /\b(?:sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{12,})|Bearer [A-Za-z0-9._-]{8,}/u,
     'must not carry a credential');
 });
