@@ -219,6 +219,11 @@ One row per significant decision. `promote` names a stable destination and the e
 writes there. `exclude` gives the reason the decision stays local. Promote a choice with its reason;
 the manifest and lockfile hold the resolved version.
 
+Every confirmed surface needs at least one `promote` row whose destination is its standard,
+`.apex/standards/<name>.md`; `verify` and `prepare` refuse the table otherwise. Cover the standard's
+Scope, Conventions, and Anti-patterns, and every section of a project document `init` creates from a
+template. A section with nothing approved gets a short explicit statement, never template text.
+
 ```json
 {
   "inception-promotion": "steepy-apex/v1",
@@ -231,13 +236,25 @@ the manifest and lockfile hold the resolved version.
       "content": "- Runtime: <runtime>, chosen because <reason>. The manifest and lockfile hold the resolved version."
     },
     {
-      "id": "D2-waiting-list",
+      "id": "D2-app-scope",
+      "outcome": "promote",
+      "destination": ".apex/standards/app.md",
+      "content": "- Owns: `src/`, the booking flow and its rules.\n- Does NOT own: deploy configuration.\n- Exemplar: `src/booking.ts`"
+    },
+    {
+      "id": "D3-app-anti-patterns",
+      "outcome": "promote",
+      "destination": ".apex/standards/app.md",
+      "content": "- Not decided at inception; refine with `discovery`."
+    },
+    {
+      "id": "D4-waiting-list",
       "outcome": "promote",
       "destination": ".apex/project-context.md",
       "content": "- Waiting list: seen in the prototype, not built. Context for later work."
     },
     {
-      "id": "D3-rejected-queue",
+      "id": "D5-rejected-queue",
       "outcome": "exclude",
       "reason": "A rejected alternative; its reasons stay in the local project record."
     }
@@ -259,6 +276,7 @@ of each destination, and the gate result. You never write it.
 | approval ↔ approved project bytes | whether the user really approved it |
 | checkpoint differences: changed, added, removed, branch/HEAD | what a difference means |
 | every promoted text present, the gate you report | whether a rule is right and where it belongs |
+| a promoted standard for every confirmed surface | what each standard says |
 
 A digest makes a change visible. It does not identify a person or prove that you followed these
 instructions.

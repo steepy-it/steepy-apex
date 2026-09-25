@@ -286,6 +286,20 @@ test('the inception entry populates the hub from the promotion table and keeps c
   assert.match(entry, /routing, standards, glossary, conventions, testing, and project context/i);
 });
 
+test('the inception entry fills the documents it creates and never finalizes with a template placeholder', () => {
+  const text = skill();
+  const complete = flatSection(text, '5. **Complete the hub.**', '6. **Verify and finalize.**');
+  assert.match(complete, /a standard or project document this entry creates in this transfer \(`prepare` reported it with `previous: null`\) → replace each template placeholder line with the promoted texts for its section/i);
+  assert.match(complete, /A placeholder line is the parenthesized guidance a template puts under a heading, such as `- Owns: \(what this surface is responsible for\)`/i);
+  assert.match(complete, /a document that existed before this transfer → append; never overwrite human text/i);
+  const verify = flatSection(text, '6. **Verify and finalize.**');
+  assert.match(verify, /First check every document this transfer created: none may still hold a template placeholder line/i);
+  assert.match(verify, /complete it from the promotion table when the approved content exists; otherwise ask one targeted question/i);
+  assert.match(verify, /Never finalize with a placeholder/i);
+  assert.ok(verify.indexOf('template placeholder line') < verify.indexOf('--gate pass'), 'the placeholder check precedes finalize');
+  assert.doesNotMatch(flatSection(text, '### Step 0', '## Inception entry'), /placeholder/i, 'the ordinary init/repair path is unchanged');
+});
+
 test('the inception entry marks init complete only after the gate, a copy without local areas, and the receipt helper', () => {
   const entry = flatSection(skill(), '## Inception entry');
   assert.match(entry, /Run Step 8's gate/i);

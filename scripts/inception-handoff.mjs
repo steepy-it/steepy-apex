@@ -441,6 +441,25 @@ export function validatePromotionTable(value, options) {
   return deepFreeze({ runId, decisions });
 }
 
+// Completeness only: every confirmed surface's standard receives at least one
+// promoted text, so init never leaves it as template guidance. Which text, and
+// whether it is right, stays the init skill's judgement. The record is
+// validated first, so the refusal names only a planner-validated slug.
+export function validatePromotionCoverage(confirmedInputs, promotion) {
+  const { surfaces } = validateConfirmedInputs(confirmedInputs);
+  assertList(promotion?.decisions, 'promotion decisions');
+  const destinations = new Set(promotion.decisions
+    .filter((decision) => decision?.outcome === 'promote')
+    .map(({ destination }) => destination));
+  const standards = surfaces.map(({ name }) => [name, `.apex/standards/${name}.md`]);
+  const missing = standards.find(([, standard]) => !destinations.has(standard));
+  if (missing) {
+    fail('INCEPTION_HANDOFF_INCOMPLETE',
+      `promotion has no promote decision for '${missing[1]}', the standard of confirmed surface '${missing[0]}'`);
+  }
+  return deepFreeze(standards.map(([, standard]) => standard).sort());
+}
+
 function recordRunId(value, label) {
   const runId = isPlainObject(value) ? value['run-id'] : undefined;
   if (!isCanonicalRunId(runId)) invalid(`${label} run-id must be a canonical lowercase UUID`);
@@ -674,6 +693,7 @@ function verifyTransfer(root, { handoff, paths = [], env } = {}) {
       binding(`promotion decision '${decision.id}' writes '${decision.destination}', a checkpoint inventory path; init's own write would diverge the checkpoint`);
     }
   }
+  validatePromotionCoverage(confirmedInputs, promotion);
 
   const inputs = [
     { role: 'approval', path: required.approval, sha256: sha256Hex(approvalBytes) },

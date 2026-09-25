@@ -269,15 +269,25 @@ paths it names; the `inception` skill owns every other file of its run.
 5. **Complete the hub.** Run Step 4 with the record as its authoritative input. Then write each
    promoted text verbatim at its destination. Create `project-context.md` and `project-architecture.md`
    from `<engine-root>/templates/project-context.md` and `<engine-root>/templates/project-architecture.md`
-   when a promotion needs them, and link them from `_INDEX.md`. Append to existing documents; never
-   overwrite human text. Write chosen rules as rules with their reasons, keep observed patterns labeled
-   as observed, and write excluded decisions nowhere. The hub gains routing, standards, glossary,
-   conventions, testing, and project context from the record and the promotion table. On resume,
-   documents already written stay; write only what is missing.
-6. **Verify and finalize.** Run Step 8's gate. Then check that the hub stands without local areas:
-   copy the files Git would version (`git ls-files --cached --others --exclude-standard`; without Git,
-   every file except `.apex/inception/` and `.apex/work/`) to a temporary directory outside the
-   repository, run `validate-hub.mjs` on the copy, and delete it. Only when both pass, run:
+   when a promotion needs them, and link them from `_INDEX.md`. Where each text goes:
+   - a standard or project document this entry creates in this transfer (`prepare` reported it with
+     `previous: null`) → replace each template placeholder line with the promoted texts for its
+     section. A placeholder line is the parenthesized guidance a template puts under a heading, such
+     as `- Owns: (what this surface is responsible for)`.
+   - a document that existed before this transfer → append; never overwrite human text.
+
+   Write chosen rules as rules with their reasons, keep observed patterns labeled as observed, and
+   write excluded decisions nowhere. The hub gains routing, standards, glossary, conventions, testing,
+   and project context from the record and the promotion table. On resume, documents already written
+   stay; write only what is missing.
+6. **Verify and finalize.** First check every document this transfer created: none may still hold a
+   template placeholder line. For each one left → complete it from the promotion table when the
+   approved content exists; otherwise ask one targeted question and write the answer there. Never
+   finalize with a placeholder. Then run Step 8's gate. Then check that the hub stands without
+   local areas: copy the files Git would version (`git ls-files --cached --others --exclude-standard`;
+   without Git, every file except `.apex/inception/` and `.apex/work/`) to a temporary directory
+   outside the repository, run `validate-hub.mjs` on the copy, and delete it. Only when all three
+   checks pass, run:
 
    ```bash
    node <engine-root>/scripts/inception-handoff.mjs finalize --root <repo-root> --handoff <handoff-path> --gate pass
