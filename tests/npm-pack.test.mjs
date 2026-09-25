@@ -194,6 +194,15 @@ test('npm tarball includes the portable scaffold runtime, v1 sources, and canoni
   ], 'portable scaffold payload');
 });
 
+test('npm tarball includes the inception and project skeleton templates', () => {
+  assertPacked([
+    'templates/inception-project.md',
+    'templates/inception-verification.md',
+    'templates/project-context.md',
+    'templates/project-architecture.md',
+  ], 'inception and project skeleton templates');
+});
+
 test('npm pack dry-run leaves no repository tarball behind', () => {
   assert.equal(
     existsSync(join(root, packFilename)),

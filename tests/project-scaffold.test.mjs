@@ -705,6 +705,21 @@ test('project-specific bootstrap provenance remains customized when canonical by
   }
 });
 
+test('the rendered project-bootstrap artifact carries the inception boundary alongside the work-artifact boundary', () => {
+  const normalized = normalizeProjectModel(model());
+  const rendered = renderProjectArtifact('project-bootstrap', normalized, templatesDir);
+  assert.match(rendered, /## Work-artifact boundary/);
+  assert.match(rendered, /## Inception boundary/);
+  assert.match(rendered, /Do not ordinarily enumerate, search, or read under `\.apex\/inception\/\*\*`/);
+  assert.match(rendered, /inception boundary has no pathless recovery of its own/i);
+  assert.doesNotMatch(rendered, /inception-handoff|inception-approval|inception-checkpoint|inception-promotion|inception-receipt/i);
+  // The new section must not disturb the existing work-artifact boundary's exact text.
+  assert.match(
+    rendered,
+    /accepted handoff\. A pathless workflow invocation may perform only bounded workflow-header recovery discovery\./,
+  );
+});
+
 test('incomplete bootstrap content is refused without automatic migration', () => {
   const hubRoot = tempHub();
   const normalized = normalizeProjectModel(model());

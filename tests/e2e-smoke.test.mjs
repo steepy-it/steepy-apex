@@ -55,8 +55,8 @@ test('a hub built from templates + one surface passes the linter green', () => {
   );
   assert.match(
     indexText,
-    /Work artifacts:[\s\S]*specs and plans live under `\.apex\/work\/`[\s\S]*Promote durable decisions into stable docs/i,
-    'root index must tell generated hubs that specs/plans are local work artifacts'
+    /Work artifacts:[\s\S]*specs[\s\S]*live under `\.apex\/work\/`[\s\S]*`\.apex\/inception\/`[\s\S]*Promote durable decisions into stable docs/i,
+    'root index must tell generated hubs that specs/plans/inception materials are local work artifacts'
   );
   assert.equal(readFileSync(join(hub, '.apex', 'work', '.gitignore'), 'utf8'), '*\n!.gitignore\n');
   // The hub carries a format-version stamp so a future format break can gate/migrate.

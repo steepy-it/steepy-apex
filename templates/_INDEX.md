@@ -21,7 +21,7 @@ Mandatory entry point for AI agents. Read this before opening broad areas.
 {{routingRows}}
 
 ## Core Directives
-1. **Anti-orphan:** every stable `.apex/**.md` document must be reachable from this file (directly or via a sub-index), explicitly excluding local `.apex/work/**` artifacts. Enforced by `validate-hub.mjs`.
+1. **Anti-orphan:** every stable `.apex/**.md` document must be reachable from this file (directly or via a sub-index), explicitly excluding local `.apex/work/**` and `.apex/inception/**` artifacts. Enforced by `validate-hub.mjs`.
 2. **Living docs:** update `.apex/` before declaring a task done if it changed a standard or domain term.
-3. **Work artifacts:** specs and plans live under `.apex/work/` and are gitignored local workflow state. Promote durable decisions into stable docs before declaring work done.
+3. **Work artifacts:** specs, plans, and inception materials live under `.apex/work/` and `.apex/inception/` as gitignored local state. Promote durable decisions into stable docs — already self-sufficient, independent of either local area — before declaring work done.
 {{gitPolicyDirective}}
