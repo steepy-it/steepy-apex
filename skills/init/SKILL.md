@@ -18,7 +18,7 @@ The interview produces one immutable, authoritative confirmed interview record. 
 confirmed value used later by the planner or hub renderer, so no confirmed input lives only in transient
 chat state. Both fresh init and repair use that record and the same planner workflow. The planner owns
 generated provenance and update mechanics; this skill does not copy its marker strings or reproduce its
-merge logic.
+merge logic. On the inception entry, the record comes from the inception handoff instead of an interview.
 
 #### Authoritative confirmed interview record
 
@@ -72,6 +72,25 @@ The projection is derived data, not a second source of truth. Hub documents use 
 directly for values outside Project model v1.
 
 ## Procedure
+
+### Entry — Check for an inception transfer
+
+Before the fresh/repair choice, run:
+
+```bash
+node <engine-root>/scripts/inception-state.mjs inspect --root <repo-root> --state .apex/inception/state.json
+```
+
+It reads only the inception descriptor and its ignore guard. Route on the result:
+
+- an exact inception handoff path from the user, or `init-in-progress` → "Inception entry" below.
+  `init-in-progress` means an earlier init was interrupted: keep its accepted inputs and resume with
+  the handoff the descriptor pins (`init.handoff.path`).
+- `absent` or `init-complete` → the ordinary path: Step 0.
+- `pre-hub` without a handoff path → an inception run exists that has not handed off yet. Ask whether
+  to finish it with the `inception` skill or to run an ordinary init that leaves it unused.
+- `incomplete` or `invalid` → report the reason and ask before continuing. Never repair the inception
+  area.
 
 ### Step 0 — Choose fresh init or repair
 
@@ -204,3 +223,67 @@ Do not report completion until it prints `steepy validate-hub: OK`. For repair, 
 `created`, `appended`, or `preserved`. Report the canonical bootstrap and every surface standard plus
 specialist adapter triad. Recommend the `discovery` skill by its semantic name to populate empty standards and
 glossary entries. Remind the user to review the generated files before committing.
+
+## Inception entry
+
+The handoff replaces Steps 1–2: its `confirmed-inputs` record is the authoritative confirmed interview
+record, already confirmed. Never repeat the general interview. Read only the handoff and the exact
+paths it names; the `inception` skill owns every other file of its run.
+
+1. **Verify the transfer.** Run:
+
+   ```bash
+   node <engine-root>/scripts/inception-handoff.mjs verify --root <repo-root> --handoff <handoff-path>
+   ```
+
+   An error stops the entry: report it. A changed approved document needs a new approval in the
+   inception run, not here.
+2. **Reconcile code and decisions.** Compare the record and the promotion table with the current
+   code: surface paths, dev and test commands, and every component a promoted text calls existing.
+   Use `detect-stack.mjs` only as a hint. Reuse every value already confirmed. Ask only for:
+   - a planner conflict → Step 3's choices;
+   - a divergence between decisions and code, including `status: diverged` from `verify` → never
+     resolve it silently; the user decides between new evidence in the inception run and stopping;
+   - a datum a hub document needs that the record and the promotion table do not hold → one targeted
+     question; the answer goes only into that document.
+3. **Start init.** Before the first hub write, run:
+
+   ```bash
+   node <engine-root>/scripts/inception-handoff.mjs prepare --root <repo-root> --handoff <handoff-path> --receipt .apex/inception/<run-id>/init-receipt.json
+   ```
+
+   On resume, omit `--receipt`: the descriptor binds the receipt. A destination reported `changed`
+   holds human edits: reconcile them with the user; never overwrite them. Do not commit between
+   `prepare` and `finalize`: a moved HEAD diverges the checkpoint.
+4. **Plan and apply.** Derive the planner projection into a temporary file outside the repository:
+
+   ```bash
+   node <engine-root>/scripts/inception-handoff.mjs project --root <repo-root> --handoff <handoff-path> > <planner-model-json>
+   ```
+
+   Then run Step 3 unchanged. For each chosen conflict, derive it again with
+   `--resolution <id=choice>`; the record never changes.
+5. **Complete the hub.** Run Step 4 with the record as its authoritative input. Then write each
+   promoted text verbatim at its destination. Create `project-context.md` and `project-architecture.md`
+   from `<engine-root>/templates/project-context.md` and `<engine-root>/templates/project-architecture.md`
+   when a promotion needs them, and link them from `_INDEX.md`. Append to existing documents; never
+   overwrite human text. Write chosen rules as rules with their reasons, keep observed patterns labeled
+   as observed, and write excluded decisions nowhere. The hub gains routing, standards, glossary,
+   conventions, testing, and project context from the record and the promotion table. On resume,
+   documents already written stay; write only what is missing.
+6. **Verify and finalize.** Run Step 8's gate. Then check that the hub stands without local areas:
+   copy the files Git would version (`git ls-files --cached --others --exclude-standard`; without Git,
+   every file except `.apex/inception/` and `.apex/work/`) to a temporary directory outside the
+   repository, run `validate-hub.mjs` on the copy, and delete it. Only when both pass, run:
+
+   ```bash
+   node <engine-root>/scripts/inception-handoff.mjs finalize --root <repo-root> --handoff <handoff-path> --gate pass
+   ```
+
+   It checks unchanged code and every promoted text, completes the receipt, and records init
+   complete. On a refusal, fix the cause and run it again; never record completion by hand. Report
+   each decision's receipt outcome, then return to the `inception` skill to close the run.
+
+The ordinary path keeps its temporary record and deletes it at the end. The inception entry keeps the
+run's `confirmed-inputs` record in place: it is the authoritative copy a resume needs. Delete only the
+temporary planner projection.

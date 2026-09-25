@@ -344,6 +344,28 @@ test('discovery: explore-surface-prompt.md restricts the split proposal to the s
   );
 });
 
+test('discovery: reads only stable knowledge and ordinary source, never the local inception or work areas', () => {
+  const skill = readFileSync(skillPath, 'utf8');
+  const step0 = sectionBetween(skill, '### Step 0', '### Step 1').replace(/\s+/g, ' ');
+  assert.match(step0, /Read only stable hub documents and ordinary repository source/i);
+  assert.match(step0, /`\.apex\/inception\/\*\*` and `\.apex\/work\/\*\*` are local areas, not knowledge: never enumerate, search, or read them/i);
+  assert.match(step0, /only exception is this run's own report file under `\.apex\/work\/discovery\/`, which you write and read back/i);
+  const prompt = readFileSync(promptPath, 'utf8').replace(/\s+/g, ' ');
+  assert.match(prompt, /Never enumerate, search, or read `\.apex\/inception\/\*\*` or `\.apex\/work\/\*\*`: they are local areas, not stable knowledge/i);
+  assert.match(prompt, /\[REPORT_FILE\] is the only path there you touch, and you only write it/i);
+});
+
+test('discovery: a hub populated by an inception transfer needs no second approval, and write-back stays additive and confirmed', () => {
+  const skill = readFileSync(skillPath, 'utf8');
+  const step24 = sectionBetween(skill, '4. **Seeded interview.**', '5. **Write-back.**').replace(/\s+/g, ' ');
+  assert.match(step24, /hub that `init` populated from an inception transfer already holds approved decisions/i);
+  assert.match(step24, /never ask the user to approve again what is already written/i);
+  assert.match(step24, /surface only \*\*new\*\* or \*\*drifted\*\* items/i);
+  const step25 = sectionBetween(skill, '5. **Write-back.**', '### Step 3').replace(/\s+/g, ' ');
+  assert.match(step25, /additive and diff-gated/i);
+  assert.match(step25, /gated per item by the user/i);
+});
+
 function sectionBetween(text, startHeading, endHeading) {
   const s = text.indexOf(startHeading);
   assert.ok(s !== -1, `missing heading '${startHeading}'`);

@@ -16,6 +16,7 @@ const workflowCommands = [
   'implement',
   'review',
   'loop-engineer',
+  'inception',
 ];
 
 function namespacedCommand(command) {
@@ -2301,6 +2302,41 @@ test('standalone skills (init, check, new-surface, discovery) are harness-neutra
     assert.ok(text.includes(engineRootBlock), `${name} must carry the byte-exact Engine-root block`);
     assert.doesNotMatch(text, /\$\{CLAUDE_PLUGIN_ROOT\}/, `${name} must not reference \${CLAUDE_PLUGIN_ROOT}`);
     assert.doesNotMatch(text, /\/steepy-apex:/, `${name} must name skills abstractly, not with /steepy-apex: slash syntax`);
+  }
+});
+
+test('skill families: ten canonical skills — five chain, four standalone hub-aware, and the pre-hub inception skill', () => {
+  const families = {
+    chain: ['brainstorm', 'plan', 'implement', 'review', 'loop-engineer'],
+    standalone: ['init', 'new-surface', 'check', 'discovery'],
+    preHub: ['inception'],
+  };
+  const all = Object.values(families).flat();
+  assert.deepEqual(
+    readdirSync(skillsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort(),
+    [...all].sort(),
+    'skills/ holds exactly the ten canonical skills',
+  );
+  const handoffBlock = /<!-- steepy:manual-handoff:v1:start -->/;
+  for (const name of all) {
+    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const isChain = families.chain.includes(name);
+    assert.equal(handoffBlock.test(text), isChain, `${name}: only chain skills carry the manual-handoff block`);
+    assert.equal(/^## Checklist$/m.test(text), isChain, `${name}: only chain skills carry a checklist`);
+  }
+  const inception = readFileSync(join(skillsDir, 'inception', 'SKILL.md'), 'utf8');
+  const engineRootBlock =
+    '> **Engine root:** this skill\'s base directory is `<engine-root>/skills/inception/`; engine\n' +
+    '> scripts live two levels up, at `<engine-root>/scripts/`. Resolve them relative to the base\n' +
+    '> directory your harness reports for this skill.';
+  assert.ok(inception.includes(engineRootBlock), 'inception must carry the byte-exact Engine-root block');
+  assert.doesNotMatch(inception, /\/steepy(?:-apex)?:|CLAUDE_/, 'inception names skills semantically and stays harness-neutral');
+  assert.doesNotMatch(inception, /<!-- steepy-workflow: v1|### Step 0 — Read the gear|## Model Selection/,
+    'inception adds no workflow header, gear read, or Model Selection lock');
+  for (const name of families.chain) {
+    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+    assert.ok(text.includes('phase: <brainstorm|plan|implement|review|loop-engineer|goal-contract>'),
+      `${name}: the chain phase domain is unchanged and never includes inception`);
   }
 });
 

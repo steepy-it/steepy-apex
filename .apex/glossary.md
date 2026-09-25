@@ -117,10 +117,25 @@
 - **Warn** — the non-blocking `validate-hub` level: printed on explicit runs, silent
   under `--quiet`, never changes the exit code (today: a `standards/**` file over
   150 lines or a checkable code-anchor citation that resolves nowhere).
-- **Chain skill / Standalone skill** — the two skill families: the chain — five
-  (brainstorm → plan → implement → review, plus `loop-engineer` for gear 4) —
-  gear-aware, checklist-carrying, vs the standalone hub-aware skills (`init`,
-  `new-surface`, `check`, `discovery`).
+- **Chain skill / Standalone skill / Pre-hub skill** — the three skill families of the ten
+  canonical skills: the chain — five (brainstorm → plan → implement → review, plus
+  `loop-engineer` for gear 4) — gear-aware, checklist-carrying; the standalone hub-aware skills
+  (`init`, `new-surface`, `check`, `discovery`); and the pre-hub `inception` skill, which needs no
+  hub, has no gear, and hands an approved, verified bootstrap to `init`.
+- **Inception run** — one pre-hub run of the `inception` skill: starting materials → approved
+  project → verified bootstrap → transfer to `init`. Its files live in `.apex/inception/<run-id>/`,
+  ignored by Git from the start and outside the hub DAG.
+- **Inception descriptor** — `.apex/inception/state.json`, the one canonical v1 record of the active
+  run (`schemaVersion`, `runId`, `phase`, `status`, `approval`, `checkpoint`, `init`). It classifies
+  pre-hub state and the transfer to `init`; it never proves approval or a valid hub.
+- **Inception handoff** — the `inception-handoff: steepy-apex/v1` transfer to `init`: exact run
+  paths for `state`, `approval`, `project`, `verification`, `confirmed-inputs`, `promotion`. It is
+  separate from the chain's `handoff: steepy-apex/v1`.
+- **Promotion table** — the per-decision outcomes of an inception handoff: promote (a stable
+  destination and the exact text) or exclude (stays local, with a reason).
+- **Init receipt** — the local record `init` keeps for an inception transfer: accepted input
+  digests, one outcome per decision, the write digests of each destination, and the gate result.
+  Init is complete only with a complete receipt.
 - **Loop Engineer** — the gear-4 mode (an autonomous bounded loop over a
   machine-verifiable goal) and the human role that exercises it: designs the
   goal/verifier/budget up front instead of gating per turn; executed by

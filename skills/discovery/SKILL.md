@@ -34,6 +34,10 @@ Otherwise read the hub's current state before scoping the run:
 - `.apex/conventions.md` — the cross-surface rules already recorded.
 - `.apex/glossary.md` — the domain terms already recorded.
 
+Read only stable hub documents and ordinary repository source. `.apex/inception/**` and
+`.apex/work/**` are local areas, not knowledge: never enumerate, search, or read them. The only
+exception is this run's own report file under `.apex/work/discovery/`, which you write and read back.
+
 ### Step 1 — Run scoping
 
 Ask the user to scope the run: which surface(s) to enrich (default: all surfaces in the routing
@@ -89,7 +93,9 @@ For each surface selected in Step 1, run this loop:
    approving. A **correction re-renders the corrected preview** before anything is written. Ask one
    question at a time, with numbered options and a recommendation; use your harness's question UI if
    it has one. Never present items as bare IDs (T1, T2, …) as option labels — the short option labels
-   cannot hold a draft, and the user must read the content, not a label. On a re-run, surface only
+   cannot hold a draft, and the user must read the content, not a label. A hub that `init` populated
+   from an inception transfer already holds approved decisions: treat its text as the current docs and
+   never ask the user to approve again what is already written. On a re-run, surface only
    **new** or **drifted** items — compare against what is already written (on a modular surface:
    the core plus its leaf docs) — each rendered as a
    preview **diff** against the current doc, so the same rule applies uniformly: the user always
