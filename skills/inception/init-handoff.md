@@ -38,6 +38,9 @@ If `init` reports `diverged` before it starts, loop back: re-run the checks the 
 record and bind a new checkpoint, then write a new handoff at a new exact path. Once `init` has
 started, its handoff is pinned: restore the checkpointed code instead.
 
+If `init` refuses the promotion table as incomplete before it starts, add the missing standard rows
+and hand off again: write a new handoff at a new exact path.
+
 ## Promotion matrix
 
 Classify each decision first:
