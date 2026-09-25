@@ -263,6 +263,21 @@ describe('opencode adapter (adapters/opencode/steepy-apex.js)', () => {
     assert.match(parts[0].text, /\.apex\/_INDEX\.md/, 'block retains the navigation fallback');
     assert.match(parts[0].text, /inline[\s\S]*standard/i, 'missing bootstrap declares inline-standard degradation');
     assert.doesNotMatch(parts[0].text, /steepy-apex-bootstrap/, 'bootstrap name is never hardcoded');
+    assert.match(
+      parts[0].text,
+      /brand-new application[\s\S]*?offer the pre-hub\s+`inception`\s+skill/,
+      'hubless fallback offers inception for a brand-new application',
+    );
+    assert.match(
+      parts[0].text,
+      /existing codebase[\s\S]*?offer `init`/,
+      'hubless fallback offers init for an existing codebase',
+    );
+    assert.doesNotMatch(
+      parts[0].text,
+      /invoke the pre-hub/i,
+      'hubless fallback is conditional, not an unconditional invoke directive',
+    );
     assert.match(parts[0].text, /steepy-apex-/, 'block names the steepy-apex-<skill> commands');
     assert.match(
       parts[0].text,
@@ -1239,6 +1254,21 @@ describe('pi adapter (adapters/pi/steepy-apex.js)', () => {
     assert.match(block, /\.apex\/_INDEX\.md/, 'block retains the navigation fallback');
     assert.match(block, /inline[\s\S]*standard/i, 'missing bootstrap declares inline-standard degradation');
     assert.doesNotMatch(block, /steepy-apex-bootstrap/, 'bootstrap name is never hardcoded');
+    assert.match(
+      block,
+      /brand-new application[\s\S]*?offer the pre-hub\s+`inception`\s+skill/,
+      'hubless fallback offers inception for a brand-new application',
+    );
+    assert.match(
+      block,
+      /existing codebase[\s\S]*?offer `init`/,
+      'hubless fallback offers init for an existing codebase',
+    );
+    assert.doesNotMatch(
+      block,
+      /invoke the pre-hub/i,
+      'hubless fallback is conditional, not an unconditional invoke directive',
+    );
     assert.match(block, /\/skill:/, 'block documents /skill:<name> invocation');
     assert.match(block, /steepy-/, 'block names the /steepy-<skill> wrapper commands');
     assert.match(block, /D1/, 'block carries the D1 (no subagents → inline) note');
@@ -1622,6 +1652,21 @@ describe('dsh adapter (adapters/dsh/steepy-apex.js)', () => {
     assert.match(text, /\.apex\/_INDEX\.md/, 'block points at the navigation hub');
     assert.match(text, /inline[\s\S]*standard/i, 'missing bootstrap declares inline-standard degradation');
     assert.doesNotMatch(text, /steepy-apex-bootstrap/, 'bootstrap name is never hardcoded');
+    assert.match(
+      text,
+      /brand-new application[\s\S]*?offer the pre-hub\s+`inception`\s+skill/,
+      'hubless fallback offers inception for a brand-new application',
+    );
+    assert.match(
+      text,
+      /existing codebase[\s\S]*?offer `init`/,
+      'hubless fallback offers init for an existing codebase',
+    );
+    assert.doesNotMatch(
+      text,
+      /invoke the pre-hub/i,
+      'hubless fallback is conditional, not an unconditional invoke directive',
+    );
     for (const skill of skillNames) {
       assert.match(text, new RegExp(`\\b${skill}\\b`), `block names the ${skill} skill`);
     }

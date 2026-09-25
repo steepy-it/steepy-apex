@@ -564,7 +564,7 @@ test('stable hub locks the pre-hub inception knowledge and keeps the local area 
   assert.match(descriptor, /never proves approval or a valid hub/i);
   const handoff = entry('Inception handoff');
   assert.ok(handoff, 'glossary.md must define Inception handoff');
-  assert.match(handoff, /`inception-handoff: steepy-apex\/v1`[\s\S]*`state`, `approval`, `project`, `verification`, `confirmed-inputs`, `promotion`/);
+  assert.match(handoff, /`inception-handoff: steepy-apex\/v1`[\s\S]*`\.apex\/inception\/state\.json` for `state`[\s\S]*`approval`, `project`, `verification`, `confirmed-inputs`, `promotion`/);
   assert.match(handoff, /separate from the chain's `handoff: steepy-apex\/v1`/i);
   const promotion = entry('Promotion table');
   assert.ok(promotion, 'glossary.md must define Promotion table');

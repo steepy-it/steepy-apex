@@ -386,9 +386,13 @@ surfaces, an HTTP API and a command-line client.
 
 ## Harness discovery and invocation matrix
 
-The three scenarios need not run on every harness. This matrix checks the current payload only:
+The three scenarios need not run on every harness. This matrix checks payload `8b84555` only:
 each harness lists the `inception` skill, the invocation below starts it, and in an empty temporary
-repository it reports no hub and no run (`inspect` → `absent`) and proceeds to start a run.
+repository it reports no hub and no run (`inspect` → `absent`) and proceeds to start a run. The
+adapters and the inception `SKILL.md` are unchanged since `8b84555` except for one later fix: it
+reworded only the adapters' hubless-fallback sentence noted below as "read from the adapter source,
+not observed in a session" — never the invocation, marker, or skill-listing behavior these rows
+observed — so these rows still hold.
 
 | Harness | Invocation | Result | Observed on | Harness and version | Plugin revision | Notes |
 |---|---|---|---|---|---|---|

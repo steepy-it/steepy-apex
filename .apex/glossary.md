@@ -141,9 +141,10 @@
 - **Deferred flow** — a flow from an inception run's starting materials that falls outside its
   representative path. It is promoted only as recorded context in `project-context.md`, never as an
   existing component, a spec, or a started backlog item.
-- **Inception handoff** — the `inception-handoff: steepy-apex/v1` transfer to `init`: exact run
-  paths for `state`, `approval`, `project`, `verification`, `confirmed-inputs`, `promotion`. It is
-  separate from the chain's `handoff: steepy-apex/v1`.
+- **Inception handoff** — the `inception-handoff: steepy-apex/v1` transfer to `init`: the fixed
+  descriptor path `.apex/inception/state.json` for `state`, plus exact run paths for `approval`,
+  `project`, `verification`, `confirmed-inputs`, `promotion`. It is separate from the chain's
+  `handoff: steepy-apex/v1`.
 - **Promotion table** — the per-decision outcomes of an inception handoff: promote (a stable
   destination and the exact text) or exclude (stays local, with a reason).
 - **Init receipt** — the local record `init` keeps for an inception transfer: accepted input
