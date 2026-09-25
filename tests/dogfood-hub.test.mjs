@@ -854,10 +854,12 @@ test('docs/inception.md documents the greenfield path end to end and stays self-
 // inputs and judging rules, one closed result vocabulary, and results that a
 // hermetic test can never supply. A result other than PENDING must carry the
 // observation that produced it.
-const ACCEPTANCE_RESULTS = ['PENDING', 'PASS', 'FAIL', 'NOT RUN', 'BLOCKED'];
+const ACCEPTANCE_RESULTS = ['PENDING', 'PASS', 'PARTIAL', 'FAIL', 'NOT RUN', 'BLOCKED'];
+const HARNESS_RESULTS = ['PENDING', 'OBSERVED', 'FAIL', 'NOT RUN'];
+const CRITERION_OUTCOMES = ['PASS', 'PARTIAL', 'FAIL', 'NOT OBSERVED', 'NOT RUN'];
 
 function markdownTable(text, heading) {
-  const section = text.split(`${heading}\n`)[1]?.split(/\n## /u)[0] ?? '';
+  const section = text.split(`${heading}\n`)[1]?.split(/\n#{2,} /u)[0] ?? '';
   const rows = section.split('\n').filter((line) => line.startsWith('|'));
   assert.ok(rows.length >= 3, `${heading} must hold a table`);
   const cells = (line) => line.slice(1, -1).split('|').map((cell) => cell.trim());
@@ -865,14 +867,36 @@ function markdownTable(text, heading) {
   return rows.slice(2).map((line) => Object.fromEntries(cells(line).map((cell, index) => [header[index], cell])));
 }
 
-function assertObservedResult(row, label) {
-  assert.ok(ACCEPTANCE_RESULTS.includes(row.Result), `${label}: result '${row.Result}' is outside the closed vocabulary`);
+function assertObservedResult(row, label, vocabulary = ACCEPTANCE_RESULTS) {
+  assert.ok(vocabulary.includes(row.Result), `${label}: result '${row.Result}' is outside the closed vocabulary`);
   if (row.Result === 'PENDING') return;
   assert.match(row['Observed on'], /^\d{4}-\d{2}-\d{2}$/u, `${label}: a ${row.Result} needs its observation date`);
-  assert.match(row['Harness and version'], /\S+ \S*\d/u, `${label}: a ${row.Result} needs the harness and its version`);
+  if (!(row.Result === 'NOT RUN' && /\bnot installed\b/iu.test(row['Harness and version']))) {
+    assert.match(row['Harness and version'], /\S+ \S*\d/u, `${label}: a ${row.Result} needs the harness and its version`);
+  }
   assert.match(row['Plugin revision'], /^`[0-9a-f]{7,40}`$/u, `${label}: a ${row.Result} needs the plugin revision`);
   if (Object.hasOwn(row, 'Approver')) {
     assert.match(row.Approver, /\b(?:model|human)\b/iu, `${label}: a ${row.Result} names its approver, a model or a human`);
+  }
+  if (!['PASS', 'OBSERVED'].includes(row.Result)) {
+    assert.match(row.Limits ?? row.Notes ?? '', /\w{3}/u, `${label}: a ${row.Result} states its reason`);
+  }
+}
+
+// Each observed scenario lists every criterion, in the legend's order, with an
+// outcome from its own closed vocabulary and a reason. A model approval is
+// never recorded as a passed approval gate.
+function assertCriterionTable(text, scenario, criteria) {
+  const label = `scenario ${scenario.Scenario}`;
+  const rows = markdownTable(text, `### Scenario ${scenario.Scenario} result`);
+  assert.deepEqual(rows.map((row) => row.Criterion), criteria, `${label} lists every criterion in order`);
+  for (const row of rows) {
+    assert.ok(CRITERION_OUTCOMES.includes(row.Outcome), `${label} / ${row.Criterion}: outcome '${row.Outcome}' is outside the closed vocabulary`);
+    assert.match(row.Reason ?? '', /\w{3}/u, `${label} / ${row.Criterion}: the outcome states its reason`);
+  }
+  if (/^model\b/iu.test(scenario.Approver)) {
+    const approval = rows.find((row) => /^Approval\b/u.test(row.Criterion));
+    assert.notEqual(approval?.Outcome, 'PASS', `${label}: a model approval never passes the approval gate`);
   }
 }
 
@@ -897,12 +921,25 @@ test('docs/inception-acceptance.md is a reproducible native protocol whose resul
   assert.match(flat, /through the public `inception` skill in a real harness/i, 'proofs run the public skill natively');
   assert.match(flat, /at least one scenario interrupts and resumes/i, 'a resume must be observed natively');
 
+  for (const result of ['PARTIAL', 'OBSERVED', 'NOT OBSERVED']) {
+    assert.match(flat, new RegExp(`\`${result}\` \\(`, 'u'), `the judging rules must define ${result}`);
+  }
+  assert.match(flat, /A partial proof stays open/i, 'a partial proof stays open');
+  const criteria = markdownTable(text, '### Criteria').map((row) => row.Criterion);
+  assert.equal(criteria.length, 16, 'the criteria legend names every criterion');
+  assert.ok(criteria.some((name) => /^Approval\b/u.test(name)), 'the legend names the approval criterion');
+
   const scenarios = markdownTable(text, '## Scenario results');
   assert.deepEqual(scenarios.map((row) => row.Scenario), ['A', 'B', 'C']);
   scenarios.forEach((row) => assertObservedResult(row, `scenario ${row.Scenario}`));
+  scenarios.filter((row) => row.Result !== 'PENDING').forEach((row) => assertCriterionTable(text, row, criteria));
+  if (text.includes('\n## Populated-hub re-check\n')) {
+    markdownTable(text, '## Populated-hub re-check').forEach((row) => assertObservedResult(row, `re-check ${row.Run}`));
+  }
   const harnesses = markdownTable(text, '## Harness discovery and invocation matrix');
   assert.deepEqual(harnesses.map((row) => row.Harness), ['Claude Code', 'Codex', 'OpenCode', 'Pi', 'DeepSeek Harness']);
-  harnesses.forEach((row) => assertObservedResult(row, row.Harness));
+  harnesses.forEach((row) => assertObservedResult(row, row.Harness, HARNESS_RESULTS));
+  assert.match(flat, /fake-host[^.]*not native evidence/i, 'fixture and fake-host tests are not native evidence');
 
   assert.match(flat, /model approver/i, 'must state the approver used by native runs of this release');
   assert.match(flat, /never counts as observed human approval/i, 'a model-approved PASS is not human approval');

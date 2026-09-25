@@ -15,6 +15,8 @@ first.
   skill, the model follows it, a real bootstrap works, and `init` turns it into a hub.
 - A native result covers the observed run only. The hermetic suite never produces a native
   result, and a native result never replaces the hermetic suite.
+- Fixture and fake-host tests, such as the fake-harness canary and the adapter call-shape tests,
+  are not native evidence either: they imitate a harness and never load one.
 - Uncertain outcomes: the hermetic analog is a crash between a receipt write and its descriptor
   write, which the suite resumes by observing the files and never repeats. Reconciling an uncertain
   deploy or other external effect is locked only as skill text and needs native observation
@@ -25,7 +27,7 @@ first.
 Decision (2026-09-24): native runs for this release use a model approver. The model that drives
 the harness answers the approval questions, not a human. The human approval gate is exercised
 with a model approver, so a PASS here never counts as observed human approval. Every result
-names its approver.
+names its approver. No run recorded below observed a human approval.
 
 ## Before each run
 
@@ -132,22 +134,253 @@ Only the redacted summary goes into the tables below.
 
 ## Judging and open proofs
 
-- A result is one of `PENDING`, `PASS`, `FAIL`, `NOT RUN` (the harness lacks the capability), or
+- A scenario result is one of `PENDING`, `PASS`, `PARTIAL` (the run finished, but an observation
+  was not made or held only in part), `FAIL`, `NOT RUN` (the harness lacks the capability), or
   `BLOCKED` (the run started and could not finish).
-- A result other than `PENDING` records its observation date, the harness and its version, and
-  the plugin revision.
-- A blocked proof stays open. Record the reason and the work completed. It never becomes a PASS,
-  and a review cannot call the bootstrap criteria met while it is open.
+- A harness row is one of `PENDING`, `OBSERVED` (the harness listed the skill, and a request
+  started it with no hub), `FAIL` (the harness ran but did not list or start the skill), or
+  `NOT RUN` (a missing capability).
+- An observed scenario judges every criterion below. The outcome is `PASS`, `PARTIAL`, `FAIL`,
+  `NOT OBSERVED` (the scenario did not exercise it), or `NOT RUN` (a capability was missing). Each
+  outcome has a one-line reason.
+- A result other than `PENDING` records its observation date, the harness and its version (or
+  that the harness is not installed), and the plugin revision. A result other than `PASS` or
+  `OBSERVED` states its reason.
+- A blocked proof stays open. A partial proof stays open. Record the reason and the work
+  completed. Neither becomes a PASS, and a review cannot call the bootstrap criteria met while one
+  is open.
 - `NOT RUN` means a missing capability, not a failure. Never invent a descriptor, runner, or
   adapter to fill it.
+- A model approval never passes the approval criterion. It proves which bytes were approved, not
+  who approved them.
+
+### Criteria
+
+| Criterion | What a native run must show |
+|---|---|
+| Invocation without a hub | The harness lists the skill, a plain request starts it, and it needs no existing hub. |
+| Starting materials | An empty repository, a starter, a design system, and a UI prototype are recognized and combined. Real elements, mocks, and constraints are recorded, and no mature application enters the scope by itself. |
+| Sources and versions | Each foundational choice has an official source, an explicit version, a verification date, and its compatibility. The install proves the combination actually used. |
+| Approval before bootstrap | An approved project (architecture, stack, reuse, representative path, verification, and deploy choice) exists before the bootstrap. A substantial change needs a new decision. |
+| Working bootstrap | The approved bootstrap installs, starts, builds, passes its tests, and runs the representative path across the agreed boundaries. It keeps every behavior marked for preservation. |
+| Verification record | The record keeps configured, executed, succeeded, not-executed, and failed apart. An excluded deploy is not needed to finish; an included one is never reported as succeeded without evidence. |
+| Local area ignored | Git ignores the run's local area from its creation. It stays out of the stable documents and their ordinary reads. |
+| Pre-hub linter and hook | The linter and the Stop hook report a valid pre-hub state without calling it a coherent hub. An incomplete `.apex/`, an unknown state, and an activated hub without an index keep their errors. |
+| Transfer to init | `init` names the exact approved inputs, checks the current code, reuses confirmed data, and asks only for missing data, new decisions, or real conflicts. |
+| Populated hub | `init` fills routing, standards, glossary, conventions, and the needed documents with verified content and approved reasons. The public Project model v1 stays unchanged. |
+| Promotion outcomes | Every significant decision has an explicit promotion outcome. No unbuilt intention is shown as an existing component, and no decision/code divergence is settled silently. |
+| Versioned-only copy | A copy of the versioned files alone passes `validate-hub` and holds the rules, reasons, and context to continue, with no local area. |
+| Resume | A resume keeps a valid approval and evidence and detects incompatible changes. It never repeats a concluded bootstrap step, a promoted rule, or an external operation whose outcome is uncertain. |
+| Future flows | Prototype flows outside the representative path stay as context for later work. They carry no implementation claim and start no backlog. |
+| Existing workflows | Ordinary init, repair, discovery, and the shipped workflows keep their behavior. The local areas never become new read channels. |
+| Hermetic versus native | Automated tests and native runs keep verified deterministic behavior apart from the model's adherence. No text or fake-harness test is presented as a real application bootstrap. |
 
 ## Scenario results
 
+All three scenarios ran on 2026-09-25 through the public skill in Claude Code, on a frozen copy
+of the plugin loaded with `--plugin-dir`. The installed copy was disabled for each session.
+Every scenario found the same defect: `init` left surface-standard sections as template
+placeholders. Each scenario therefore stays `PARTIAL`. The payload was fixed afterwards, and a
+separate native run re-checked the fix; see [Populated-hub re-check](#populated-hub-re-check).
+Scenarios A, B, and C were not re-run on the fixed payload.
+
 | Scenario | Result | Observed on | Harness and version | Plugin revision | Approver | Limits |
 |---|---|---|---|---|---|---|
-| A | PENDING | — | — | — | — | — |
-| B | PENDING | — | — | — | — | — |
-| C | PENDING | — | — | — | — | — |
+| A | PARTIAL | 2026-09-25 | Claude Code 2.1.280 | `8b84555` | model: the driving model; no human approval observed | The page leg in a browser was not executed. The surface standard kept template placeholders. The driver ran one planner apply that the sandbox refused. |
+| B | PARTIAL | 2026-09-25 | Claude Code 2.1.280 | `8b84555` | model: the driving model; no human approval observed | Both surface standards kept template placeholders. There was no interruption or resume. |
+| C | PARTIAL | 2026-09-25 | Claude Code 2.1.280 | `8b84555` | model: the driving model; no human approval observed | The surface standard and the Version policy section kept template placeholders. No external effect had an uncertain outcome. |
+
+## Observed scenario details
+
+Each run drove the skill through nested headless sessions (`claude -p`, continued with
+`--resume`) with the harness's default model, `claude-opus-5-5`. Scenario C resumed in a new
+session. A local hardening setting forced the `default` permission mode, so each run used an
+explicit tool allowlist instead of `auto`. No run used a permission bypass. Deploy was excluded
+in every approved project. No project used a paid service, a publication, an account, or a
+credential.
+
+### Scenario A result
+
+- **Payload:** `8b84555`, plugin version 1.0.4.
+- **Harness:** Claude Code 2.1.280, one session of 14 turns. Capabilities: shell, network that
+  a session sandbox limited to official registries and hosts, a headless browser the sandbox
+  blocked, and questions as text.
+- **Approver:** model. The driving model approved the whole project, then a targeted change.
+  No human approval was observed.
+- **Inputs:** an empty Git repository and a one-paragraph idea for a local bookmark list (save,
+  list, remove) backed by a real database.
+- **Chosen and verified in the run:** Node.js 24 LTS with its built-in SQLite module and type
+  stripping, TypeScript 7.0.2, and `@types/node` 24.13.6. Sources: the Node.js release index and
+  schedule, the Node.js API documentation, the npm registry, and GitHub releases, all verified
+  on the run date.
+- **Deploy:** excluded, because the app runs locally.
+
+| Criterion | Outcome | Reason |
+|---|---|---|
+| Invocation without a hub | PASS | A plain request loaded the skill with no hub, and `inspect` reported `absent` once rerun through the real path (see Known limitations). |
+| Starting materials | PARTIAL | The empty repository was recognized with nothing real, mocked, or to preserve; the other material types belong to scenario B. |
+| Sources and versions | PASS | Each choice has an official source, version, date, and support status; an isolated experiment ran before approval, and the installed versions matched the research. |
+| Approval before bootstrap | PARTIAL | The whole project was approved and bound by digest before any repository write, and a later change needed a new approval; the approver was the driving model. |
+| Working bootstrap | PARTIAL | Install, build, 16 of 16 tests, start, and the HTTP path with data kept across restarts succeeded, also when re-run independently; the page leg in a browser was not executed and was recorded as not executed. |
+| Verification record | PASS | Configured, succeeded, and not-executed checks stay apart, remote results are not executed, and deploy is excluded with its reason. |
+| Local area ignored | PASS | The ignore guard came first, Git reports the area ignored, nothing in it is tracked, and the model never listed it. |
+| Pre-hub linter and hook | PASS | The Stop hook stayed silent in the pre-hub turns and blocked while `init` was in progress without an index; a bare `.apex/` is an error. |
+| Transfer to init | PASS | The handoff was verified, the code was checked against the checkpoint, and confirmed data was reused; the only questions were a real code/decision divergence and an environment blocker. |
+| Populated hub | PARTIAL | Routing, glossary, conventions, testing checklist, and both project documents were filled, and the projection kept the five Project model v1 keys; the standard's Scope and Anti-patterns kept template placeholders. |
+| Promotion outcomes | PASS | All 21 decisions have an outcome (14 promoted, 7 excluded with reasons), the divergence went to the user, and the unverified page rendering is described as not observed. |
+| Versioned-only copy | PASS | A clone of the versioned files passes `validate-hub` with code-anchor warnings only and holds the rules, reasons, context, and Git policy. |
+| Resume | PARTIAL | The post-approval change was re-recorded at new exact paths without repeating concluded steps, and a resume from a blocked state was an exact no-op; no process was stopped mid-step, and no external effect was uncertain. |
+| Future flows | PASS | Edit, tags, search, and import/export appear only as future-flow context, and no spec, plan, or backlog was created. |
+| Existing workflows | PARTIAL | The model read the local area only through the helpers and never listed it; ordinary init, repair, discovery, and `new-surface` were not run. |
+| Hermetic versus native | PARTIAL | This real bootstrap through the public skill is recorded apart from the hermetic suite; the criterion also depends on the other proofs. |
+
+**Limits:**
+- The sandbox blocked headless Chromium, so the page leg and a visual check were not executed.
+- The sandbox also refused writes under the project's `.claude/` directories. The skill stopped
+  before any hub write and asked for help. The driver previewed and ran the exact planner apply,
+  with no conflict, and the skill resumed from its exact inputs.
+- The machine's Node.js 24.15.0 is behind the line's latest patch. The run recorded the gap and
+  did not upgrade.
+- Not run: fault paths, an offline install, and a forced stop mid-step.
+
+**Defects found:**
+- Engine: the surface standard kept template placeholders (fixed later; see the re-check). The
+  entry-guard limitation also appeared, and it predates this feature (see Known limitations).
+- Model adherence: no skill instruction was found broken. At one question the model first
+  offered a wording change as needing no new approval. It then folded the change into the
+  re-approved bytes.
+
+### Scenario B result
+
+- **Payload:** `8b84555`, plugin version 1.0.4.
+- **Harness:** Claude Code 2.1.280, one session of 9 turns. Capabilities: shell, network,
+  subagents (unused), a browser installed inside the project during the run, and questions as
+  text.
+- **Approver:** model. The driving model asked for one change before approving. No human
+  approval was observed.
+- **Inputs:** committed before the run: a Vite + React + TypeScript starter from its official
+  generator, a small design system (tokens and four components as plain files), and a clickable
+  prototype with three flows and only mocked data. The first message kept the starter's page and
+  counter as the behavior to preserve. It put add and list/filter in scope and left share/export
+  for later.
+- **Chosen and verified in the run:** Node.js 24, a small `node:http` server with a JSON file
+  store, Vite, Vitest, Playwright, and TypeScript. Sources: the official documentation of each
+  project plus the npm registry, verified on the run date.
+- **Deploy:** excluded by the user's constraint.
+
+| Criterion | Outcome | Reason |
+|---|---|---|
+| Invocation without a hub | PASS | A plain request loaded the skill with no hub, and `inspect` reported `absent`. |
+| Starting materials | PASS | The starter, the design system, and the prototype were classified, the mocks were recorded as mocks, the prototype became a UX reference instead of a component, and nothing entered the scope by itself. |
+| Sources and versions | PASS | Each choice has an official source, version, date, and compatibility, and the installed versions matched; some versions rely on the npm registry alone. |
+| Approval before bootstrap | PARTIAL | The whole project was shown before any application change, a requested edit produced a new digest before approval, and the approval was bound with the bootstrap phase; the approver was the driving model. |
+| Working bootstrap | PASS | In a clean clone, install, typecheck, lint, build, and tests (server 42, web 16, browser 2) passed, the add, list, and filter path ran over HTTP and in headless Chromium across a restart, and the starter's page and counter still work on their own route. |
+| Verification record | PASS | Configured, executed, succeeded, and not-executed checks stay apart, and deploy is excluded with the user's reason. |
+| Local area ignored | PASS | The ignore guard came first, Git status stayed clean, and nothing in the area is tracked. |
+| Pre-hub linter and hook | PARTIAL | The Stop hook ran in eight pre-hub turns without blocking, and the hub validated after `init`; the linter's pre-hub message and its error states were not exercised here. |
+| Transfer to init | PASS | The helper refused the transfer until phase `init` was set; `init` then verified the exact handoff, reused every confirmed value, and asked no question. |
+| Populated hub | PARTIAL | Routing, glossary, conventions, testing checklist, and both project documents carry the approved texts and reasons; both surface standards kept template placeholders. |
+| Promotion outcomes | PASS | All 17 decisions have an outcome (14 promoted, 3 excluded with reasons), future flows are marked as context, and the prototype is marked as a mock. |
+| Versioned-only copy | PASS | A clone passes `validate-hub` with code-anchor warnings only and has no local area; its routed standards held no rules. |
+| Resume | NOT OBSERVED | The scenario had no interruption or resume. |
+| Future flows | PASS | Share/export appears only as future-flow context; its endpoint answers 404, the app has no share/export code, and no spec, plan, or backlog was created. |
+| Existing workflows | PARTIAL | The run never listed the local area; ordinary init, repair, discovery, and `new-surface` were not run. |
+| Hermetic versus native | PARTIAL | Helper-verified checks are recorded apart from model adherence; the criterion also depends on the other proofs. |
+
+**Limits:**
+- The session could write only inside the project. `init`'s temporary files therefore used an
+  ignored folder in the repository instead of a folder outside it. Both were deleted.
+- By an approved decision, the app opens on its list, and the starter page moved to its own
+  route with the same markup. The preserved behavior was verified on that route.
+- Not run: interruption and resume, a live hot update, and Firefox and WebKit.
+
+**Defects found:**
+- Engine: nothing required a promotion to target a surface standard, so both standards kept
+  template placeholders (fixed later; see the re-check).
+- Model adherence:
+  - research ran before the phase change was recorded;
+  - only the final code checkpoint was recorded;
+  - constraints were paraphrased until the approver asked for the user's words;
+  - `verify` ran before phase `init`, and the helper refused it;
+  - promoted texts cite runtime-only paths, which gives code-anchor warnings.
+
+### Scenario C result
+
+- **Payload:** `8b84555`, plugin version 1.0.4.
+- **Harness:** Claude Code 2.1.280, two sessions. The second was a new session for the resume.
+  Capabilities: shell, network, and questions as text.
+- **Approver:** model. The driving model approved the project and later chose the resolution
+  after the interruption. No human approval was observed.
+- **Inputs:** an empty Git repository and an idea for a text-report job service. An HTTP API
+  queues a job, a separate worker processes it, and the client polls for the result. Local only,
+  with no broker service and no Docker.
+- **Chosen and verified in the run:** CPython 3.14 managed by uv, FastAPI, Starlette, Uvicorn,
+  and a SQLite-backed queue claimed by a separate worker process. Sources: the Python developer
+  guide, the uv documentation, the project documentation of the web stack, sqlite.org, and PyPI,
+  verified on the run date. A broker queue and a task-queue library were rejected with reasons.
+- **Deploy:** excluded; local only.
+
+| Criterion | Outcome | Reason |
+|---|---|---|
+| Invocation without a hub | PASS | Both sessions loaded the skill from requests that never named it, and no hub was needed. |
+| Starting materials | PARTIAL | The empty repository was recognized with nothing real, mocked, or to preserve; the other material types belong to scenario B. |
+| Sources and versions | PASS | Each choice has an official source, version, date, and support status; an isolated experiment checked the resolve and exactly-once claiming across four processes, and the lockfile matched the research. |
+| Approval before bootstrap | PARTIAL | The whole project was approved and bound by digest before the first bootstrap step, and a later edit to it was caught at resume; the approver was the driving model. |
+| Working bootstrap | PASS | In a fresh clone, install, lint, 46 tests, and the end-to-end test passed, and by hand a queued job was finished by the separate worker across both process boundaries; there was no behavior to preserve. |
+| Verification record | PASS | Checks stay apart by state, CI and remote are not executed with reasons, and deploy is excluded with its reason. |
+| Local area ignored | PASS | The ignore guard came first, nothing in the area is tracked, and no session listed or searched either local area. |
+| Pre-hub linter and hook | PASS | Through the CLIs, a pre-hub run reports no hub yet, while a bare `.apex/` and an index removed after `init` completed are errors; the Stop hook blocks or stays silent to match. |
+| Transfer to init | PASS | The exact handoff was re-verified, the checkpoint had not diverged, stack detection stayed a hint, and `init` asked no question. |
+| Populated hub | PARTIAL | Routing, glossary, conventions, testing checklist, and both project documents were filled, and the projection kept the five Project model v1 keys; the surface standard and the Version policy section kept template placeholders. |
+| Promotion outcomes | PASS | All 17 decisions have an outcome (12 promoted, 5 excluded with reasons), and two code/decision divergences were disclosed, not settled silently. |
+| Versioned-only copy | PASS | A clone passes `validate-hub` with code-anchor warnings only, and routing to the standard and its agent works; the standard held no rules. |
+| Resume | PARTIAL | After the harness was stopped mid-bootstrap and the approved document was edited, a new session resumed from exact paths, caught the edit, blocked for a decision, did not repeat concluded steps, and settled a step with only its intent logged by observing it; no external effect was uncertain. |
+| Future flows | NOT OBSERVED | There was no prototype; future flows record none, and no backlog was started. |
+| Existing workflows | PARTIAL | No session listed a local area; ordinary init, repair, discovery, and `new-surface` were not run. |
+| Hermetic versus native | PARTIAL | Deterministic checks are recorded apart from the model's judgement; the criterion also depends on the other proofs. |
+
+**Limits:**
+- The interruption was a stop signal sent to the harness process, not a usage limit.
+- The resolution restored the approved bytes. A new approval at a new path and a checkpoint
+  divergence at resume were therefore not exercised.
+- Not run: CI and any remote.
+
+**Defects found:**
+- Engine: the surface standard and the Version policy section kept template placeholders
+  (fixed later; see the re-check). The entry-guard limitation also appeared, and it predates
+  this feature (see Known limitations).
+- Model adherence:
+  - the first session skipped the code checkpoints between bootstrap steps, and the resume
+    reported it;
+  - several phases were recorded together in one reply;
+  - a feature-branch clause of the user's Git policy was dropped before approval, and the model
+    approver missed it.
+
+## Populated-hub re-check
+
+After the three scenarios, the payload was fixed:
+- The transfer helper refuses a promotion table that has no promoted text for a confirmed
+  surface's standard.
+- The skills replace every template placeholder in the documents the transfer creates.
+- The skills check that no placeholder line is left before `finalize`.
+
+This re-check drove one full inception-to-init run on the fixed payload. It judges only the
+criteria in its table. The project was a small Node.js + TypeScript notes service with two
+surfaces, an HTTP API and a command-line client.
+
+| Run | Result | Observed on | Harness and version | Plugin revision | Approver | Limits |
+|---|---|---|---|---|---|---|
+| Populated hub | PASS | 2026-09-25 | Claude Code 2.1.280 | `beed8bb` | model: the driving model; no human approval observed | Judges only the criteria below. The driver ran init's copy gate after the harness refused a copy command. No process was interrupted. |
+
+### Re-check criteria
+
+| Criterion | Outcome | Reason |
+|---|---|---|
+| Approval before bootstrap | PARTIAL | The whole project was approved and bound by digest before the bootstrap; the approver was the driving model. |
+| Transfer to init | PASS | The handoff was verified on its six roles, and no approved fact was asked again; the only stop was a harness refusal on the copy gate. |
+| Populated hub | PASS | Both surface standards fill Scope, Conventions, and Anti-patterns, and both project documents fill every section, Version policy included; a search found no template guidance line, and the projection kept the five Project model v1 keys. |
+| Promotion outcomes | PASS | All 25 decisions have an outcome (20 promoted, 5 excluded with reasons); a file the harness refused to write was disclosed, and the promoted text matches the code. |
+| Versioned-only copy | PASS | A clone passes `validate-hub` with code-anchor warnings only, and its tests (API 20, client 19, end-to-end 1) and the representative path run from it. |
 
 ## Harness discovery and invocation matrix
 
@@ -157,8 +390,24 @@ repository it reports no hub and no run (`inspect` → `absent`) and proceeds to
 
 | Harness | Invocation | Result | Observed on | Harness and version | Plugin revision | Notes |
 |---|---|---|---|---|---|---|
-| Claude Code | `/steepy-apex:inception` | PENDING | — | — | — | — |
-| Codex | `$inception` | PENDING | — | — | — | — |
-| OpenCode | `/steepy-apex-inception` | PENDING | — | — | — | — |
-| Pi | `/skill:inception` | PENDING | — | — | — | — |
-| DeepSeek Harness | `steepy_skill` with `skill: "inception"` | PENDING | — | — | — | — |
+| Claude Code | `/steepy-apex:inception` | OBSERVED | 2026-09-25 | Claude Code 2.1.280 | `8b84555` | Listed with the other nine skills. A plain request started it: `inspect` reported `absent`, and it routed to a new run, never to `init`. The probe ran in plan mode and stopped before the first write, and the command itself was not typed. Scenarios A, B, and C started runs in this harness on the same payload. |
+| Codex | `$inception` | NOT RUN | 2026-09-25 | Codex CLI 0.155.0-alpha.9.2 | `8b84555` | No per-invocation load of a local plugin exists: adding a plugin persists it to the Codex home. An isolated temporary home has no usable credential, and copying one into it was refused. An older installed copy without `inception` is not evidence for this payload. |
+| OpenCode | `/steepy-apex-inception` | OBSERVED | 2026-09-25 | OpenCode 1.18.32 | `8b84555` | The `inception` skill and the `steepy-apex-inception` command were listed with the other nine. A plain request loaded the skill: `inspect` reported `absent`, `start` created the ignored run area inside the temporary project only, and the first reconnaissance question arrived. The command itself was not typed. The pre-hub fallback sentence was read from the adapter source, not observed in a session. |
+| Pi | `/skill:inception` | NOT RUN | 2026-09-25 | Pi 0.80.7 | `8b84555` | Pi's only configured provider has no usable credential. A bare prompt without the plugin fails the same way. Getting a credential was out of scope. The pre-hub fallback sentence was read from the adapter source only. |
+| DeepSeek Harness | `steepy_skill` with `skill: "inception"` | NOT RUN | 2026-09-25 | DeepSeek Harness, not installed | `8b84555` | `dsh` is not installed in this environment, and nothing was installed for the probe. |
+
+## Known limitations
+
+- **Engine CLI entry guard (predates this feature).** Each engine CLI decides whether to run by
+  comparing `resolve(process.argv[1])` with its own module path. Node.js loads the entry module
+  through its real path, and `resolve` does not follow symlinks. Called through a symlinked
+  path, such as a macOS temporary directory under `/var`, which links to `/private/var`, a
+  script prints nothing and exits 0. For `validate-hub.mjs` that is a silent false green.
+  Scenarios A and C met it on their first `inspect`, and the model reran the helper through the
+  real path. The Stop hook has no such guard and was not affected. The guard is unchanged since
+  release 1.0.4 (`b7532fa`), and the new inception helpers copy it. It stays open as a follow-up
+  outside this feature.
+- **Open criteria.** Two of the five harnesses were observed, and no human approval was observed.
+  In scenario A the page leg in a browser was not executed. No native run met an external effect
+  with an uncertain outcome. Ordinary init, repair, discovery, and `new-surface` were not run
+  natively. These proofs stay open.
