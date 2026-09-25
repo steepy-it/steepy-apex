@@ -240,6 +240,47 @@ test('inception: protocol.md record examples are accepted by the real helpers an
     'the example shows the explicit statement for a section with no approved content');
 });
 
+// A fillable section is one whose body a template leaves as parenthesized
+// guidance for init to replace; a rendered section (a standard's Testing) is not.
+const GUIDANCE_LINE = /^(?:- (?:[A-Za-z ]+: )?)?`?\(/u;
+function fillableSections(templateName) {
+  const lines = readFileSync(join(root, 'templates', templateName), 'utf8').split('\n');
+  return lines.flatMap((line, index) => {
+    if (!line.startsWith('## ')) return [];
+    const next = lines.findIndex((candidate, at) => at > index && candidate.startsWith('## '));
+    const first = lines.slice(index + 1, next === -1 ? lines.length : next).find((candidate) => candidate.trim() !== '');
+    return first !== undefined && GUIDANCE_LINE.test(first) ? [line.slice(3)] : [];
+  });
+}
+
+test('inception: the promotion example fills every section init creates from a template, Version policy as policy only', () => {
+  const text = read('protocol.md');
+  const runId = parseInceptionState(jsonBlockAfter(text, '## Descriptor').text).runId;
+  const promoted = validatePromotionTable(jsonBlockAfter(text, '### Promotion table').value, { runId })
+    .decisions.filter(({ outcome }) => outcome === 'promote');
+  assert.deepEqual(fillableSections('surface-standard.md'), ['Scope', 'Conventions', 'Anti-patterns']);
+  assert.equal(fillableSections('project-architecture.md').length, 3);
+  assert.equal(fillableSections('project-context.md').length, 5);
+  const templateOf = (destination) => (/^\.apex\/standards\/[^/]+\.md$/u.test(destination) ? 'surface-standard.md'
+    : ['.apex/project-architecture.md', '.apex/project-context.md'].includes(destination) ? destination.slice('.apex/'.length) : null);
+  const rows = new Map();
+  for (const { destination } of promoted) {
+    if (templateOf(destination)) rows.set(destination, (rows.get(destination) ?? 0) + 1);
+  }
+  assert.deepEqual([...rows.keys()].map(templateOf).sort(), ['project-architecture.md', 'project-context.md', 'surface-standard.md'],
+    'the example writes a standard and both project documents');
+  for (const [destination, count] of rows) {
+    const sections = fillableSections(templateOf(destination));
+    assert.ok(count >= sections.length,
+      `${destination} needs one promote row per fillable section (${sections.join(', ')}); the example has ${count}`);
+  }
+  const policy = promoted.find(({ id }) => /version-policy/iu.test(id));
+  assert.ok(policy, 'the example promotes a Version policy row');
+  assert.equal(policy.destination, '.apex/project-architecture.md');
+  assert.match(policy.content, /manifest and lockfile hold the resolved version/i);
+  assert.doesNotMatch(policy.content, /<version>|\d+\.\d+/u, 'a version policy states a policy, never a resolved version');
+});
+
 test('inception: the promotion table fills every surface standard and every section init creates from a template', () => {
   const table = flat(section(read('protocol.md'), '### Promotion table', '### Init receipt'));
   assert.match(table, /Every confirmed surface needs at least one `promote` row whose destination is its standard, `\.apex\/standards\/<name>\.md`; `verify` and `prepare` refuse the table otherwise/i);
@@ -423,6 +464,7 @@ test('inception: init-handoff verifies, names exact init inputs, separates appro
   assert.match(text, /change no code and make no commit until `init` finalizes/i);
   assert.match(text, /If `init` reports `diverged` before it starts, loop back: re-run the checks the change affects, record and bind a new checkpoint, then write a new handoff at a new exact path/i);
   assert.match(text, /Once `init` has started, its handoff is pinned: restore the checkpointed code instead/i);
+  assert.match(text, /If `init` refuses the promotion table as incomplete before it starts, add the missing standard rows and hand off again: write a new handoff at a new exact path/i);
   assert.match(text, /installed combination → the versions actually resolved[^;]*match the approved research; report a mismatch, never hide it/i);
   for (const file of ['confirmed-inputs.json', 'promotion.json', 'init-handoff.json']) {
     assert.ok(text.includes(file), `the transfer must name ${file}`);

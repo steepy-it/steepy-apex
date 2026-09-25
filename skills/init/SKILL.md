@@ -256,8 +256,9 @@ paths it names; the `inception` skill owns every other file of its run.
    On resume, omit `--receipt`: the descriptor binds the receipt. A destination reported `changed`
    differs from its prepared bytes and still misses promoted text. It can hold this entry's own partial
    write or a human edit: compare it with what this entry writes, keep this entry's own bytes, and ask
-   the user only about text this entry did not write; never overwrite human text. Do not commit
-   between `prepare` and `finalize`: a moved HEAD diverges the checkpoint.
+   the user only about text this entry did not write; never overwrite human text. Template guidance
+   this entry wrote is not human text; Step 5 replaces it. Do not commit between `prepare` and
+   `finalize`: a moved HEAD diverges the checkpoint.
 4. **Plan and apply.** Derive the planner projection into a temporary file outside the repository:
 
    ```bash
@@ -271,19 +272,20 @@ paths it names; the `inception` skill owns every other file of its run.
    from `<engine-root>/templates/project-context.md` and `<engine-root>/templates/project-architecture.md`
    when a promotion needs them, and link them from `_INDEX.md`. Where each text goes:
    - a standard or project document this entry creates in this transfer (`prepare` reported it with
-     `previous: null`) → replace each template placeholder line with the promoted texts for its
-     section. A placeholder line is the parenthesized guidance a template puts under a heading, such
-     as `- Owns: (what this surface is responsible for)`.
+     `previous: null`) → replace each template placeholder with the promoted texts for its section.
+     A placeholder is the parenthesized guidance a template puts under a heading, every line of it,
+     continuation lines included, such as `- Owns: (what this surface is responsible for)`.
    - a document that existed before this transfer → append; never overwrite human text.
 
    Write chosen rules as rules with their reasons, keep observed patterns labeled as observed, and
    write excluded decisions nowhere. The hub gains routing, standards, glossary, conventions, testing,
    and project context from the record and the promotion table. On resume, documents already written
-   stay; write only what is missing.
-6. **Verify and finalize.** First check every document this transfer created: none may still hold a
-   template placeholder line. For each one left → complete it from the promotion table when the
-   approved content exists; otherwise ask one targeted question and write the answer there. Never
-   finalize with a placeholder. Then run Step 8's gate. Then check that the hub stands without
+   stay; write only what is missing, and still replace any placeholder left in a document this
+   transfer created.
+6. **Verify and finalize.** First check every document this transfer created: none may still hold
+   any line of a template placeholder. For each placeholder left → complete it from the promotion
+   table when the approved content exists; otherwise ask one targeted question and write the answer
+   there. Never finalize with a placeholder. Then run Step 8's gate. Then check that the hub stands without
    local areas: copy the files Git would version (`git ls-files --cached --others --exclude-standard`;
    without Git, every file except `.apex/inception/` and `.apex/work/`) to a temporary directory
    outside the repository, run `validate-hub.mjs` on the copy, and delete it. Only when all three

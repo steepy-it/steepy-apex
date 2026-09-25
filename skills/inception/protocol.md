@@ -230,22 +230,22 @@ template. A section with nothing approved gets a short explicit statement, never
   "run-id": "0f8e6b8a-3c1d-4e2f-9a7b-5c6d7e8f9a0b",
   "decisions": [
     {
-      "id": "D1-runtime",
+      "id": "D1-intent",
       "outcome": "promote",
-      "destination": ".apex/project-architecture.md",
-      "content": "- Runtime: <runtime>, chosen because <reason>. The manifest and lockfile hold the resolved version."
+      "destination": ".apex/project-context.md",
+      "content": "- Intent: appointment booking for small clinics; a patient books a free slot with one practitioner."
     },
     {
-      "id": "D2-app-scope",
+      "id": "D2-prototype",
       "outcome": "promote",
-      "destination": ".apex/standards/app.md",
-      "content": "- Owns: `src/`, the booking flow and its rules.\n- Does NOT own: deploy configuration.\n- Exemplar: `src/booking.ts`"
+      "destination": ".apex/project-context.md",
+      "content": "- Prototype: the approved booking screens drive the design; the waiting-list screen is a mock."
     },
     {
-      "id": "D3-app-anti-patterns",
+      "id": "D3-bootstrap-boundaries",
       "outcome": "promote",
-      "destination": ".apex/standards/app.md",
-      "content": "- Not decided at inception; refine with `discovery`."
+      "destination": ".apex/project-context.md",
+      "content": "- Bootstrap: booking one slot end to end is built; deploy is excluded with its reason."
     },
     {
       "id": "D4-waiting-list",
@@ -254,7 +254,49 @@ template. A section with nothing approved gets a short explicit statement, never
       "content": "- Waiting list: seen in the prototype, not built. Context for later work."
     },
     {
-      "id": "D5-rejected-queue",
+      "id": "D5-open-questions",
+      "outcome": "promote",
+      "destination": ".apex/project-context.md",
+      "content": "- Reminder channel (email or SMS): left open on purpose."
+    },
+    {
+      "id": "D6-runtime",
+      "outcome": "promote",
+      "destination": ".apex/project-architecture.md",
+      "content": "- Runtime: <runtime>, chosen because <reason>. The manifest and lockfile hold the resolved version."
+    },
+    {
+      "id": "D7-reasons",
+      "outcome": "promote",
+      "destination": ".apex/project-architecture.md",
+      "content": "- Runtime: <reason>. The verified representative path confirms it."
+    },
+    {
+      "id": "D8-version-policy",
+      "outcome": "promote",
+      "destination": ".apex/project-architecture.md",
+      "content": "- Version policy: pin exact versions and upgrade only through a reviewed change. The manifest and lockfile hold the resolved version."
+    },
+    {
+      "id": "D9-app-scope",
+      "outcome": "promote",
+      "destination": ".apex/standards/app.md",
+      "content": "- Owns: `src/`, the booking flow and its rules.\n- Does NOT own: deploy configuration.\n- Exemplar: `src/booking.ts`"
+    },
+    {
+      "id": "D10-app-conventions",
+      "outcome": "promote",
+      "destination": ".apex/standards/app.md",
+      "content": "- Keep booking rules in `src/booking.ts`; a chosen rule, because the representative path crosses one module."
+    },
+    {
+      "id": "D11-app-anti-patterns",
+      "outcome": "promote",
+      "destination": ".apex/standards/app.md",
+      "content": "- Not decided at inception; refine with `discovery`."
+    },
+    {
+      "id": "D12-rejected-queue",
       "outcome": "exclude",
       "reason": "A rejected alternative; its reasons stay in the local project record."
     }
