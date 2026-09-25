@@ -82,6 +82,9 @@ only the current conductor ledger schema and identify unsupported records as inv
   existing components; future flows stay context, not backlog.
 - `discovery` reads only stable knowledge and ordinary source, and never re-approves decisions a
   transfer already wrote.
+- The stable DAG (`.apex/`), local `.apex/work/` artifacts, and local `.apex/inception/` artifacts
+  are three distinct areas; only the DAG is versioned and reachable from `_INDEX.md`. The
+  user-facing walkthrough of the pre-hub path lives in [docs/inception.md](../docs/inception.md).
 
 ## Decision model (conditional ceremony)
 

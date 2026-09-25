@@ -26,6 +26,7 @@ Mandatory entry point for AI agents. Read this before opening broad areas.
 | `tests` | [standards/tests.md](standards/tests.md) | `tests-agent` | — |
 
 ## Core Directives
-1. **Anti-orphan:** every stable `.apex/**.md` docs entry must be reachable from this file (directly or via a sub-index). `validate-hub.mjs` excludes `.apex/work/**` as local gitignored workflow state.
+1. **Anti-orphan:** every stable `.apex/**.md` docs entry must be reachable from this file (directly or via a sub-index). `validate-hub.mjs` excludes `.apex/work/**` and `.apex/inception/**` as local gitignored areas.
 2. **Living docs:** update `.apex/` before declaring a task done if it changed a standard or domain term.
 3. **Work artifacts:** specs and plans live under `.apex/work/` and are gitignored local workflow state. Promote durable decisions into stable docs before declaring work done.
+4. **Pre-hub inception:** a missing `_INDEX.md` can be a valid pre-hub `inception` run in progress rather than an incoherent hub; `validate-hub.mjs` recognizes that state without ever treating it as a coherent hub. Read `.apex/inception/**` only through the exact paths its own descriptor and handoff name — never by listing the directory.

@@ -2603,3 +2603,15 @@ test('v2 prompts override four-field legacy examples without changing manual or 
   assert.deepEqual(schema.required, ['status', 'artifact', 'signals']);
   assert.equal(schema.additionalProperties, false);
 });
+
+test('docs/workflow.md says the greenfield path precedes the hub and spec means the brainstorm artifact', () => {
+  const workflow = readFileSync(join(root, 'docs', 'workflow.md'), 'utf8');
+  const flat = workflow.replace(/\s+/g, ' ');
+  assert.match(flat, /pre-hub path with no gear of its own/i,
+    'workflow.md must state inception is a pre-hub path with no gear of its own');
+  assert.match(flat, /\[`inception`\]\(inception\.md\)/, 'workflow.md must link inception.md');
+  assert.match(flat, /spec.{0,60}means the artifact `brainstorm` writes/i,
+    'workflow.md must disambiguate "spec" as the brainstorm artifact');
+  assert.match(flat, /inception's own project write-up is a different document/i);
+  assert.match(flat, /not a sixth skill/i, 'workflow.md must deny inception is a sixth chain skill');
+});

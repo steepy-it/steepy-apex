@@ -98,7 +98,12 @@ Open that profile in your project and ask the model to call `steepy_skill` with
 
 ## Get started
 
-Use your harness's [command syntax](docs/installation.md#first-run-and-troubleshooting); Claude Code is shown here.
+**New application with no code yet?** Run `/steepy-apex:inception` first — it needs no hub to
+start and hands off to `init` once the bootstrap is approved and verified. See
+[docs/inception.md](docs/inception.md).
+
+**Existing codebase?** Skip straight to `init` below. Use your harness's [command
+syntax](docs/installation.md#first-run-and-troubleshooting); Claude Code is shown here.
 
 1. `/steepy-apex:init` - Initialize steepy-apex in your repo. Creates the `.apex/` hub, project instructions, and the local `.apex/work/` area for gitignored specs/plans.
 2. `/steepy-apex:discovery` — Populate the hub from an existing codebase, reviewing each proposal.
@@ -112,6 +117,7 @@ Claude Code syntax is shown below; see the [installation guide](docs/installatio
 
 | Skill | Purpose |
 |---|---|
+| `/steepy-apex:inception` | Take a new application with no code yet from starting materials to an approved, verified bootstrap. |
 | `/steepy-apex:init` | Set up the project hub. |
 | `/steepy-apex:discovery` | Populate or refresh project knowledge. |
 | `/steepy-apex:check` | Check documentation coherence. |
@@ -126,6 +132,7 @@ Deterministic runners support Claude, Codex, and OpenCode; Pi and DeepSeek repor
 
 ## Documentation
 
+- [docs/inception.md](docs/inception.md) — the greenfield path from starting materials to a verified bootstrap.
 - [Installation](docs/installation.md) — all harnesses, requirements, and troubleshooting.
 - [Release checklist](RELEASE.md) — preflight, distribution channels, and rollback.
 - [docs/workflow.md](docs/workflow.md) — workflow selection, context efficiency, and live observability.
