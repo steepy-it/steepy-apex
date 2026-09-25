@@ -2678,6 +2678,33 @@ test('an index removed from an operational hub stays an error even beside a surv
   }
 });
 
+test('an index removed from a hub activated by a completed transfer stays an error; the completed run grants nothing', () => {
+  for (const [label, descriptor] of [
+    ['init complete', initDescriptor('complete')],
+    ['run complete', { ...initDescriptor('complete'), phase: 'complete', status: 'complete' }],
+  ]) {
+    const hub = portableHub();
+    try {
+      seedInception(hub, descriptor);
+      assert.equal(errorMessages(collectViolations(hub)), '', `${label}: green while the index exists`);
+      unlinkSync(join(hub, '.apex', '_INDEX.md'));
+      const { result, accesses } = recordFsAccess(() => classifyHub(hub));
+      assert.equal(result.state, 'invalid', label);
+      const messages = errorMessages(result.violations);
+      assert.match(messages, /missing _INDEX\.md/u, label);
+      assert.match(messages, /inception: init is complete; an activated hub requires \.apex\/_INDEX\.md and never returns to pre-hub/u, label);
+      assert.doesNotMatch(messages, new RegExp(LOCAL_SENTINEL, 'u'), label);
+      assertNoLocalBodyAccess(hub, accesses, { descriptor: true });
+      const loud = captureMain([hub]);
+      assert.equal(loud.code, 1, label);
+      assert.doesNotMatch(loud.out, /pre-hub|coherent/u, label);
+      assert.equal(captureMain(['--quiet', hub]).code, 1, `${label}: the Stop hook path blocks too`);
+    } finally {
+      rmSync(hub, { recursive: true, force: true });
+    }
+  }
+});
+
 test('an operational hub applies every check and never depends on local inception or work state', {
   skip: process.platform === 'win32',
 }, () => {
@@ -2694,6 +2721,8 @@ test('an operational hub applies every check and never depends on local inceptio
         `${JSON.stringify({ ...createInitialInceptionState(RUN), schemaVersion: 9 }, null, 2)}\n`);
     }],
     ['init in progress', (hub) => seedInception(hub, initDescriptor('in-progress'))],
+    ['init complete', (hub) => seedInception(hub, initDescriptor('complete'))],
+    ['run complete', (hub) => seedInception(hub, { ...initDescriptor('complete'), phase: 'complete', status: 'complete' })],
     ['symlinked areas', (hub) => {
       const external = mkdtempSync(join(tmpdir(), 'steepy-prehub-external-'));
       putPortable(external, 'inception/doc.md', `# ${LOCAL_SENTINEL}\n[Broken](missing.md)\n`);
