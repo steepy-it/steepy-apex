@@ -169,9 +169,41 @@ const DECISIONS = [
     content: '- Run `npm test` before every commit; it covers the representative path.' },
   { id: 'D6-errors', outcome: 'promote', destination: '.apex/conventions.md',
     content: '- Errors cross the boundary as one error object; a chosen rule, not yet observed in code.' },
+  // Every section init creates from a template gets a promoted text: the
+  // surface standard's Scope and Anti-patterns beside D2's Conventions, and
+  // each project-document section, including an explicit undecided one.
+  { id: 'D8-app-scope', outcome: 'promote', destination: '.apex/standards/app.md',
+    content: '- Owns: the synthetic booking handlers in `src/app.js`.\n- Does NOT own: the test harness in `test/app.test.js`.\n- Exemplar: `src/app.js`' },
+  { id: 'D9-app-traps', outcome: 'promote', destination: '.apex/standards/app.md',
+    content: '- Never add a second booking entry point; the representative path crosses one module.' },
+  { id: 'D10-reasons', outcome: 'promote', destination: '.apex/project-architecture.md',
+    content: '- Each cross-cutting decision above carries its reason inline.' },
+  { id: 'D11-versions', outcome: 'promote', destination: '.apex/project-architecture.md',
+    content: '- Take a new version only through a reviewed change; the manifest holds the resolved version.' },
+  { id: 'D12-intent', outcome: 'promote', destination: '.apex/project-context.md',
+    content: '- A fictional booking app that exists only for the hermetic inception matrix.' },
+  { id: 'D13-prototype', outcome: 'promote', destination: '.apex/project-context.md',
+    content: '- The synthetic prototype books one Slot; its waiting-list screen is a mock.' },
+  { id: 'D14-boundaries', outcome: 'promote', destination: '.apex/project-context.md',
+    content: '- The bootstrap books one Slot through `src/app.js`; deploy is left out.' },
+  { id: 'D15-open-questions', outcome: 'promote', destination: '.apex/project-context.md',
+    content: '- Not decided at inception; refine with `discovery`.' },
   { id: 'D7-queue', outcome: 'exclude',
     reason: `A rejected alternative (${EXCLUDED_SENTINEL}); its reasons stay in the local project record.` },
 ];
+
+// The template section each SYNTHETIC promoted text fills; a text without an
+// entry goes to its document's default section.
+const SECTIONS = {
+  'D8-app-scope': '## Scope',
+  'D9-app-traps': '## Anti-patterns',
+  'D10-reasons': '## Reasons',
+  'D11-versions': '## Version policy',
+  'D12-intent': '## Intent',
+  'D13-prototype': '## Design, prototype, and behaviors',
+  'D14-boundaries': '## Bootstrap boundaries',
+  'D15-open-questions': '## Open questions',
+};
 
 const PROJECT_TEXT = [
   '# Project — Inception Record',
@@ -403,16 +435,50 @@ function hubDocuments(source, { withProjectDocs = true } = {}) {
   ];
 }
 
+// A template placeholder is the parenthesized guidance a template leaves under
+// a heading, e.g. `- Owns: (what this surface is responsible for)`. A section
+// whose first body line is one holds only guidance: its whole body is the
+// placeholder block init replaces.
+const PLACEHOLDER_LINE = /^(?:- (?:[A-Za-z ]+: )?)?`?\(/u;
+function placeholderBlocks(text) {
+  const lines = text.split('\n');
+  const blocks = new Map();
+  lines.forEach((line, index) => {
+    if (!line.startsWith('## ')) return;
+    const next = lines.findIndex((candidate, at) => at > index && candidate.startsWith('## '));
+    const body = lines.slice(index + 1, next === -1 ? lines.length : next);
+    const first = body.findIndex((candidate) => candidate.trim() !== '');
+    if (first === -1 || !PLACEHOLDER_LINE.test(body[first])) return;
+    const last = body.findLastIndex((candidate) => candidate.trim() !== '');
+    blocks.set(line, body.slice(first, last + 1));
+  });
+  return blocks;
+}
+
 function writeHubDocument(repo, document, decisions) {
-  const contents = decisions.filter(({ outcome, destination }) => outcome === 'promote' && destination === document.path)
-    .map(({ content }) => `${content}\n`);
+  const promoted = decisions.filter(({ outcome, destination }) => outcome === 'promote' && destination === document.path);
+  const contents = promoted.map(({ content }) => `${content}\n`);
   const target = join(repo, document.path);
   if (!existsSync(target)) {
+    // A document this transfer creates: each promoted text replaces the
+    // placeholder block of its section; a section without one gains the text
+    // right after its heading, and a document without sections at its end.
     let text = document.text;
-    if (contents.length > 0) {
-      const at = document.section ? text.indexOf(`${document.section}\n`) : -1;
-      const insert = at === -1 ? text.length : at + document.section.length + 1;
-      text = `${text.slice(0, insert)}${contents.join('')}${text.slice(insert)}`;
+    const bySection = new Map();
+    for (const { id, content } of promoted) {
+      const section = SECTIONS[id] ?? document.section ?? null;
+      bySection.set(section, [...(bySection.get(section) ?? []), `${content}\n`]);
+    }
+    const placeholders = placeholderBlocks(text);
+    for (const [section, texts] of bySection) {
+      const block = placeholders.get(section);
+      if (block) {
+        text = text.replace(block.join('\n'), () => texts.join('').trimEnd());
+        continue;
+      }
+      const at = section ? text.indexOf(`${section}\n`) : -1;
+      const insert = at === -1 ? text.length : at + section.length + 1;
+      text = `${text.slice(0, insert)}${texts.join('')}${text.slice(insert)}`;
     }
     put(repo, document.path, text);
     if (document.path === '.apex/work/.gitignore') {
@@ -735,6 +801,19 @@ test('vertical: start, ignored area, pre-hub, approval, transfer, planner, hub, 
   for (const decision of DECISIONS.filter(({ outcome }) => outcome === 'promote')) {
     assert.ok(stable[decision.destination]?.includes(decision.content), `${decision.id} is in the stable copy`);
   }
+  // Every document the transfer created from a template is filled: the
+  // promotion table covers each section, so no placeholder line survives.
+  const filled = [];
+  for (const document of hubDocuments(source)) {
+    const guidance = [...placeholderBlocks(document.text).values()].flat();
+    if (guidance.length === 0) continue;
+    filled.push(document.path);
+    const lines = stable[document.path].split('\n');
+    for (const line of guidance) {
+      assert.ok(!lines.includes(line), `${document.path} keeps no template placeholder line: ${line}`);
+    }
+  }
+  assert.deepEqual(filled, ['.apex/standards/app.md', '.apex/project-context.md', '.apex/project-architecture.md']);
   const futureFlows = stable['.apex/project-context.md'].split('## Future flows\n')[1].split('\n## ')[0];
   assert.ok(futureFlows.includes(DECISIONS[3].content), 'the deferred flow is future context, not a component');
   for (const [file, text] of Object.entries(stable)) {
@@ -930,6 +1009,9 @@ test('transfer inputs: a missing, foreign, extraneous, or changed transfer input
     ['confirmed inputs outside Project model v1', edit(CONFIRMED, json({ ...record(), surfaces: [] })),
       /not a valid Project model v1 projection/u],
     ['promotion missing', (sandbox) => unlinkSync(join(sandbox.repo, PROMOTION)), /missing inception file/u],
+    ['promotion without the confirmed surface standard', edit(PROMOTION, json({ 'inception-promotion': 'steepy-apex/v1', 'run-id': RUN,
+      decisions: DECISIONS.filter(({ destination }) => destination !== '.apex/standards/app.md') })),
+    /promotion has no promote decision for '\.apex\/standards\/app\.md', the standard of confirmed surface 'app'/u],
     ['an unapproved extra project document', (sandbox) => {
       put(sandbox.repo, runFile('extra.md'), '# An unapproved addition\n');
       put(sandbox.repo, HANDOFF, json(handoffValue({ required: { ...handoffValue().required, project: [PROJECT, runFile('extra.md')] } })));

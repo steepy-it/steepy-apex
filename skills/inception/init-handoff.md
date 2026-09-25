@@ -56,6 +56,19 @@ Destinations are stable hub documents: surface standards, `conventions.md`, `glo
 flows go to `project-context.md` → "Future flows" as context, never as components, specs, or a
 started backlog. A destination is never a checkpoint path or a local area.
 
+Cover every section `init` creates from a template:
+
+- every confirmed surface → `promote` decisions for `.apex/standards/<name>.md` that cover its Scope
+  (owns, does not own, exemplar), Conventions, and Anti-patterns. Take them from the approved project
+  and the verified code.
+- `project-architecture.md` and `project-context.md`, once any decision goes to them → a `promote`
+  decision for each of their sections, **Version policy** included.
+- a section with no approved content → promote one short explicit statement, for example "Not
+  decided at inception; refine with `discovery`." Never leave the template text.
+
+`verify` and `prepare` refuse a promotion table without a `promote` decision for some confirmed
+surface's standard. They check only that the decision exists; the text is your judgement.
+
 ## Close the run
 
 When `init` reports the transfer complete (`inspect` → `init-complete`), set `phase: complete` and

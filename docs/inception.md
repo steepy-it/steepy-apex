@@ -84,8 +84,10 @@ the actual code, asks only for data that's missing, a new decision, or a real co
 re-asks about something you already approved. Every significant decision from the run either lands
 in a stable hub document with its reason, or stays out with a recorded reason — nothing you didn't
 build appears in the hub as an existing component, and no deferred flow starts an implicit backlog.
-The finished hub works from your versioned files alone, without the run's local, gitignored
-records.
+Each surface gets a filled standard — its scope, conventions, and traps — and every project document
+`init` creates is filled section by section: a section nothing was decided for says so, instead of
+keeping template text. The finished hub works from your versioned files alone, without the run's
+local, gitignored records.
 
 ## What this is not
 

@@ -26,6 +26,7 @@ import {
   validateCodeCheckpoint,
   validateConfirmedInputs,
   validateInceptionHandoff,
+  validatePromotionCoverage,
   validatePromotionTable,
 } from '../scripts/inception-handoff.mjs';
 
@@ -232,6 +233,27 @@ test('inception: protocol.md record examples are accepted by the real helpers an
   for (const decision of promotion.decisions.filter(({ outcome }) => outcome === 'promote')) {
     assert.ok(!inventory.has(decision.destination.toLowerCase()), `${decision.id} must not write a checkpoint path`);
   }
+  assert.deepEqual(validatePromotionCoverage(confirmed, promotion),
+    confirmed.surfaces.map(({ name }) => `.apex/standards/${name}.md`).sort(),
+    'the example promotes a standard for every example surface');
+  assert.ok(promotion.decisions.some(({ content }) => content?.includes('Not decided at inception; refine with `discovery`.')),
+    'the example shows the explicit statement for a section with no approved content');
+});
+
+test('inception: the promotion table fills every surface standard and every section init creates from a template', () => {
+  const table = flat(section(read('protocol.md'), '### Promotion table', '### Init receipt'));
+  assert.match(table, /Every confirmed surface needs at least one `promote` row whose destination is its standard, `\.apex\/standards\/<name>\.md`; `verify` and `prepare` refuse the table otherwise/i);
+  assert.match(table, /Cover the standard's Scope, Conventions, and Anti-patterns, and every section of a project document `init` creates from a template/i);
+  const boundary = tableRows(section(read('protocol.md'), '## Helper checks and your judgement'));
+  assert.ok(boundary.some(([helper, you]) => /promoted standard for every confirmed surface/i.test(helper) && /what each standard says/i.test(you)),
+    'the helper checks only that each standard is promoted; its text stays your judgement');
+
+  const matrix = flat(section(read('init-handoff.md'), '## Promotion matrix', '## Close the run'));
+  assert.match(matrix, /Cover every section `init` creates from a template/i);
+  assert.match(matrix, /every confirmed surface → `promote` decisions for `\.apex\/standards\/<name>\.md` that cover its Scope \(owns, does not own, exemplar\), Conventions, and Anti-patterns\. Take them from the approved project and the verified code/i);
+  assert.match(matrix, /`project-architecture\.md` and `project-context\.md`[^→]*→ a `promote` decision for each of their sections, \*\*Version policy\*\* included/i);
+  assert.match(matrix, /a section with no approved content → promote one short explicit statement, for example "Not decided at inception; refine with `discovery`\." Never leave the template text/i);
+  assert.match(matrix, /`verify` and `prepare` refuse a promotion table without a `promote` decision for some confirmed surface's standard\. They check only that the decision exists; the text is your judgement/i);
 });
 
 test('inception: protocol.md documents the local area, binding rules, and the helper-versus-judgement boundary', () => {

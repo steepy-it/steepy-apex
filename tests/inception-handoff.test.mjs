@@ -33,6 +33,7 @@ import {
   validateConfirmedInputs,
   validateInceptionHandoff,
   validateInitReceipt,
+  validatePromotionCoverage,
   validatePromotionTable,
   verifyInceptionHandoff,
 } from '../scripts/inception-handoff.mjs';
@@ -136,6 +137,7 @@ function promotionTable(decisions) {
     'run-id': RUN,
     decisions: decisions ?? [
       { id: 'arch-001', outcome: 'promote', destination: '.apex/standards/web.md', content: '- Render on the server.\n' },
+      { id: 'api-001', outcome: 'promote', destination: '.apex/standards/api.md', content: '- Validate every request body.\n' },
       { id: 'glossary-001', outcome: 'promote', destination: '.apex/glossary.md', content: '- **Tenant:** workspace.\n' },
       { id: 'deploy-001', outcome: 'exclude', reason: 'The deploy target is local research only.' },
     ],
@@ -382,6 +384,35 @@ test('the promotion table gives every decision an ID and either a stable destina
   ]) {
     assertCode(() => validatePromotionTable(value, { runId: RUN }), 'INCEPTION_HANDOFF_INVALID', pattern);
   }
+});
+
+test('the promotion covers every confirmed surface standard: present is accepted, a missing one is refused by a closed error', () => {
+  const record = validateConfirmedInputs(confirmedInputs());
+  const table = (decisions) => validatePromotionTable(promotionTable(decisions), { runId: RUN });
+  const covered = validatePromotionCoverage(record, table());
+  assert.deepEqual(covered, ['.apex/standards/api.md', '.apex/standards/web.md']);
+  assert.ok(Object.isFrozen(covered));
+  const withoutApi = promotionTable().decisions.filter(({ id }) => id !== 'api-001');
+  assert.deepEqual(validatePromotionCoverage(record, table([...withoutApi,
+    { id: 'api-002', outcome: 'promote', destination: '.apex/standards/api.md', content: '- One rule.\n' },
+    { id: 'api-003', outcome: 'promote', destination: '.apex/standards/api.md', content: '- Another rule.\n' },
+    { id: 'extra-001', outcome: 'promote', destination: '.apex/standards/other.md', content: '- Not a confirmed surface.\n' },
+  ])), covered, 'completeness only: repeated and extra standards are accepted');
+
+  const secret = /Render on the server|Tenant|arch-001|glossary-001|web\.md/;
+  for (const [label, decisions] of [
+    ['no decision for the standard', withoutApi],
+    ['an excluded standard decision', [...withoutApi, { id: 'api-001', outcome: 'exclude', reason: 'Deferred.' }]],
+    ['a case alias of the standard', [...withoutApi, { id: 'api-001', outcome: 'promote', destination: '.apex/standards/API.md', content: 'x' }]],
+    ['a modular leaf instead of the standard', [...withoutApi, { id: 'api-001', outcome: 'promote', destination: '.apex/standards/api/core.md', content: 'x' }]],
+    ['a namesake outside the standards', [...withoutApi, { id: 'api-001', outcome: 'promote', destination: 'docs/standards/api.md', content: 'x' }]],
+  ]) {
+    assertCode(() => validatePromotionCoverage(record, table(decisions)), 'INCEPTION_HANDOFF_INCOMPLETE',
+      /no promote decision for '\.apex\/standards\/api\.md', the standard of confirmed surface 'api'/, secret);
+  }
+  assertCode(() => validatePromotionCoverage(confirmedInputs({
+    surfaces: [{ name: 'Secret Name', path: 'apps/web', agent: 'web-agent', testCmd: 'npm test' }],
+  }), table()), 'INCEPTION_HANDOFF_INVALID', /surfaces/, /Secret Name/);
 });
 
 test('the code checkpoint observes exact bytes of an explicit inventory, records absence, and reads nothing else', () => withTemp('observe', (root) => {
@@ -643,6 +674,12 @@ test('the handoff is refused when its inputs, run, approval, or checkpoint do no
       'INCEPTION_HANDOFF_INVALID', /run/],
     ['invalid confirmed inputs', (root) => put(root, run('confirmed-inputs.json'), json(confirmedInputs({ surfaces: [] }))),
       'INCEPTION_HANDOFF_INVALID', /surfaces/],
+    ['a confirmed surface without a promoted standard', (root) => put(root, run('promotion.json'), json(promotionTable(
+      promotionTable().decisions.filter(({ id }) => id !== 'api-001'),
+    ))), 'INCEPTION_HANDOFF_INCOMPLETE', /no promote decision for '\.apex\/standards\/api\.md', the standard of confirmed surface 'api'/],
+    ['a confirmed surface whose standard is only excluded', (root) => put(root, run('promotion.json'), json(promotionTable(
+      promotionTable().decisions.map((decision) => (decision.id === 'api-001' ? { id: 'api-001', outcome: 'exclude', reason: 'Later.' } : decision)),
+    ))), 'INCEPTION_HANDOFF_INCOMPLETE', /'\.apex\/standards\/api\.md'/],
   ];
   for (const [label, arrange, code, pattern] of cases) {
     withTemp('verify-refused', (root) => {
@@ -667,6 +704,7 @@ test('the handoff is refused when its inputs, run, approval, or checkpoint do no
 const RECEIPT = run('init-receipt.json');
 const GLOSSARY = '# Glossary\n\nHuman-written glossary text.\n';
 const WEB_TEXT = '- Render on the server.\n';
+const API_TEXT = '- Validate every request body.\n';
 const TERM_TEXT = '- **Tenant:** workspace.\n';
 const prepare = (root, options = {}) => prepareInitReceipt(root, { handoff: HANDOFF, receipt: RECEIPT, env: gitEnv(root), ...options });
 const finalize = (root, options = {}) => finalizeInitReceipt(root, { handoff: HANDOFF, receipt: RECEIPT, gate: 'pass', env: gitEnv(root), ...options });
@@ -676,6 +714,7 @@ const digestOf = (root, path) => sha(readFileSync(join(root, path)));
 // promoted texts without overwriting human text.
 function promote(root) {
   put(root, '.apex/standards/web.md', `# web — Technical Standard\n\n${WEB_TEXT}`);
+  put(root, '.apex/standards/api.md', `# api — Technical Standard\n\n${API_TEXT}`);
   put(root, '.apex/glossary.md', `${GLOSSARY}${TERM_TEXT}`);
 }
 
@@ -768,11 +807,13 @@ test('prepare records init in-progress before any hub write and a create-only re
     inputs,
     decisions: [
       { id: 'arch-001', outcome: 'pending', destination: '.apex/standards/web.md', sha256: sha(WEB_TEXT) },
+      { id: 'api-001', outcome: 'pending', destination: '.apex/standards/api.md', sha256: sha(API_TEXT) },
       { id: 'glossary-001', outcome: 'pending', destination: '.apex/glossary.md', sha256: sha(TERM_TEXT) },
       { id: 'deploy-001', outcome: 'excluded', reason: 'The deploy target is local research only.' },
     ],
     writes: [
       { path: '.apex/glossary.md', previous: sha(GLOSSARY), observed: null },
+      { path: '.apex/standards/api.md', previous: null, observed: null },
       { path: '.apex/standards/web.md', previous: null, observed: null },
     ],
     gate: 'not-run',
@@ -784,6 +825,7 @@ test('prepare records init in-progress before any hub write and a create-only re
     changed: { state: true, receipt: true },
     destinations: [
       { path: '.apex/glossary.md', previous: sha(GLOSSARY), observed: sha(GLOSSARY), state: 'pending' },
+      { path: '.apex/standards/api.md', previous: null, observed: null, state: 'pending' },
       { path: '.apex/standards/web.md', previous: null, observed: null, state: 'pending' },
     ],
   });
@@ -800,6 +842,7 @@ test('prepare records init in-progress before any hub write and a create-only re
   assert.deepEqual(resumed.changed, { state: false, receipt: false });
   assert.deepEqual(resumed.destinations.map(({ path, state }) => [path, state]), [
     ['.apex/glossary.md', 'changed'],
+    ['.apex/standards/api.md', 'pending'],
     ['.apex/standards/web.md', 'realized'],
   ]);
 }));
@@ -894,10 +937,11 @@ test('finalize requires a passing gate, realized promotions, and unchanged code,
   assert.equal(receipt.status, 'complete');
   assert.equal(receipt.gate, 'pass');
   assert.deepEqual(receipt.decisions.map(({ id, outcome }) => [id, outcome]), [
-    ['arch-001', 'promoted'], ['glossary-001', 'promoted'], ['deploy-001', 'excluded'],
+    ['arch-001', 'promoted'], ['api-001', 'promoted'], ['glossary-001', 'promoted'], ['deploy-001', 'excluded'],
   ]);
   assert.deepEqual(receipt.writes, [
     { path: '.apex/glossary.md', previous: sha(GLOSSARY), observed: digestOf(root, '.apex/glossary.md') },
+    { path: '.apex/standards/api.md', previous: null, observed: digestOf(root, '.apex/standards/api.md') },
     { path: '.apex/standards/web.md', previous: null, observed: digestOf(root, '.apex/standards/web.md') },
   ]);
   assert.deepEqual(done.changed, { state: true, receipt: true });
@@ -963,7 +1007,7 @@ test('prepare and finalize refuse divergent code, foreign receipts, changed inpu
   withTemp('prepare-inputs-changed', (root) => {
     seedRun(root);
     prepare(root);
-    put(root, run('promotion.json'), json(promotionTable(promotionTable().decisions.slice(0, 2))));
+    put(root, run('promotion.json'), json(promotionTable(promotionTable().decisions.slice(0, 3))));
     const kept = snapshot(root, [STATE, RECEIPT]);
     assertCode(() => prepare(root), 'INCEPTION_HANDOFF_RECEIPT', /other transfer inputs/);
     promote(root);
@@ -995,6 +1039,24 @@ test('prepare and finalize refuse divergent code, foreign receipts, changed inpu
     seedRun(root);
     put(root, RECEIPT, '{}\n');
     assertCode(() => finalize(root), 'INCEPTION_HANDOFF_RECEIPT', /prepare/);
+  });
+
+  withTemp('prepare-incomplete', (root) => {
+    seedRun(root);
+    put(root, run('promotion.json'), json(promotionTable(promotionTable().decisions.filter(({ id }) => id !== 'api-001'))));
+    const kept = snapshot(root, [STATE, RECEIPT, '.apex/standards/api.md', '.apex/standards/web.md']);
+    assertCode(() => prepare(root), 'INCEPTION_HANDOFF_INCOMPLETE', /confirmed surface 'api'/);
+    assert.deepEqual(snapshot(root, [STATE, RECEIPT, '.apex/standards/api.md', '.apex/standards/web.md']), kept,
+      'a promotion without every surface standard never starts init');
+    const refused = runCli(root, ['prepare', '--root', root, '--handoff', HANDOFF, '--receipt', RECEIPT]);
+    assert.equal(refused.status, 1);
+    assert.equal(refused.stdout, '');
+    assert.match(refused.stderr, /^inception-handoff: inception handoff: promotion has no promote decision for '\.apex\/standards\/api\.md', the standard of confirmed surface 'api'/);
+    assert.doesNotMatch(refused.stderr, /Render on the server|Tenant|arch-001/, 'the refusal names only the missing standard');
+    const verified = runCli(root, ['verify', '--root', root, '--handoff', HANDOFF]);
+    assert.equal(verified.status, 1);
+    assert.equal(verified.stdout, '');
+    assert.deepEqual(snapshot(root, [STATE, RECEIPT, '.apex/standards/api.md', '.apex/standards/web.md']), kept);
   });
 });
 
@@ -1052,10 +1114,11 @@ test('CLI produces the checkpoint, verification report, projection, and receipts
   assert.deepEqual(report.inputs, verify(root).inputs);
   assert.deepEqual(report.decisions, [
     { id: 'arch-001', outcome: 'promote', destination: '.apex/standards/web.md' },
+    { id: 'api-001', outcome: 'promote', destination: '.apex/standards/api.md' },
     { id: 'glossary-001', outcome: 'promote', destination: '.apex/glossary.md' },
     { id: 'deploy-001', outcome: 'exclude' },
   ]);
-  assert.doesNotMatch(verified.stdout, /Render on the server|Tenant/, 'the report carries no promoted text or record values');
+  assert.doesNotMatch(verified.stdout, /Render on the server|Validate every request body|Tenant/, 'the report carries no promoted text or record values');
 
   const projected = runCli(root, ['project', '--root', root, '--handoff', HANDOFF, '--resolution', 'agents-md=keep']);
   assert.equal(projected.status, 0, projected.stderr);
