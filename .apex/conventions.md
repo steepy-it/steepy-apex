@@ -59,6 +59,30 @@ only the current conductor ledger schema and identify unsupported records as inv
   insufficient facts need human clarification, not unauthorized upstream reads. Content-contract
   tests document these model-based decisions; they do not prove deterministic manual enforcement.
 
+## Inception (pre-hub)
+
+- `inception` takes a new application from its starting materials to an approved, verified bootstrap
+  before any hub exists, then hands it to `init`. It invents no specialist, standard, or bootstrap
+  before `init`, and adds no chain role, gear, handoff grammar, or controller.
+- Its local area `.apex/inception/` gets its own `*` ignore guard before any document or state, and
+  stays outside the DAG, `validate-hub`, and every ordinary stable read. Reads there use only the
+  descriptor and exact paths named for the current step; nothing is browsed or picked by recency.
+- The human approves the whole project once, before bootstrap; the approval binds the exact project
+  bytes. The agent then works autonomously inside that scope. A substantial change (database,
+  boundaries, flows, design, deploy, a foundational technology) needs a targeted decision and a new
+  approval. Foundational choices cite official sources, explicit versions, and a verification date;
+  no preset stack.
+- Helpers verify formats, paths, digests, and receipts; the skill owns dialogue, architecture
+  judgement, evidence interpretation, and promotion decisions. A digest makes a change detectable; it
+  does not authenticate a person.
+- `init` takes the transfer through its own inception entry: it reuses the confirmed record, asks
+  only for missing data, new decisions, or real conflicts, keeps the planner and Project model v1
+  unchanged, and records init complete only after a per-decision receipt, a passing gate, and a hub
+  that validates without `.apex/inception/` or `.apex/work/`. Unbuilt intentions never appear as
+  existing components; future flows stay context, not backlog.
+- `discovery` reads only stable knowledge and ordinary source, and never re-approves decisions a
+  transfer already wrote.
+
 ## Decision model (conditional ceremony)
 
 Every task entering a gear-aware workflow is classified by that workflow entry on two axes → a ceremony **gear**.
@@ -306,7 +330,7 @@ would add a read, not save tokens — do not DRY them.
 ## Multi-harness distribution
 
 Steepy Apex ships as one **shared canonical core + native adapters** for Claude Code,
-Codex, OpenCode, Pi, and DeepSeek Harness: the nine skills in `skills/` are the single source of behavior,
+Codex, OpenCode, Pi, and DeepSeek Harness: the ten skills in `skills/` are the single source of behavior,
 served verbatim to every harness; per-harness manifests and thin runtime adapters
 (`adapters/**`) do the wiring. Core-portability rules:
 

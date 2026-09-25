@@ -96,7 +96,7 @@ test('npm tarball includes the dsh cordis bundle patch manifest', () => {
   assertPacked(['cordis.patch.yml']);
 });
 
-test('npm tarball includes all nine SKILL.md files', () => {
+test('npm tarball includes all ten SKILL.md files', () => {
   const skillNames = [
     'init',
     'check',
@@ -107,8 +107,19 @@ test('npm tarball includes all nine SKILL.md files', () => {
     'implement',
     'review',
     'loop-engineer',
+    'inception',
   ];
-  assertPacked(skillNames.map((name) => `skills/${name}/SKILL.md`), 'nine SKILL.md files');
+  assertPacked(skillNames.map((name) => `skills/${name}/SKILL.md`), 'ten SKILL.md files');
+});
+
+test('npm tarball includes every inception support file', () => {
+  assertPacked([
+    'skills/inception/protocol.md',
+    'skills/inception/reconnaissance.md',
+    'skills/inception/architecture.md',
+    'skills/inception/bootstrap.md',
+    'skills/inception/init-handoff.md',
+  ], 'inception support files');
 });
 
 test('npm tarball includes the six subagent prompt templates', () => {

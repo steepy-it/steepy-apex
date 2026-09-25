@@ -28,7 +28,9 @@ Subagent (explorer):
     These paths are supplied by discovery; do not infer a standard filename or another work report.
     Read the surface's code under [SURFACE_PATHS]. Also read any docs within or near that path —
     README files, a `docs/` directory, ADRs, inline comments that explain a design decision. Do not
-    crawl the rest of the repository beyond what is needed to confirm a finding.
+    crawl the rest of the repository beyond what is needed to confirm a finding. Never enumerate,
+    search, or read `.apex/inception/**` or `.apex/work/**`: they are local areas, not stable
+    knowledge. [REPORT_FILE] is the only path there you touch, and you only write it.
 
     ## What to Return
 

@@ -73,7 +73,7 @@ function dogfoodTempDirectories() {
 function stableApexMarkdownPaths(directory = join(repoRoot, '.apex')) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const absolute = join(directory, entry.name);
-    if (entry.isDirectory()) return entry.name === 'work' ? [] : stableApexMarkdownPaths(absolute);
+    if (entry.isDirectory()) return ['work', 'inception'].includes(entry.name) ? [] : stableApexMarkdownPaths(absolute);
     return entry.isFile() && entry.name.endsWith('.md') ? [absolute] : [];
   });
 }
@@ -534,13 +534,72 @@ test('glossary.md Gear entry\'s scale reaches gear 4', () => {
   assert.match(entry, /gear 4/i, 'Gear entry must describe gear 4');
 });
 
-test('glossary.md Chain skill / Standalone skill entry documents the chain as five, with loop-engineer for gear 4', () => {
+test('glossary.md skill-family entry documents the chain as five, with loop-engineer for gear 4, among three families of ten skills', () => {
   const glossary = readFileSync(join(repoRoot, '.apex', 'glossary.md'), 'utf8');
-  const entry = glossaryEntry(glossary, 'Chain skill / Standalone skill');
-  assert.ok(entry, 'glossary.md must have a Chain skill / Standalone skill entry');
+  const entry = glossaryEntry(glossary, 'Chain skill / Standalone skill / Pre-hub skill');
+  assert.ok(entry, 'glossary.md must have a Chain skill / Standalone skill / Pre-hub skill entry');
   assert.match(entry, /five/i, 'entry must say the chain becomes five');
   assert.match(entry, /loop-engineer/, 'entry must mention loop-engineer');
   assert.match(entry, /gear 4/i, 'entry must relate loop-engineer to gear 4');
+  const flatEntry = entry.replace(/\s+/g, ' ');
+  assert.match(flatEntry, /three skill families of the ten canonical skills/i, 'entry must count three families and ten skills');
+  assert.match(flatEntry, /`init`, `new-surface`, `check`, `discovery`/, 'entry must list the standalone hub-aware skills');
+  assert.match(flatEntry, /pre-hub `inception` skill[^.]*needs no hub[^.]*no gear[^.]*`init`/i, 'entry must define the pre-hub family');
+});
+
+test('stable hub locks the pre-hub inception knowledge and keeps the local area out of stable docs', () => {
+  const read = (...parts) => readFileSync(join(repoRoot, ...parts), 'utf8');
+  const glossary = read('.apex', 'glossary.md');
+  const conventions = read('.apex', 'conventions.md');
+  const skills = read('.apex', 'standards', 'skills.md');
+
+  const entry = (term) => glossaryEntry(glossary, term)?.replace(/\s+/g, ' ') ?? null;
+  const run = entry('Inception run');
+  assert.ok(run, 'glossary.md must define Inception run');
+  assert.match(run, /pre-hub[^.]*`inception`[^.]*approved project[^.]*verified bootstrap[^.]*`init`/i);
+  assert.match(run, /`\.apex\/inception\/<run-id>\/`[^.]*ignored[^.]*outside the hub DAG/i);
+  const descriptor = entry('Inception descriptor');
+  assert.ok(descriptor, 'glossary.md must define Inception descriptor');
+  assert.match(descriptor, /`\.apex\/inception\/state\.json`[^.]*one canonical/i);
+  assert.match(descriptor, /never proves approval or a valid hub/i);
+  const handoff = entry('Inception handoff');
+  assert.ok(handoff, 'glossary.md must define Inception handoff');
+  assert.match(handoff, /`inception-handoff: steepy-apex\/v1`[\s\S]*`state`, `approval`, `project`, `verification`, `confirmed-inputs`, `promotion`/);
+  assert.match(handoff, /separate from the chain's `handoff: steepy-apex\/v1`/i);
+  const promotion = entry('Promotion table');
+  assert.ok(promotion, 'glossary.md must define Promotion table');
+  assert.match(promotion, /promote[^.]*stable destination[^.]*exact text[^.]*exclude[^.]*reason/i);
+  const receipt = entry('Init receipt');
+  assert.ok(receipt, 'glossary.md must define Init receipt');
+  assert.match(receipt, /input digests[\s\S]*one outcome per decision[\s\S]*gate/i);
+
+  const section = conventions.match(/## Inception \(pre-hub\)\n([\s\S]*?)(?=\n## |$)/)?.[1];
+  assert.ok(section, 'conventions.md must have an "## Inception (pre-hub)" section');
+  const flat = section.replace(/\s+/g, ' ');
+  assert.match(flat, /invents no specialist, standard, or bootstrap before `init`[^.]*no chain role, gear, handoff grammar, or controller/i);
+  assert.match(flat, /own `\*` ignore guard before any document or state[^.]*outside the DAG, `validate-hub`, and every ordinary stable read/i);
+  assert.match(flat, /descriptor and exact paths named for the current step[^.]*nothing is browsed or picked by recency/i);
+  assert.match(flat, /approves the whole project once, before bootstrap[^.]*exact project bytes/i);
+  assert.match(flat, /substantial change[^.]*targeted decision and a new approval/i);
+  assert.match(flat, /official sources, explicit versions, and a verification date; no preset stack/i);
+  assert.match(flat, /Helpers verify formats, paths, digests, and receipts; the skill owns dialogue, architecture judgement, evidence interpretation, and promotion decisions/i);
+  assert.match(flat, /reuses the confirmed record, asks only for missing data, new decisions, or real conflicts, keeps the planner and Project model v1 unchanged/i);
+  assert.match(flat, /per-decision receipt, a passing gate, and a hub that validates without `\.apex\/inception\/` or `\.apex\/work\/`/i);
+  assert.match(flat, /Unbuilt intentions never appear as existing components; future flows stay context, not backlog/i);
+  assert.match(flat, /`discovery` reads only stable knowledge and ordinary source[^.]*never re-approves/i);
+  assert.match(conventions, /the ten skills in `skills\/`/);
+
+  const flatSkills = skills.replace(/\s+/g, ' ');
+  assert.match(flatSkills, /ten canonical skills in three families/i);
+  assert.match(flatSkills, /the pre-hub `inception` skill with its co-located `protocol\.md`, `reconnaissance\.md`, `architecture\.md`, `bootstrap\.md`, and `init-handoff\.md`/);
+  assert.match(flatSkills, /`inception` loads one support file per phase[^.]*`protocol\.md` mirrors the helper formats and the helpers win/i);
+  assert.match(flatSkills, /no gear-0, checklist, Model Selection lock, manual-handoff block, or workflow header/i);
+  assert.match(flatSkills, /`init` checks for an inception transfer before its fresh\/repair fork/i);
+  assert.match(flatSkills, /`discovery` and its explorer never read `\.apex\/inception\/\*\*` or `\.apex\/work\/\*\*` as knowledge/i);
+
+  for (const path of stableApexMarkdownPaths()) {
+    assert.doesNotMatch(readFileSync(path, 'utf8'), /\]\([^)]*\.apex\/inception\//, `${path} must not link local inception artifacts`);
+  }
 });
 
 test('glossary.md defines Loop Engineer as the gear-4 mode and the human role', () => {
