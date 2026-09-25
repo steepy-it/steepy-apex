@@ -29,6 +29,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const fx = (n) => join(here, 'fixtures', n);
 const templates = join(here, '..', 'templates');
 const validator = join(here, '..', 'scripts', 'validate-hub.mjs');
+const stopHook = join(here, '..', 'scripts', 'stop-hook.mjs');
 
 function runValidator(hub, timeout = 2_000, cwd) {
   return spawnSync(process.execPath, [validator, hub], { encoding: 'utf8', timeout, cwd });
@@ -87,6 +88,40 @@ function codeAnchorStandardHub(suffix, standardText, opts = {}) {
   return hub;
 }
 
+// The canonical bootstrap every release from v1.0.0 through v1.0.4 rendered for
+// `portable-demo`: the released template before its inception boundary section.
+// The current bootstrap in portableHub() is this body plus that section. A
+// second copy of these literal bytes lives in portable-workflow-composition
+// (planner/new-surface side), consciously duplicated so each suite stays hermetic.
+const V1_0_PORTABLE_DEMO_BOOTSTRAP_BODY = [
+  '---',
+  'name: portable-demo-bootstrap',
+  'description: Project entry point for portable-demo. Loads the root instructions and routes work through the governed hub.',
+  'user-invocable: true',
+  '---',
+  '<!-- steepy:generated:portable-demo-bootstrap:v1 -->',
+  '',
+  '# portable-demo bootstrap',
+  '',
+  'Use this skill before working on the project.',
+  '',
+  '## Procedure',
+  '',
+  '1. Read `AGENTS.md` in full for the project overview, development commands, and confirmed surfaces.',
+  '2. Read `.apex/_INDEX.md` in full for the routing table and semantic knowledge map.',
+  '3. Match the task to the owning surface and read only the minimum documents named by its routing row.',
+  '4. State the owning surface and specialist agent before changing files.',
+  '5. When a Steepy workflow is needed, invoke it by its semantic skill name as listed in `.apex/_INDEX.md`.',
+  '6. Run the owning surface\'s test command and the hub coherence gate before reporting completion.',
+  '',
+  '## Work-artifact boundary',
+  '',
+  'Do not ordinarily enumerate, search, or read under `.apex/work/**`.',
+  '',
+  'A workflow phase may consume only the exact work inputs named by an accepted handoff. A pathless workflow invocation may perform only bounded workflow-header recovery discovery. Exact paths or a broader work-area scope are permitted only when the user explicitly delimits them. This applies transitively to child agents: only the phase orchestrator interprets a handoff.',
+];
+const V1_0_PORTABLE_DEMO_BOOTSTRAP = [...V1_0_PORTABLE_DEMO_BOOTSTRAP_BODY, ''].join('\n');
+
 function putPortable(hub, path, content) {
   mkdirSync(dirname(join(hub, path)), { recursive: true });
   writeFileSync(join(hub, path), content);
@@ -131,31 +166,7 @@ function portableHub() {
     '',
   ].join('\n'));
   putPortable(hub, '.agents/skills/portable-demo-bootstrap/SKILL.md', [
-    '---',
-    'name: portable-demo-bootstrap',
-    'description: Project entry point for portable-demo. Loads the root instructions and routes work through the governed hub.',
-    'user-invocable: true',
-    '---',
-    '<!-- steepy:generated:portable-demo-bootstrap:v1 -->',
-    '',
-    '# portable-demo bootstrap',
-    '',
-    'Use this skill before working on the project.',
-    '',
-    '## Procedure',
-    '',
-    '1. Read `AGENTS.md` in full for the project overview, development commands, and confirmed surfaces.',
-    '2. Read `.apex/_INDEX.md` in full for the routing table and semantic knowledge map.',
-    '3. Match the task to the owning surface and read only the minimum documents named by its routing row.',
-    '4. State the owning surface and specialist agent before changing files.',
-    '5. When a Steepy workflow is needed, invoke it by its semantic skill name as listed in `.apex/_INDEX.md`.',
-    '6. Run the owning surface\'s test command and the hub coherence gate before reporting completion.',
-    '',
-    '## Work-artifact boundary',
-    '',
-    'Do not ordinarily enumerate, search, or read under `.apex/work/**`.',
-    '',
-    'A workflow phase may consume only the exact work inputs named by an accepted handoff. A pathless workflow invocation may perform only bounded workflow-header recovery discovery. Exact paths or a broader work-area scope are permitted only when the user explicitly delimits them. This applies transitively to child agents: only the phase orchestrator interprets a handoff.',
+    ...V1_0_PORTABLE_DEMO_BOOTSTRAP_BODY,
     '',
     '## Inception boundary',
     '',
@@ -298,6 +309,60 @@ test('portable v1: a complete canonical hub is valid', () => {
   const violations = collectViolations(portableHub());
   assert.deepEqual(violations.filter((item) => item.level === 'error'), [], JSON.stringify(violations));
   assert.equal(violations.some((item) => /portable-v1: unmarked/i.test(item.msg)), false);
+});
+
+test('portable v1: an untouched v1.0.0-v1.0.4 bootstrap only warns, while quiet mode and the Stop hook stay silent', () => {
+  const hub = portableHub();
+  try {
+    const path = '.agents/skills/portable-demo-bootstrap/SKILL.md';
+    putPortable(hub, path, V1_0_PORTABLE_DEMO_BOOTSTRAP);
+    const violations = collectViolations(hub);
+    assert.deepEqual(violations.filter(({ level }) => level === 'error'), [], JSON.stringify(violations));
+    assert.deepEqual(
+      violations.filter(({ msg }) => msg.startsWith('portable-v1:')),
+      [{
+        level: 'warn',
+        msg: `portable-v1: canonical bootstrap at ${path} is the v1.0.0-v1.0.4 rendering; init repair updates it to the current rendering`,
+      }],
+    );
+
+    const loud = captureMain([hub]);
+    assert.equal(loud.code, 0, loud.err);
+    assert.match(loud.out, /OK/u);
+    assert.match(loud.err, /warn: portable-v1: canonical bootstrap at .* is the v1\.0\.0-v1\.0\.4 rendering/u);
+    assert.deepEqual(captureMain([hub, '--quiet']), { code: 0, out: '', err: '' });
+
+    const cli = spawnSync(process.execPath, [validator, hub, '--quiet'], { encoding: 'utf8' });
+    assert.deepEqual([cli.status, cli.stdout, cli.stderr], [0, '', '']);
+    const hook = spawnSync(process.execPath, [stopHook, hub], { input: '{}', encoding: 'utf8' });
+    assert.deepEqual([hook.status, hook.stdout, hook.stderr], [0, '', '']);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('portable v1: any byte beyond the v1.0.0-v1.0.4 bootstrap rendering stays customized', () => {
+  const path = '.agents/skills/portable-demo-bootstrap/SKILL.md';
+  for (const [label, bytes] of [
+    ['one extra trailing byte', `${V1_0_PORTABLE_DEMO_BOOTSTRAP}\n`],
+    ['one extra inner byte', V1_0_PORTABLE_DEMO_BOOTSTRAP.replace('Use this skill', 'Use this  skill')],
+    ['CRLF line endings', V1_0_PORTABLE_DEMO_BOOTSTRAP.replaceAll('\n', '\r\n')],
+  ]) {
+    const hub = portableHub();
+    try {
+      putPortable(hub, path, bytes);
+      const portable = collectViolations(hub).filter(({ msg }) => msg.startsWith('portable-v1:'));
+      assert.deepEqual(portable, [{
+        level: 'error',
+        msg: `portable-v1: canonical bootstrap at ${path} is customized`,
+      }], label);
+      assert.equal(captureMain([hub, '--quiet']).code, 1, label);
+      const hook = spawnSync(process.execPath, [stopHook, hub], { input: '{}', encoding: 'utf8' });
+      assert.equal(JSON.parse(hook.stdout).decision, 'block', label);
+    } finally {
+      rmSync(hub, { recursive: true, force: true });
+    }
+  }
 });
 
 test('portable v1: an exact complete new-surface preparatory triad remains compatible before project binding', () => {

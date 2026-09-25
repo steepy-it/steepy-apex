@@ -834,6 +834,73 @@ test('plan validator rejects shape, ordering, placeholders, provenance, adapter 
   })), /triad/i);
 });
 
+test('plan validator admits a stale prior state only as a generated update of a registered prior rendering', () => {
+  const hubRoot = tempHub();
+  try {
+    const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+    const indexOf = (artifactId) => plan.operations.findIndex((operation) => operation.artifactId === artifactId);
+    const stale = { kind: 'replace-generated', priorState: 'stale', priorDigest: 'a'.repeat(64) };
+    const mutate = (artifactId, changes) => ({
+      ...plan,
+      operations: plan.operations.map((operation, index) => (
+        index === indexOf(artifactId) ? { ...operation, ...changes } : operation
+      )),
+    });
+
+    const accepted = mutate('project-bootstrap', stale);
+    assert.equal(validateProjectScaffoldPlan(accepted), accepted);
+    for (const artifactId of ['claude-bootstrap-stub', 'web-agent-claude', 'web-agent-codex', 'web-agent-opencode']) {
+      assert.throws(() => validateProjectScaffoldPlan(mutate(artifactId, stale)), /stale/i, artifactId);
+    }
+    for (const artifactId of ['project-instructions', 'claude-import']) {
+      assert.throws(
+        () => validateProjectScaffoldPlan(mutate(artifactId, { ...stale, kind: 'replace-managed' })),
+        /stale/i,
+        artifactId,
+      );
+    }
+    assert.throws(
+      () => validateProjectScaffoldPlan(mutate('project-bootstrap', { ...stale, kind: 'create' })),
+      /incoherent/i,
+    );
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
+  }
+});
+
+test('prior bootstrap renderings are digest-pinned: a changed prior template is refused, never matched', () => {
+  const hubRoot = tempHub();
+  const engine = tempHub();
+  try {
+    const normalized = normalizeProjectModel(model());
+    const path = '.agents/skills/portable-demo-bootstrap/SKILL.md';
+    const current = renderProjectArtifact('project-bootstrap', normalized);
+    const stale = current.split('\n## Inception boundary\n')[0];
+    assert.match(stale, /interprets a handoff\.\n$/u);
+    const tamperedTemplates = join(engine, 'templates');
+    cpSync(templatesDir, tamperedTemplates, { recursive: true });
+    const prior = join(tamperedTemplates, 'prior', 'v1.0', 'project-bootstrap-skill.md');
+    assert.equal(existsSync(prior), true, 'the engine ships the pinned prior bootstrap template');
+    writeFileSync(prior, `${readFileSync(prior, 'utf8')}\n`);
+
+    put(hubRoot, path, stale);
+    const before = snapshot(hubRoot);
+    assert.equal(
+      planProjectScaffold({ hubRoot, model: model(), templatesDir }).operations
+        .find((operation) => operation.path === path)?.priorState,
+      'stale',
+    );
+    assert.throws(
+      () => planProjectScaffold({ hubRoot, model: model(), templatesDir: tamperedTemplates }),
+      /prior canonical template .*pinned digest/i,
+    );
+    assert.deepEqual(snapshot(hubRoot), before);
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
+    rmSync(engine, { recursive: true, force: true });
+  }
+});
+
 test('Codex plan validation rejects every decoded top-level model key but permits model text inside instructions', () => {
   const plan = planProjectScaffold({ hubRoot: tempHub(), model: model(), templatesDir });
   const codexIndex = plan.operations.findIndex(({ artifactId }) => artifactId === 'web-agent-codex');

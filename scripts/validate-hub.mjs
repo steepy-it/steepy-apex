@@ -13,6 +13,7 @@ import {
   countActiveClaudeImports,
   normalizeProjectModel,
   parseProjectInstructions,
+  priorCanonicalRelease,
   renderProjectArtifact,
 } from './project-scaffold.mjs';
 
@@ -373,6 +374,7 @@ function reachableMarkdownFiles(reader, indexPath) {
 function validatePortableV1(hubRoot, indexText, reader) {
   const violations = [];
   const error = (msg) => violations.push({ level: 'error', msg: `portable-v1: ${msg}` });
+  const warn = (msg) => violations.push({ level: 'warn', msg: `portable-v1: ${msg}` });
   const rootCandidates = ['AGENTS.md', 'CLAUDE.md'];
   const generatedCandidates = ['.agents', '.claude', '.codex', '.opencode']
     .flatMap((provider) => walkProviderFiles(
@@ -529,12 +531,14 @@ function validatePortableV1(hubRoot, indexText, reader) {
         label: 'canonical bootstrap',
         artifactId: `${model.projectName}-bootstrap`,
         path: `.agents/skills/${model.projectName}-bootstrap/SKILL.md`,
+        plannerId: 'project-bootstrap',
         content: renderBootstrap(model),
       },
       {
         label: 'Claude bootstrap stub',
         artifactId: `${model.projectName}-bootstrap-stub`,
         path: `.claude/skills/${model.projectName}-bootstrap/SKILL.md`,
+        plannerId: 'claude-bootstrap-stub',
         content: renderBootstrapStub(model),
       },
     ];
@@ -549,7 +553,17 @@ function validatePortableV1(hubRoot, indexText, reader) {
         continue;
       }
       const reason = classifyGenerated(result.text, artifact.artifactId, artifact.content);
-      if (reason) error(`${artifact.label} at ${artifact.path} is ${reason}`);
+      // Exact bytes of a registered prior release rendering are stale generated
+      // output, not customization: warn only (`--quiet` and the Stop hook stay
+      // silent); init repair updates them. Any other drift stays an error.
+      const priorRelease = reason === 'customized'
+        ? priorCanonicalRelease(artifact.plannerId, result.text, normalizedProject(model))
+        : null;
+      if (priorRelease) {
+        warn(`${artifact.label} at ${artifact.path} is the ${priorRelease} rendering; init repair updates it to the current rendering`);
+      } else if (reason) {
+        error(`${artifact.label} at ${artifact.path} is ${reason}`);
+      }
     }
   } else {
     error('canonical bootstrap is missing or cannot be validated without canonical project instructions');

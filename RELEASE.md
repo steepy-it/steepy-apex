@@ -114,6 +114,16 @@ and `.codex-plugin/plugin.json` in three-way lockstep at completion, using one s
 A `## vX.Y.Z (YYYY-MM-DD)` section is added to `CHANGELOG.md`. Bump and
 changelog land as one commit on the branch before the PR opens.
 
+**Upgrade note for existing hubs (first release after 1.0.4).** Carry it into that release's
+`CHANGELOG.md` section. The canonical bootstrap gained an `## Inception boundary` section while
+its generated provenance stayed `v1`. An untouched v1.0.0-v1.0.4 bootstrap stays valid:
+`validate-hub` exits 0 with one warning (silent under `--quiet` and in the Stop hook), and
+`/steepy-apex:init` repair or `/steepy-apex:new-surface` rewrites it to the current rendering with
+no conflict question. A bootstrap changed by even one byte or line ending remains a `customized`
+conflict with `replace` or `abort`. Separately, `validate-hub` and the workflow controllers now
+refuse a stable hub, root-instruction, or provider file with more than one hard link
+(`stable-read: <path> is hard-linked`); replace such a link with an ordinary copy.
+
 **Interrupted bumps.** The writer provides recoverable per-file atomicity, not a
 multi-file atomic transaction. It holds the existing repository scaffold lease for cooperating
 writers, validates all initial versions, and durably records exact before/after bytes and modes
