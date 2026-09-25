@@ -871,6 +871,9 @@ function assertObservedResult(row, label) {
   assert.match(row['Observed on'], /^\d{4}-\d{2}-\d{2}$/u, `${label}: a ${row.Result} needs its observation date`);
   assert.match(row['Harness and version'], /\S+ \S*\d/u, `${label}: a ${row.Result} needs the harness and its version`);
   assert.match(row['Plugin revision'], /^`[0-9a-f]{7,40}`$/u, `${label}: a ${row.Result} needs the plugin revision`);
+  if (Object.hasOwn(row, 'Approver')) {
+    assert.match(row.Approver, /\b(?:model|human)\b/iu, `${label}: a ${row.Result} names its approver, a model or a human`);
+  }
 }
 
 test('docs/inception-acceptance.md is a reproducible native protocol whose results only native observation fills', () => {
@@ -906,6 +909,13 @@ test('docs/inception-acceptance.md is a reproducible native protocol whose resul
   assert.match(flat, /A blocked proof stays open/i, 'a blocked proof stays open');
   assert.match(flat, /`tests\/inception-integration\.test\.mjs`[^.]*not native evidence/i, 'the hermetic suite is not native evidence');
   assert.match(flat, /no paid service, publication, or real deploy/i);
+  assert.match(flat, /No proof runs an uncertain or a real deploy/i, 'no deploy is run or simulated');
+  assert.match(flat, /crash between a receipt write and its descriptor write[^.]*resumes by observing[^.]*never repeats/i,
+    'must name the real hermetic analog of an uncertain effect');
+  assert.match(flat, /uncertain[^.]*deploy[^.]*locked only as skill text[^.]*native observation/i,
+    'deploy-specific uncertain-outcome reconciliation needs native observation');
+  assert.doesNotMatch(flat, /(?:deploy|uncertain)[^.]*simulat[^.]*hermetic|hermetic[^.]*simulat[^.]*(?:deploy|uncertain)/i,
+    'must not claim a hermetic deploy or uncertain-outcome simulation');
   assert.match(flat, /`<redacted>`/u, 'must state the redaction form');
 
   assert.doesNotMatch(text, /\]\([^)]*\.apex\/(?:work|inception)\//u, 'must not link local artifacts');
