@@ -2,6 +2,12 @@
 
 How steepy-apex decides how much process a task deserves — and what each gear runs. This is the workflow reference linked from the [README](../README.md).
 
+Everything below assumes an active `.apex` hub. A brand-new application with no code yet runs
+[`inception`](inception.md) first: a pre-hub path with no gear of its own, that hands off to `init`
+once its bootstrap is approved and verified. Wherever this page says **spec**, it means the artifact
+`brainstorm` writes at `.apex/work/specs/**` — inception's own project write-up is a different
+document, and inception is not a sixth skill in this chain.
+
 ## Every task gets classified
 
 You have a task. The gear-aware workflow entry checks whether the hub already decides it:

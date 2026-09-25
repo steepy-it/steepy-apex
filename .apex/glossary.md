@@ -128,6 +128,19 @@
 - **Inception descriptor** — `.apex/inception/state.json`, the one canonical v1 record of the active
   run (`schemaVersion`, `runId`, `phase`, `status`, `approval`, `checkpoint`, `init`). It classifies
   pre-hub state and the transfer to `init`; it never proves approval or a valid hub.
+- **Approved project** — the project write-up an inception run's human approves once, before
+  bootstrap; the approval record binds the exact digests of that approved text. A later substantial
+  change (database, boundaries, flows, design, deploy, a foundational technology) needs a targeted
+  decision and a new approval at a new path, never a silent edit of the approved bytes.
+- **Representative path** — the one flow an inception project chooses that crosses its agreed
+  boundaries end to end; it is what bootstrap actually builds and verification actually runs. Other
+  flows stay recorded context, never implied components.
+- **Verified result** — one checked fact in an inception run's `verification.md`: environment, exact
+  command, reference output, and a result kept distinct as `configured`, `executed`, `succeeded`,
+  `not-executed`, or `failed`.
+- **Deferred flow** — a flow from an inception run's starting materials that falls outside its
+  representative path. It is promoted only as recorded context in `project-context.md`, never as an
+  existing component, a spec, or a started backlog item.
 - **Inception handoff** — the `inception-handoff: steepy-apex/v1` transfer to `init`: exact run
   paths for `state`, `approval`, `project`, `verification`, `confirmed-inputs`, `promotion`. It is
   separate from the chain's `handoff: steepy-apex/v1`.
