@@ -5,12 +5,14 @@
 ## Scope
 
 - Owns: the scaffold Markdown and TOML under `templates/` — the `{{placeholder}}` source files
-  rendered into a target project.
+  rendered into a target project, plus the plain fill-in skeletons that ship as-is.
 - The final v1 layout consists of the root instruction pair `AGENTS.md` and `claude-import.md`, the
   project bootstrap pair `project-bootstrap-skill.md` and `claude-bootstrap-stub.md`, the specialist
   adapter triad `surface-agent-claude.md` / `surface-agent-codex.toml` /
-  `surface-agent-opencode.md`, and the hub-building sources `_INDEX.md`, `routing-row.md`,
-  `surface-standard.md`, and `surface-standard-core.md`.
+  `surface-agent-opencode.md`, the hub-building sources `_INDEX.md`, `routing-row.md`,
+  `surface-standard.md`, and `surface-standard-core.md`, the per-run inception skeletons
+  `inception-project.md` and `inception-verification.md`, and the durable-hub skeletons
+  `project-context.md` and `project-architecture.md`.
 - Does NOT own: the project-model values fed to templates (→ `skills` interview), the rendering
   implementation (→ `scripts`), or the target project's hub content.
 - Exemplar: `templates/surface-standard.md`
@@ -43,14 +45,21 @@
 - The Codex adapter omits the `model` field so the spawned session inherits its model; no sentinel
   string represents inheritance. Claude keeps consuming the shared native `{{model}}` value.
 - Rendering is idempotent and the generated Markdown lints green.
+- The inception and project skeletons (`inception-project.md`, `inception-verification.md`,
+  `project-context.md`, `project-architecture.md`) are plain fill-in structures like
+  `surface-standard.md`: proportioned per project, never a fixed technology catalog or a mandated
+  document count, and they carry no `{{placeholder}}` or generated-provenance marker.
 
-### Generated-bootstrap work boundary
+### Generated-bootstrap work and inception boundaries
 
 - The generated bootstrap carries a thin, navigation-scoped default-deny boundary for `.apex/work/**`:
   a workflow may consume only exact work paths named by its accepted handoff; a pathless invocation
   is limited to bounded workflow-header recovery discovery; and a user may explicitly authorize an
   exact path or broader work-area scope. This rule applies transitively to child agents, while only
   the phase orchestrator interprets the handoff.
+- It carries a separate, stricter boundary for `.apex/inception/**`: only the exact input paths for
+  the current step, or a scope the user explicitly authorizes, permit a read; this area has no
+  pathless recovery of its own, and the template never encodes the inception handoff schema.
 - Generated provenance remains unchanged at `v1`.
 - Templates do not define phase role maps, lifecycle transitions, envelope grammar, or
   harness-native invocation rendering; those remain outside the generated bootstrap contract.

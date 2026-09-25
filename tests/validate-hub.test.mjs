@@ -157,6 +157,12 @@ function portableHub() {
     '',
     'A workflow phase may consume only the exact work inputs named by an accepted handoff. A pathless workflow invocation may perform only bounded workflow-header recovery discovery. Exact paths or a broader work-area scope are permitted only when the user explicitly delimits them. This applies transitively to child agents: only the phase orchestrator interprets a handoff.',
     '',
+    '## Inception boundary',
+    '',
+    'Do not ordinarily enumerate, search, or read under `.apex/inception/**`.',
+    '',
+    'Only the exact input paths supplied for the current step, or a broader scope the user explicitly authorizes, permit a read here. The inception boundary has no pathless recovery of its own: the bounded workflow-header recovery above is specific to `.apex/work/**` and does not extend to it. This applies transitively to child agents.',
+    '',
   ].join('\n'));
   putPortable(hub, '.claude/skills/portable-demo-bootstrap/SKILL.md', [
     '---',
