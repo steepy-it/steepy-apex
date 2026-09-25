@@ -52,9 +52,10 @@ Use a fresh checkout and install the local marketplace:
 ```
 
 For direct development loading, use `claude --plugin-dir .` and `/reload-plugins`.
-Confirm all nine commands:
+Confirm all ten commands:
 
 ```text
+/steepy-apex:inception
 /steepy-apex:init
 /steepy-apex:new-surface
 /steepy-apex:check
@@ -68,11 +69,14 @@ Confirm all nine commands:
 
 In an empty temporary repository with a working test command:
 
-1. Run `/steepy-apex:init`, complete the interview, then `/steepy-apex:check`.
-2. Confirm `.apex/_INDEX.md` and the chosen root instructions exist.
-3. Confirm `.apex/work/.gitignore`, `.apex/work/specs/`, and `.apex/work/plans/`
+1. For a brand-new application with no code yet, run `/steepy-apex:inception` first;
+   it works before any hub exists and hands off to `init` once its bootstrap is
+   approved and verified. For an existing codebase, skip straight to step 2.
+2. Run `/steepy-apex:init`, complete the interview, then `/steepy-apex:check`.
+3. Confirm `.apex/_INDEX.md` and the chosen root instructions exist.
+4. Confirm `.apex/work/.gitignore`, `.apex/work/specs/`, and `.apex/work/plans/`
    remain local gitignored workflow state. Stable specs/plans indexes are not generated.
-4. Confirm the hub check passes and the Stop hook stays quiet on a coherent hub.
+5. Confirm the hub check passes and the Stop hook stays quiet on a coherent hub.
 
 After publication, repeat using `/plugin marketplace add steepy-it/steepy-apex`,
 then reinstall/reload. Repeat the smoke test in each supported harness.
