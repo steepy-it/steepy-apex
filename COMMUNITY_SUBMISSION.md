@@ -22,7 +22,7 @@ steepy-apex creates a navigable `.apex/` documentation graph, routes work by sur
 
 ## What the plugin includes
 
-- Nine canonical skills: `/steepy-apex:init`, `/steepy-apex:new-surface`, `/steepy-apex:check`, `/steepy-apex:brainstorm`, `/steepy-apex:plan`, `/steepy-apex:implement`, `/steepy-apex:review`, `/steepy-apex:discovery`, and `/steepy-apex:loop-engineer`.
+- Ten canonical skills: `/steepy-apex:init`, `/steepy-apex:new-surface`, `/steepy-apex:check`, `/steepy-apex:brainstorm`, `/steepy-apex:plan`, `/steepy-apex:implement`, `/steepy-apex:review`, `/steepy-apex:discovery`, `/steepy-apex:loop-engineer`, and `/steepy-apex:inception` (pre-hub — works before any `.apex` hub exists, for a brand-new application).
 - A Stop hook that runs the hub linter quietly when the hub is green.
 - Node.js 24+ scripts for stack detection, hub validation, project scaffolding, and workflow controllers.
 - Templates for `.apex/` hub files, surface standards, specialist agents, routing-table rows, a managed `AGENTS.md` root, a thin `CLAUDE.md` import, and a canonical project bootstrap skill.

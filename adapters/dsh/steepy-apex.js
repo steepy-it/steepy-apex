@@ -62,10 +62,13 @@ import { readFileSync } from 'node:fs';
 const HERE = dirname(fileURLToPath(import.meta.url)); // <root>/adapters/dsh
 const PACKAGE_ROOT = dirname(dirname(HERE)); // <root>
 
-// The nine canonical skills, invocation order per the routing chain.
+// The ten canonical skill names: the nine chain/hub-aware skills in invocation order
+// per the routing chain, plus the pre-hub `inception` skill appended last — it has no
+// chain role and is listed here purely as an invocation identifier (adapters never
+// read `.apex/inception/**`).
 const SKILL_NAMES = [
   'init', 'check', 'new-surface', 'discovery', 'brainstorm',
-  'plan', 'implement', 'review', 'loop-engineer',
+  'plan', 'implement', 'review', 'loop-engineer', 'inception',
 ];
 
 // The model-facing channel. A command's output is rendered to the human and
@@ -101,7 +104,9 @@ function getBootstrapBlock() {
     'Before touching code, read applicable `AGENTS.md` files in root-to-project order.',
     'Locate and run the project canonical bootstrap under `.agents/skills`.',
     'If that bootstrap is unavailable, fall back to `.apex/_INDEX.md`, execute the relevant',
-    'owning standard inline, and declare the inline-standard degradation.',
+    'owning standard inline, and declare the inline-standard degradation. If neither the',
+    'bootstrap nor the index exists, this project has no governed hub yet: invoke the',
+    'pre-hub `inception` skill instead of imposing a standard that is not there.',
     '',
     `Skills: ${SKILL_NAMES.join(', ')}.`,
     `Load one by calling the \`${SKILL_TOOL_NAME}\` tool with that skill's name; the tool`,
@@ -222,7 +227,7 @@ function registerCommands(scoped) {
 // can only be TOLD which tool call to make; this tool is that call. `skill` is
 // validated against the closed SKILL_NAMES allowlist by EXACT MATCH before any
 // filesystem access (GC7) — a non-string, empty string, unknown name, or a
-// traversal attempt is rejected with a message naming the nine valid values,
+// traversal attempt is rejected with a message naming the ten valid values,
 // and no path is ever built from the rejected input. Only once that match
 // succeeds is the path composed, from the ALLOWLISTED constant, never from a
 // normalized/resolved form of the input:
@@ -233,7 +238,7 @@ const SKILL_TOOL_PARAMETERS = {
     skill: {
       type: 'string',
       enum: [...SKILL_NAMES],
-      description: `One of the nine canonical skill names: ${SKILL_NAMES.join(', ')}.`,
+      description: `One of the ten canonical skill names: ${SKILL_NAMES.join(', ')}.`,
     },
     args: {
       type: 'string',
@@ -290,7 +295,7 @@ function registerSkillTool(scoped) {
   try {
     tools.register({
       name: SKILL_TOOL_NAME,
-      description: `Load one of the nine canonical Steepy Apex skills (${SKILL_NAMES.join(', ')}) and return its exact prose from the engine root.`,
+      description: `Load one of the ten canonical Steepy Apex skills (${SKILL_NAMES.join(', ')}) and return its exact prose from the engine root.`,
       parameters: SKILL_TOOL_PARAMETERS,
       output: { schema: { type: 'string' }, render: renderSkillTool },
       execute: executeSkillTool,
@@ -310,7 +315,7 @@ function registerSkillTool(scoped) {
 //     in the same teardown that removes the registrations themselves.
 //
 // The lifetime scoping is the load-bearing half. A host reload disposes this
-// fiber's effects first — tearing down the nine commands and the bootstrap
+// fiber's effects first — tearing down the ten commands and the bootstrap
 // section — and then re-invokes `apply()` with the SAME ctx object. A guard that
 // outlived its own registrations would short-circuit that second call and leave
 // the adapter silently dead for the rest of the session: no block, no commands,

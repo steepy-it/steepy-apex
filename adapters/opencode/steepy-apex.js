@@ -25,10 +25,13 @@ const HERE = dirname(fileURLToPath(import.meta.url)); // <root>/adapters/opencod
 const PACKAGE_ROOT = dirname(dirname(HERE)); // <root>
 const SKILLS_DIR = join(PACKAGE_ROOT, 'skills');
 
-// The nine canonical skills, invocation order per the routing chain.
+// The ten canonical skill names: the nine chain/hub-aware skills in invocation order
+// per the routing chain, plus the pre-hub `inception` skill appended last — it has no
+// chain role and is listed here purely as an invocation identifier (adapters never
+// read `.apex/inception/**`).
 const SKILL_NAMES = [
   'init', 'check', 'new-surface', 'discovery', 'brainstorm',
-  'plan', 'implement', 'review', 'loop-engineer',
+  'plan', 'implement', 'review', 'loop-engineer', 'inception',
 ];
 
 // The marker is bootstrap content, not ownership evidence. The WeakSet below
@@ -50,9 +53,11 @@ function getBootstrapBlock() {
     'Before touching code, read applicable `AGENTS.md` files in root-to-project order.',
     'Locate and run the project canonical bootstrap under `.agents/skills`.',
     'If that bootstrap is unavailable, fall back to `.apex/_INDEX.md`, execute the relevant',
-    'owning standard inline, and declare the inline-standard degradation.',
+    'owning standard inline, and declare the inline-standard degradation. If neither the',
+    'bootstrap nor the index exists, this project has no governed hub yet: invoke the',
+    'pre-hub `inception` skill instead of imposing a standard that is not there.',
     '',
-    'Skills: invoke any of the nine steepy-apex skills with the native skill tool,',
+    'Skills: invoke any of the ten steepy-apex skills with the native skill tool,',
     'or via the registered `steepy-apex-<skill>` commands',
     `(${SKILL_NAMES.join(', ')}), passing arguments through.`,
     '',
