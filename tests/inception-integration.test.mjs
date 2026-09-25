@@ -555,7 +555,7 @@ function runInitEntry(sandbox, { stopAfter, answer = answerStarterOnly, withGit 
   const preview = previewProjectScaffold(plan);
   before('apply');
   const applied = audited(sandbox, 'apply', [], () => applyProjectScaffold({ hubRoot: repo, plan }));
-  if (stop('apply')) return { outcome: 'stopped', trace, preview };
+  if (stop('apply')) return { outcome: 'stopped', trace, prepared, preview };
 
   const writes = [];
   for (const document of hubDocuments(report.confirmedInputs)) {
@@ -577,11 +577,11 @@ function runInitEntry(sandbox, { stopAfter, answer = answerStarterOnly, withGit 
   const finalized = audited(sandbox, 'finalize', [...transfer, RECEIPT], () => finalizeInitReceipt(repo, {
     handoff, gate: 'pass', env,
   }));
-  if (stop('finalize')) return { outcome: 'stopped', trace, preview, writes, applied, finalized };
+  if (stop('finalize')) return { outcome: 'stopped', trace, prepared, preview, writes, applied, finalized };
   before('close');
   const closed = close();
   stop('close');
-  return { outcome: 'complete', trace, preview, writes, applied, finalized, closed };
+  return { outcome: 'complete', trace, prepared, preview, writes, applied, finalized, closed };
 }
 
 // ===========================================================================
@@ -811,7 +811,29 @@ const updateCli = (sandbox, changes) => inceptionState(sandbox, ['update',
   '--expected-sha256', existsSync(join(sandbox.repo, STATE)) ? descriptorSha(sandbox) : '0'.repeat(64),
   '--set', JSON.stringify(changes)], [GUARD, STATE, APPROVAL, CHECKPOINT, HANDOFF, RECEIPT]);
 
-test('pre-hub state matrix: every observation that is not a valid pre-hub keeps its error and refuses dependent writes', () => withReadyRuns('states', (readyCase) => {
+// The helpers are descriptor-only by design: hub compatibility belongs to the
+// linter and the Stop hook. Beside a partial hub a valid descriptor still
+// admits checkpoint, update, and prepare, and prepare baselines the human
+// bytes it finds as the destination's previous state without rewriting them.
+const HUMAN_CONVENTIONS = '# Conventions\n\nA human rule written before init.\n';
+function assertPartialHubHelpersProceed(sandbox) {
+  const checkpoint2 = runFile('checkpoint-2.json');
+  const recorded = inceptionHandoff(sandbox, ['checkpoint', '--run-id', RUN, '--output', checkpoint2, '--path', 'package.json'],
+    [GUARD, STATE, checkpoint2]);
+  assert.equal(recorded.status, 0, recorded.stderr);
+  for (const status of ['blocked', 'active']) {
+    const updated = updateCli(sandbox, { status });
+    assert.equal(updated.status, 0, updated.stderr);
+  }
+  const prepared = prepareCli(sandbox);
+  assert.equal(prepared.status, 0, prepared.stderr);
+  assert.deepEqual(JSON.parse(prepared.stdout).destinations.find(({ path }) => path === '.apex/conventions.md'), {
+    path: '.apex/conventions.md', previous: sha(HUMAN_CONVENTIONS), observed: sha(HUMAN_CONVENTIONS), state: 'pending',
+  });
+  assert.equal(readFileSync(join(sandbox.repo, '.apex/conventions.md'), 'utf8'), HUMAN_CONVENTIONS);
+}
+
+test('pre-hub state matrix: every observation that is not a valid pre-hub keeps its error; invalid descriptors refuse dependent writes, and descriptor-only helpers proceed beside a partial hub', () => withReadyRuns('states', (readyCase) => {
   const descriptorText = () => `${JSON.stringify({
     schemaVersion: 1, runId: RUN, phase: 'init', status: 'active', approval: null, checkpoint: null,
     init: { status: 'not-started', handoff: null, receipt: null },
@@ -833,7 +855,7 @@ test('pre-hub state matrix: every observation that is not a valid pre-hub keeps 
     { exit: 1, err: /unsupported field/u }, /inception state is invalid/u],
     ['incompatible combination', (sandbox) => writeFileSync(join(sandbox.repo, STATE), descriptorText()),
       { exit: 1, err: /phase init requires an approval reference/u }, /inception state is invalid/u],
-    ['partial hub beside a pre-init descriptor', (sandbox) => put(sandbox.repo, '.apex/conventions.md', '# Conventions\n'),
+    ['partial hub beside a pre-init descriptor', (sandbox) => put(sandbox.repo, '.apex/conventions.md', HUMAN_CONVENTIONS),
       { exit: 1, err: /incompatible with hub artifact \.apex\/conventions\.md/u }, null],
   ];
   for (const [label, arrange, linter, refusal] of cases) {
@@ -850,7 +872,10 @@ test('pre-hub state matrix: every observation that is not a valid pre-hub keeps 
           'block', label);
       }
       assert.doesNotMatch(linted.stdout, /coherent/u, label);
-      if (refusal === null) return;
+      if (refusal === null) {
+        assertPartialHubHelpersProceed(sandbox);
+        return;
+      }
       assertRefusedWithoutWrites(sandbox, `${label}: prepare`, () => prepareCli(sandbox), refusal);
       assertRefusedWithoutWrites(sandbox, `${label}: update`, () => updateCli(sandbox, { status: 'blocked' }),
         /no valid descriptor to update|does not match/u);
@@ -891,17 +916,28 @@ test('pre-hub state matrix: every observation that is not a valid pre-hub keeps 
 test('transfer inputs: a missing, foreign, extraneous, or changed transfer input fails before init starts, bytes preserved', () => withReadyRuns('inputs', (readyCase) => {
   const edit = (path, text) => (sandbox) => put(sandbox.repo, path, text);
   const cases = [
+    ['handoff missing', (sandbox) => unlinkSync(join(sandbox.repo, HANDOFF)), /missing inception file/u],
     ['approval record missing', (sandbox) => unlinkSync(join(sandbox.repo, APPROVAL)), /missing inception file/u],
     ['approval record changed', edit(APPROVAL, json({ 'inception-approval': 'steepy-apex/v1', 'run-id': RUN, project: [] })),
       /approval refers to other bytes/u],
     ['approved project changed', edit(PROJECT, `${PROJECT_TEXT}- A new boundary.\n`),
       /differs from its approved bytes; a substantial change needs a new approval/u],
     ['approved project missing', (sandbox) => unlinkSync(join(sandbox.repo, PROJECT)), /missing inception file/u],
+    ['checkpoint missing', (sandbox) => unlinkSync(join(sandbox.repo, CHECKPOINT)), /missing inception file/u],
     ['checkpoint changed', edit(CHECKPOINT, '{}\n'), /verification refers to other bytes than the inception state recorded; it needs a new checkpoint/u],
     ['verification results missing', (sandbox) => unlinkSync(join(sandbox.repo, VERIFICATION)), /missing inception file/u],
     ['confirmed inputs missing', (sandbox) => unlinkSync(join(sandbox.repo, CONFIRMED)), /missing inception file/u],
     ['confirmed inputs outside Project model v1', edit(CONFIRMED, json({ ...record(), surfaces: [] })),
       /not a valid Project model v1 projection/u],
+    ['promotion missing', (sandbox) => unlinkSync(join(sandbox.repo, PROMOTION)), /missing inception file/u],
+    ['an unapproved extra project document', (sandbox) => {
+      put(sandbox.repo, runFile('extra.md'), '# An unapproved addition\n');
+      put(sandbox.repo, HANDOFF, json(handoffValue({ required: { ...handoffValue().required, project: [PROJECT, runFile('extra.md')] } })));
+    }, /required project must name exactly the approved project documents/u],
+    ['handoff edited after init started', (sandbox) => {
+      assert.equal(prepareCli(sandbox).status, 0);
+      put(sandbox.repo, HANDOFF, `${JSON.stringify(handoffValue())}\n`);
+    }, /the inception state pins a different init handoff/u, { started: true }],
     ['promotion of another run', edit(PROMOTION, json({ 'inception-promotion': 'steepy-apex/v1', 'run-id': OTHER_RUN, decisions: DECISIONS })),
       /run-id must be the handoff run/u],
     ['handoff names a file of another run', edit(HANDOFF, json(handoffValue({
@@ -917,11 +953,11 @@ test('transfer inputs: a missing, foreign, extraneous, or changed transfer input
       git(sandbox, ['commit', '-q', '-m', 'SYNTHETIC late commit']);
     }, /diverges/u],
   ];
-  for (const [label, arrange, pattern] of cases) {
+  for (const [label, arrange, pattern, { started = false } = {}] of cases) {
     readyCase('inputs', (sandbox) => {
       arrange(sandbox);
       assertRefusedWithoutWrites(sandbox, label, () => prepareCli(sandbox), pattern);
-      assert.equal(existsSync(join(sandbox.repo, RECEIPT)), false, `${label}: no receipt`);
+      if (!started) assert.equal(existsSync(join(sandbox.repo, RECEIPT)), false, `${label}: no receipt`);
     });
   }
 }));
@@ -1079,6 +1115,11 @@ test('resume preserves human edits: a changed destination keeps its text, a cust
     put(sandbox.repo, '.apex/glossary.md', human);
     const resumed = runInitEntry(sandbox);
     assert.equal(resumed.outcome, 'complete');
+    // The resume signal init acts on: the destination changed against the
+    // bytes prepared before any hub write, never a re-baselined previous.
+    assert.deepEqual(resumed.prepared.changed, { state: false, receipt: false });
+    assert.deepEqual(resumed.prepared.destinations.find(({ path }) => path === '.apex/glossary.md'),
+      { path: '.apex/glossary.md', previous: null, observed: sha(human), state: 'changed' });
     assert.deepEqual(resumed.writes.find(([path]) => path === '.apex/glossary.md'), ['.apex/glossary.md', 'appended']);
     const glossary = readFileSync(join(sandbox.repo, '.apex/glossary.md'), 'utf8');
     assert.ok(glossary.startsWith(human), 'the human bytes are kept verbatim');

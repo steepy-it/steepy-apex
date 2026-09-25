@@ -15,6 +15,10 @@ first.
   skill, the model follows it, a real bootstrap works, and `init` turns it into a hub.
 - A native result covers the observed run only. The hermetic suite never produces a native
   result, and a native result never replaces the hermetic suite.
+- Uncertain outcomes: the hermetic analog is a crash between a receipt write and its descriptor
+  write, which the suite resumes by observing the files and never repeats. Reconciling an uncertain
+  deploy or other external effect is locked only as skill text and needs native observation
+  (scenario C).
 
 ## Approver for this release
 
@@ -35,8 +39,8 @@ names its approver.
 - Verify sources at run time. Every foundational choice names its official source, an explicit
   version, and the verification date. A remembered version is not a source.
 - Use no paid service, publication, or real deploy unless the approved test project includes it.
-  Deploy stays excluded by default. An uncertain deploy is simulated only in the hermetic suite
-  and is never reported as a real deploy.
+  Deploy stays excluded by default. No proof runs an uncertain or a real deploy, and no result
+  reports one as a real deploy.
 - Sign in only through the harness's own login. Never put a credential in the project, a prompt,
   or the evidence.
 
