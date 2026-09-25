@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { devNull, tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scaffold } from '../scripts/new-surface.mjs';
@@ -303,4 +304,54 @@ test('the ordinary path keeps its temporary record while the inception entry kee
   assert.match(text.replace(/\s+/g, ' '), /Delete both temporary files when the workflow ends/i);
   const entry = flatSection(text, '## Inception entry');
   assert.match(entry, /keeps the run's `confirmed-inputs` record in place: it is the authoritative copy a resume needs\. Delete only the temporary planner projection/i);
+});
+
+// The inception entry's commands, exactly as the skill prints them, against the
+// real helper CLIs. An empty repository makes each one fail at runtime (exit 1)
+// or report `absent` (exit 0); a usage error (exit 2) would mean the skill
+// documents a command the helper does not accept. Syntax only: the behavior is
+// owned by tests/inception-integration.test.mjs.
+test('every command the inception entry documents is accepted by the real helper CLI', () => {
+  const text = skill();
+  const blocks = [
+    flatSection(text, '### Entry — Check for an inception transfer', '### Step 0'),
+    flatSection(text, '## Inception entry'),
+  ].join('\n');
+  const commands = [...blocks.matchAll(/node <engine-root>\/scripts\/(inception-(?:state|handoff)\.mjs) ([^`]*?)(?= ```)/gu)]
+    .map(([, script, args]) => [script, args.split(' > ')[0].trim()]);
+  assert.deepEqual(commands.map(([script, args]) => `${script} ${args.split(' ')[0]}`), [
+    'inception-state.mjs inspect',
+    'inception-handoff.mjs verify',
+    'inception-handoff.mjs prepare',
+    'inception-handoff.mjs project',
+    'inception-handoff.mjs finalize',
+  ]);
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'steepy-init-commands-')));
+  try {
+    const repo = join(base, 'repo');
+    mkdirSync(repo);
+    mkdirSync(join(base, 'home'));
+    const env = {
+      PATH: process.env.PATH ?? '', HOME: join(base, 'home'), XDG_CONFIG_HOME: join(base, 'home', '.config'),
+      GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull, GIT_CEILING_DIRECTORIES: base,
+    };
+    const run = '0b6f1b8e-3c1a-4e2b-9f3d-5a7c9e1b2d4f';
+    const fill = (args) => args
+      .replaceAll('<repo-root>', repo)
+      .replaceAll('<handoff-path>', `.apex/inception/${run}/init-handoff.json`)
+      .replaceAll('<run-id>', run)
+      .split(' ');
+    const variants = [...commands, ['inception-handoff.mjs', `${commands[3][1]} --resolution v1:project-instructions:customized=replace`]];
+    for (const [script, args] of variants) {
+      const argv = fill(args);
+      assert.ok(argv.every((arg) => !/[<>]/u.test(arg)), `${script}: every placeholder is filled`);
+      const result = spawnSync(process.execPath, [join(root, 'scripts', script), ...argv], { cwd: repo, env, encoding: 'utf8' });
+      assert.notEqual(result.status, 2, `${script} ${args}: ${result.stderr}`);
+      assert.doesNotMatch(result.stderr, /usage:/u, `${script} ${args}`);
+      assert.equal(result.status, argv[0] === 'inspect' ? 0 : 1, `${script} ${args}: ${result.stderr}`);
+    }
+    assert.equal(existsSync(join(repo, '.apex')), false, 'no documented command creates a hub or an inception area on refusal');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });

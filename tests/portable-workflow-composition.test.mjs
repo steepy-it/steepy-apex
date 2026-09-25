@@ -30,7 +30,8 @@ import {
   previewProjectScaffold,
   renderProjectArtifact,
 } from '../scripts/project-scaffold.mjs';
-import { collectViolations, main as validateHubMain } from '../scripts/validate-hub.mjs';
+import { createInitialInceptionState, serializeInceptionState } from '../scripts/inception-state.mjs';
+import { classifyHub, collectViolations, main as validateHubMain } from '../scripts/validate-hub.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const templatesDir = join(here, '..', 'templates');
@@ -1088,4 +1089,36 @@ test('portable-v1 returns stable non-file violations for every canonical artifac
     assert.deepEqual(planProjectScaffold({ hubRoot, model, templatesDir }).conflicts, []);
     assert.deepEqual(collectViolations(hubRoot).filter(({ level }) => level === 'error'), []);
   });
+});
+
+// Pre-hub recognition and the public planner must agree on what a hub artifact
+// is: whatever the planner writes beside a pre-init inception descriptor makes
+// the repository a partial hub, named artifact by artifact, never a pre-hub. A planner artifact family the classifier missed would let a
+// half-initialized hub pass as an inception.
+test('every artifact the public planner writes turns an index-less pre-init repository into a named partial hub', () => {
+  const hubRoot = tempHub();
+  try {
+    put(hubRoot, '.apex/inception/.gitignore', '*\n');
+    put(hubRoot, '.apex/inception/state.json',
+      serializeInceptionState(createInitialInceptionState('0b6f1b8e-3c1a-4e2b-9f3d-5a7c9e1b2d4f')));
+    assert.equal(classifyHub(hubRoot).state, 'pre-hub');
+    const model = baseModel({
+      surfaces: [
+        { name: 'web', path: 'apps/web', agent: 'web-agent', testCmd: 'npm test' },
+        { name: 'api', path: 'services/api', agent: 'api-agent', testCmd: 'npm run test:api' },
+      ],
+    });
+    const plan = planProjectScaffold({ hubRoot, model, templatesDir });
+    assert.deepEqual(plan.conflicts, []);
+    const { paths } = applyProjectScaffold({ hubRoot, plan });
+    const classified = classifyHub(hubRoot);
+    assert.equal(classified.state, 'invalid');
+    const messages = classified.violations.filter(({ level }) => level === 'error').map(({ msg }) => msg);
+    assert.ok(messages.some((msg) => /^missing _INDEX\.md at .*_INDEX\.md$/u.test(msg)), messages.join('\n'));
+    const named = messages.map((msg) => msg.match(/^inception: pre-hub state is incompatible with hub artifact (.+)$/u)?.[1])
+      .filter(Boolean);
+    assert.deepEqual(named.sort(), [...paths].sort(), 'the classifier names exactly the planner outputs');
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
+  }
 });

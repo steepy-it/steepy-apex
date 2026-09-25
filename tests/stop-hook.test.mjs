@@ -218,6 +218,46 @@ test('init in progress without an index, and a partial hub beside a pre-init des
   }
 });
 
+test('an unfinished start and an activated hub without its index block the turn; neither is a pre-hub', () => {
+  const approval = { path: `.apex/inception/${RUN}/proposal.md`, sha256: 'a'.repeat(64) };
+  const complete = {
+    phase: 'complete', status: 'complete', approval,
+    init: { status: 'complete', handoff: { path: `.apex/inception/${RUN}/init-handoff.json`, sha256: 'b'.repeat(64) },
+      receipt: { path: `.apex/inception/${RUN}/init-receipt.json`, sha256: 'c'.repeat(64) } },
+  };
+  for (const [label, arrange, reason] of [
+    ['start stopped before its descriptor', () => {
+      const repo = inceptionRepo('unfinished');
+      rmSync(join(repo, '.apex', 'inception', 'state.json'));
+      return repo;
+    }, /pre-hub state not recognized \(incomplete\)/u],
+    ['activated hub whose index was removed', () => {
+      const repo = inceptionRepo('activated', complete);
+      put(repo, 'AGENTS.md', '# User notes\n');
+      put(repo, '.apex/standards/app.md', '# app — Technical Standard\n');
+      return repo;
+    }, /inception: init is complete; an activated hub requires \.apex\/_INDEX\.md/u],
+  ]) {
+    const repo = arrange();
+    try {
+      const blocked = run([repo], '{}', 2_000);
+      assert.equal(blocked.status, 0, `${label}: ${blocked.stderr}`);
+      const payload = JSON.parse(blocked.stdout);
+      assert.equal(payload.decision, 'block', label);
+      assert.match(payload.reason, /missing _INDEX\.md/u, label);
+      assert.match(payload.reason, reason, label);
+      assert.doesNotMatch(`${blocked.stdout}\n${blocked.stderr}`, new RegExp(HOOK_SENTINEL, 'u'), label);
+      if (label.startsWith('activated')) {
+        put(repo, '.apex/_INDEX.md', '# Index\n- [App](standards/app.md)\n');
+        const restored = run([repo], '{}', 2_000);
+        assert.deepEqual([restored.status, restored.stdout], [0, ''], `${label}: the restored hub is silent again`);
+      }
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
 test('an operational hub with malformed local inception state stays silent', () => {
   const repo = inceptionRepo('hub');
   try {

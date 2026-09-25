@@ -850,6 +850,77 @@ test('docs/inception.md documents the greenfield path end to end and stays self-
   assert.doesNotMatch(text, /\.apex\/work\/specs|\.apex\/work\/plans/, 'must not reference concrete spec/plan work paths');
 });
 
+// The native acceptance protocol is a stable, packaged document: reproducible
+// inputs and judging rules, one closed result vocabulary, and results that a
+// hermetic test can never supply. A result other than PENDING must carry the
+// observation that produced it.
+const ACCEPTANCE_RESULTS = ['PENDING', 'PASS', 'FAIL', 'NOT RUN', 'BLOCKED'];
+
+function markdownTable(text, heading) {
+  const section = text.split(`${heading}\n`)[1]?.split(/\n## /u)[0] ?? '';
+  const rows = section.split('\n').filter((line) => line.startsWith('|'));
+  assert.ok(rows.length >= 3, `${heading} must hold a table`);
+  const cells = (line) => line.slice(1, -1).split('|').map((cell) => cell.trim());
+  const header = cells(rows[0]);
+  return rows.slice(2).map((line) => Object.fromEntries(cells(line).map((cell, index) => [header[index], cell])));
+}
+
+function assertObservedResult(row, label) {
+  assert.ok(ACCEPTANCE_RESULTS.includes(row.Result), `${label}: result '${row.Result}' is outside the closed vocabulary`);
+  if (row.Result === 'PENDING') return;
+  assert.match(row['Observed on'], /^\d{4}-\d{2}-\d{2}$/u, `${label}: a ${row.Result} needs its observation date`);
+  assert.match(row['Harness and version'], /\S+ \S*\d/u, `${label}: a ${row.Result} needs the harness and its version`);
+  assert.match(row['Plugin revision'], /^`[0-9a-f]{7,40}`$/u, `${label}: a ${row.Result} needs the plugin revision`);
+}
+
+test('docs/inception-acceptance.md is a reproducible native protocol whose results only native observation fills', () => {
+  const path = join(repoRoot, 'docs', 'inception-acceptance.md');
+  assert.ok(existsSync(path), 'docs/inception-acceptance.md must exist');
+  const text = readFileSync(path, 'utf8');
+  const flat = text.replace(/\s+/g, ' ');
+
+  for (const [scenario, ecosystem] of [
+    ['A', /JavaScript or TypeScript/u],
+    ['B', /may reuse scenario A's ecosystem/iu],
+    ['C', /Python or another ecosystem that is not JavaScript/u],
+  ]) {
+    const section = text.split(new RegExp(`\\n### Scenario ${scenario} — `, 'u'))[1]?.split(/\n### |\n## /u)[0];
+    assert.ok(section, `must define scenario ${scenario}`);
+    for (const label of ['Inputs', 'Observe', 'Judge', 'Ecosystem']) {
+      assert.match(section, new RegExp(`\\*\\*${label}:\\*\\*`, 'u'), `scenario ${scenario} must state ${label}`);
+    }
+    assert.match(section.replace(/\s+/g, ' '), ecosystem, `scenario ${scenario} ecosystem`);
+  }
+  assert.match(flat, /through the public `inception` skill in a real harness/i, 'proofs run the public skill natively');
+  assert.match(flat, /at least one scenario interrupts and resumes/i, 'a resume must be observed natively');
+
+  const scenarios = markdownTable(text, '## Scenario results');
+  assert.deepEqual(scenarios.map((row) => row.Scenario), ['A', 'B', 'C']);
+  scenarios.forEach((row) => assertObservedResult(row, `scenario ${row.Scenario}`));
+  const harnesses = markdownTable(text, '## Harness discovery and invocation matrix');
+  assert.deepEqual(harnesses.map((row) => row.Harness), ['Claude Code', 'Codex', 'OpenCode', 'Pi', 'DeepSeek Harness']);
+  harnesses.forEach((row) => assertObservedResult(row, row.Harness));
+
+  assert.match(flat, /model approver/i, 'must state the approver used by native runs of this release');
+  assert.match(flat, /never counts as observed human approval/i, 'a model-approved PASS is not human approval');
+  assert.match(flat, /A blocked proof stays open/i, 'a blocked proof stays open');
+  assert.match(flat, /`tests\/inception-integration\.test\.mjs`[^.]*not native evidence/i, 'the hermetic suite is not native evidence');
+  assert.match(flat, /no paid service, publication, or real deploy/i);
+  assert.match(flat, /`<redacted>`/u, 'must state the redaction form');
+
+  assert.doesNotMatch(text, /\]\([^)]*\.apex\/(?:work|inception)\//u, 'must not link local artifacts');
+  assert.doesNotMatch(text, /\/(?:Users|home)\/[a-z]|[A-Z]:\\\\Users|\/private\/var\/|\/tmp\/steepy/u, 'must not carry local absolute paths');
+  assert.doesNotMatch(text, /\b(?:sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{12,})|Bearer [A-Za-z0-9._-]{8,}/u,
+    'must not carry a credential');
+});
+
+test('standards/tests.md keeps the hermetic inception matrix apart from the native acceptance protocol', () => {
+  const tests = readFileSync(join(repoRoot, '.apex', 'standards', 'tests.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(tests, /`inception-integration`/u, 'must name the hermetic vertical suite');
+  assert.match(tests, /\[Inception acceptance\]\(\.\.\/\.\.\/docs\/inception-acceptance\.md\)/u, 'must link the native protocol');
+  assert.match(tests, /model approver/i, 'must state the approver boundary');
+});
+
 test('README introduces the greenfield inception entry alongside init and links docs/inception.md', () => {
   const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
   assert.match(readme, /\|\s*`\/steepy-apex:inception`\s*\|/, 'Skills table must list /steepy-apex:inception');
