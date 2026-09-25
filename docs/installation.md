@@ -131,7 +131,7 @@ Then run `check` using your harness's syntax:
 | Codex | `$inception` | `$init` | `$discovery` | `$check` |
 | OpenCode | `/steepy-apex-inception` | `/steepy-apex-init` | `/steepy-apex-discovery` | `/steepy-apex-check` |
 | Pi | `/skill:inception` | `/skill:init` | `/skill:discovery` | `/skill:check` |
-| DeepSeek Harness | Use `skill: "inception"` | Ask the model to call `steepy_skill` with `skill: "init"` | Use `skill: "discovery"` | Use `skill: "check"` |
+| DeepSeek Harness | Ask the model to call `steepy_skill` with `skill: "inception"` | Use `skill: "init"` | Use `skill: "discovery"` | Use `skill: "check"` |
 
 In Codex, select the skill belonging to **steepy-apex** if another plugin uses the
 same name. Restart the harness after installation if skills are not visible.
