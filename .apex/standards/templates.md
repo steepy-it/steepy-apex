@@ -61,6 +61,10 @@
   the current step, or a scope the user explicitly authorizes, permit a read; this area has no
   pathless recovery of its own, and the template never encodes the inception handoff schema.
 - Generated provenance remains unchanged at `v1`.
+- `templates/prior/v1.0/project-bootstrap-skill.md` keeps the exact bootstrap source released in
+  v1.0.0-v1.0.4, before the inception boundary. It is never rendered as output: the scripts render
+  it only to recognize an untouched earlier bootstrap, and its digest is pinned, so never edit it.
+  A later change to a generated template whose provenance stays `v1` adds its released source here.
 - Templates do not define phase role maps, lifecycle transitions, envelope grammar, or
   harness-native invocation rendering; those remain outside the generated bootstrap contract.
 

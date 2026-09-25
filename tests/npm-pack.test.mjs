@@ -198,6 +198,7 @@ test('npm tarball includes the portable scaffold runtime, v1 sources, and canoni
     'templates/AGENTS.md',
     'templates/claude-import.md',
     'templates/project-bootstrap-skill.md',
+    'templates/prior/v1.0/project-bootstrap-skill.md',
     'templates/claude-bootstrap-stub.md',
     'templates/surface-agent-claude.md',
     'templates/surface-agent-codex.toml',

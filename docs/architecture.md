@@ -213,6 +213,7 @@ Markdown templates with `{{placeholder}}` variables — project instruction arti
 | `claude-import.md` | The managed thin `CLAUDE.md` import of `AGENTS.md`. |
 | `project-bootstrap-skill.md` | The canonical, harness-neutral project bootstrap under `.agents/skills/`. |
 | `claude-bootstrap-stub.md` | Claude's thin stub pointing to the canonical bootstrap. |
+| `prior/v1.0/project-bootstrap-skill.md` | Nothing: the digest-pinned v1.0.0-v1.0.4 bootstrap source, rendered only so repair and the linter recognize an untouched earlier bootstrap as a stale update. |
 | `surface-agent-claude.md` / `surface-agent-codex.toml` / `surface-agent-opencode.md` | One thin native adapter triad for each routed surface. |
 | `_INDEX.md` | The `.apex/` hub root — the DAG root every doc is reachable from. |
 | `surface-standard.md` | A per-surface standard doc. |
