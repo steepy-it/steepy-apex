@@ -238,6 +238,7 @@ test('init checks for an inception transfer before the ordinary fresh/repair for
   assert.match(route, /exact inception handoff path[^→]*or `init-in-progress` → "Inception entry"/i);
   assert.match(route, /`init-in-progress` means an earlier init was interrupted: keep its accepted inputs[^.]*`init\.handoff\.path`/i);
   assert.match(route, /`absent` or `init-complete` → the ordinary path: Step 0/i);
+  assert.match(route, /`init-complete` wins even when a handoff path is supplied: the transfer is already done/i);
   assert.match(route, /`pre-hub` without a handoff path →[^.]*has not handed off[^.]*\. Ask whether to finish it with the `inception` skill or to run an ordinary init/i);
   assert.match(route, /`incomplete` or `invalid` → report the reason and ask before continuing\. Never repair the inception area/i);
 });
@@ -268,7 +269,9 @@ test('the inception entry reuses the confirmed record through the unchanged help
   assert.match(entry, /run Step 3 unchanged/i);
   assert.match(entry, /--resolution <id=choice>[^.]*; the record never changes/i);
   assert.match(entry, /On resume, omit `--receipt`: the descriptor binds the receipt/i);
-  assert.match(entry, /reported `changed` holds human edits[^.]*never overwrite/i);
+  assert.match(entry, /reported `changed` differs from its prepared bytes and still misses promoted text/i);
+  assert.match(entry, /this entry's own partial write or a human edit/i);
+  assert.match(entry, /ask the user only about text this entry did not write; never overwrite human text/i);
 });
 
 test('the inception entry populates the hub from the promotion table and keeps chosen rules apart from observed patterns', () => {

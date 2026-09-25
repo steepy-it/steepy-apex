@@ -4,7 +4,7 @@
 
 ## Scope
 - Owns: slash-command `SKILL.md` files and co-located prompts under `skills/`, including implementer, task/final reviewer, discovery explorer, `skills/loop-engineer/loop-implementer-prompt.md` plus `skills/loop-engineer/loop-final-review-prompt.md`, and the pre-hub `inception` skill with its co-located `protocol.md`, `reconnaissance.md`, `architecture.md`, `bootstrap.md`, and `init-handoff.md`.
-  Ten canonical skills in three families: the five chain skills short-circuit Gear 2 through brainstorm → implement, run Gear 3 through brainstorm → plan → implement → review, and assign Gear 4 to `loop-engineer`; standalone hub-aware skills are `init`, `new-surface`, `check`, and additive/re-runnable `discovery`; `inception` is the pre-hub family. Chain skills carry gear-0, a checklist, and the locked Model Selection block; `discovery` has its own prose dispatch policy; the rest do not dispatch.
+  Ten canonical skills in three families: the five chain skills short-circuit Gear 2 through brainstorm → implement, run Gear 3 through brainstorm → plan → implement → review, and assign Gear 4 to `loop-engineer`; standalone hub-aware skills are `init`, `new-surface`, `check`, and additive/re-runnable `discovery`; `inception` is the pre-hub family. Chain skills carry gear-0, a checklist, and the locked Model Selection block; `discovery` has its own prose dispatch policy; `inception` may delegate only under its exact-path rule; the rest do not dispatch.
 - Does NOT own: the engine scripts they call (→ `scripts`) or the markdown templates they copy
   (→ `templates`).
 - Exemplar: `skills/init/SKILL.md`

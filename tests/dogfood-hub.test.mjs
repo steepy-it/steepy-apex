@@ -591,6 +591,7 @@ test('stable hub locks the pre-hub inception knowledge and keeps the local area 
 
   const flatSkills = skills.replace(/\s+/g, ' ');
   assert.match(flatSkills, /ten canonical skills in three families/i);
+  assert.match(flatSkills, /`discovery` has its own prose dispatch policy; `inception` may delegate only under its exact-path rule; the rest do not dispatch/i);
   assert.match(flatSkills, /the pre-hub `inception` skill with its co-located `protocol\.md`, `reconnaissance\.md`, `architecture\.md`, `bootstrap\.md`, and `init-handoff\.md`/);
   assert.match(flatSkills, /`inception` loads one support file per phase[^.]*`protocol\.md` mirrors the helper formats and the helpers win/i);
   assert.match(flatSkills, /no gear-0, checklist, Model Selection lock, manual-handoff block, or workflow header/i);
