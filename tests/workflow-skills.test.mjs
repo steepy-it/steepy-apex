@@ -2340,6 +2340,20 @@ test('skill families: ten canonical skills — five chain, four standalone hub-a
   }
 });
 
+test('inception and init prose keep the finalization helper boundary consistent', () => {
+  const protocol = readFileSync(join(skillsDir, 'inception', 'protocol.md'), 'utf8');
+  const transfer = readFileSync(join(skillsDir, 'inception', 'init-handoff.md'), 'utf8');
+  const init = readFileSync(join(skillsDir, 'init', 'SKILL.md'), 'utf8');
+  for (const [name, text] of [['protocol', protocol], ['transfer', transfer], ['init', init]]) {
+    assert.match(text, /finalization intent/i, `${name} must name the helper-owned intent`);
+    assert.match(text, /prepared receipt/i, `${name} must distinguish the prepared receipt`);
+    assert.match(text, /finalize/i, `${name} must direct finalization through the helper`);
+    assert.doesNotMatch(text, /node <engine-root>\/scripts\/inception-state\.mjs update[^\n]*finalization/i,
+      `${name} must not instruct the model to write the intent`);
+  }
+  assert.match(protocol, /deterministic helper[^.]*not native model compliance/i);
+});
+
 test('init and new-surface stay marker-free; loop-engineer owns workflow lifecycle headers', () => {
   for (const name of ['init', 'new-surface', 'loop-engineer']) {
     const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');

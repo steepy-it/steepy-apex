@@ -384,8 +384,14 @@ function verifyTargetStillBound(bound, path, phase) {
   }
 }
 
-// Stages a sibling temp, fsyncs it, re-verifies the bound target and parent,
-// then renames. Any failure removes only the temp it created.
+function verifyAncestors(bound, path) {
+  // Check from the admitted physical mount downwards, stopping before any
+  // descendant access if an ancestor has changed.
+  for (const ancestor of bound.ancestors) verifyDirectory(ancestor, path);
+}
+
+// Stages a sibling temp, fsyncs it, re-verifies all ancestors, the target and
+// staged file, then renames. Cleanup requires the original safe ancestor chain.
 function publish(context, bound, bytes, mode, options) {
   const { path } = context;
   const parent = bound.ancestors.at(-1);
@@ -395,7 +401,7 @@ function publish(context, bound, bytes, mode, options) {
   );
   let stagedIdentity = null;
   try {
-    verifyDirectory(parent, path);
+    verifyAncestors(bound, path);
     const fd = openSync(temp, FS.O_WRONLY | FS.O_CREAT | FS.O_EXCL | NOFOLLOW, mode);
     try {
       const opened = fstatSync(fd, { bigint: true });
@@ -408,12 +414,17 @@ function publish(context, bound, bytes, mode, options) {
       closeSync(fd);
     }
     const staged = lstatOrNull(temp, `staged temp for '${path}'`);
-    if (staged === null || staged.isSymbolicLink() || !staged.isFile() || statIdentity(staged) !== stagedIdentity) {
+    if (staged === null || staged.isSymbolicLink() || !staged.isFile() || staged.nlink !== 1n || statIdentity(staged) !== stagedIdentity) {
       fail('INCEPTION_UNSAFE', `staged temp identity changed for '${path}'`);
     }
     invokeCheckpoint(options, 'write', 'before-publish', path);
+    verifyAncestors(bound, path);
     verifyTargetStillBound(bound, path, 'before publish');
-    verifyDirectory(parent, path);
+    const currentStaged = lstatOrNull(temp, `staged temp for '${path}'`);
+    if (currentStaged === null || currentStaged.isSymbolicLink() || !currentStaged.isFile()
+      || currentStaged.nlink !== 1n || fileFingerprint(currentStaged) !== fileFingerprint(staged)) {
+      fail('INCEPTION_UNSAFE', `staged temp identity changed before publish for '${path}'`);
+    }
     renameSync(temp, bound.target);
     const renamed = lstatOrNull(bound.target, `'${path}'`);
     if (renamed === null || renamed.isSymbolicLink() || !renamed.isFile() || statIdentity(renamed) !== stagedIdentity) {
@@ -423,10 +434,12 @@ function publish(context, bound, bytes, mode, options) {
   } catch (error) {
     if (stagedIdentity !== null) {
       try {
+        verifyAncestors(bound, path);
         const current = lstatSync(temp, { bigint: true });
-        if (current.isFile() && statIdentity(current) === stagedIdentity) unlinkSync(temp);
+        if (current.isFile() && current.nlink === 1n && statIdentity(current) === stagedIdentity) unlinkSync(temp);
       } catch {
-        // The temp was already published or removed; keep the primary error.
+        // A changed chain leaves residue untouched. Preserve the primary error
+        // also when the temp was already published or removed.
       }
     }
     throw error;
@@ -524,7 +537,7 @@ export function writeInceptionFile(repoRoot, path, content, options = {}) {
   if (current !== null && current.equals(bytes)) {
     return freeze({ path, sha256: digest, bytes: bytes.length, changed: false });
   }
-  if (ensureAncestors(bound, path)) bound = walk(context);
+  ensureAncestors(bound, path);
   bound = rebind(context, bound, 'before staging');
   invokeCheckpoint(options, 'write', 'after-bind', path);
   bound = rebind(context, bound, 'after write checkpoint');

@@ -26,6 +26,17 @@
   (`stable-read: <path> is hard-linked`); replace such a link with an ordinary copy.
 - Mixed versions: a hub repaired by this release fails the 1.0.x linter and Stop hook
   (`canonical bootstrap ... is customized`) until every collaborator updates the plugin.
+- Finalize now binds a complete init receipt through a durable finalization intent before
+  replacing the prepared receipt, then records complete state only after verifying its
+  exact digest and promoted contents. Crash retries with that intent recover without
+  rewriting unexpected bytes; a legacy complete receipt beside a prepared descriptor
+  without intent is ambiguous and refused, while ordinary prepared or already complete
+  legacy runs remain usable. The finalization intent makes this recovery explicit, while
+  the legacy ambiguous prefix is refused without rewriting either file. The state CLI
+  cannot create the intent or complete init.
+- Inception freezes approval and checkpoint references once init starts, refuses a
+  promotion that reaches the same checkpoint file through a different mount, and
+  rechecks create-only absence and ancestor identities before file publication.
 
 ## v1.0.4 (2026-09-18)
 

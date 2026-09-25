@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { syncBuiltinESMExports } from 'node:module';
+import fs from 'node:fs';
 import {
   chmodSync,
   existsSync,
@@ -7,6 +9,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -206,6 +209,40 @@ test('writes compare the previous digest, publish atomically, and identical byte
   assert.deepEqual(readdirSync(join(root, `.apex/inception/${RUN}`)), ['proposal.md'], 'no staging residue');
 }));
 
+test('create-only writes reject a target created while its run directory is made', () => withTemp('mkdir-race', (root) => {
+  guarded(root);
+  const target = join(root, DOC);
+  const runDirectory = join(realpathSync.native(root), `.apex/inception/${RUN}`);
+  const originalMkdir = fs.mkdirSync;
+  let interleaved = false;
+  try {
+    fs.mkdirSync = (...args) => {
+      const result = originalMkdir(...args);
+      if (args[0] === runDirectory && !interleaved) {
+        interleaved = true;
+        const rival = writeInceptionFile(root, DOC, 'rival\n', { runId: RUN, expectedSha256: null });
+        assert.equal(rival.changed, true);
+      }
+      return result;
+    };
+    syncBuiltinESMExports();
+    let caught;
+    try {
+      writeInceptionFile(root, DOC, 'first\n', { runId: RUN, expectedSha256: null });
+    } catch (error) {
+      caught = error;
+    }
+    assert.equal(interleaved, true, 'the rival wrote while mkdirSync was in flight');
+    assert.equal(caught?.code, 'INCEPTION_UNSAFE', caught?.message ?? 'writer did not reject the rival target');
+    assert.match(caught.message, /changed/);
+  } finally {
+    fs.mkdirSync = originalMkdir;
+    syncBuiltinESMExports();
+  }
+  assert.equal(readFileSync(target, 'utf8'), 'rival\n');
+  assert.deepEqual(readdirSync(runDirectory), ['proposal.md'], 'no temp file was staged by the rejected writer');
+}));
+
 test('reads are bounded to 1 MiB and oversize writes are refused before any output', () => withTemp('bounded', (root) => {
   guarded(root);
   mkdirSync(join(root, `.apex/inception/${RUN}`));
@@ -320,6 +357,111 @@ test('a target substituted during the write is detected and left untouched', () 
     },
   }), 'INCEPTION_UNSAFE', /changed/);
 }));
+
+for (const ancestor of ['run', 'intermediate']) {
+  for (const replacement of ['symlink', 'directory']) {
+    test(`publication rejects a replaced ${ancestor} ${replacement} and retains unreachable staging`, () => withTemp('ancestor-race', (root) => withTemp('moved-ancestor', (outside) => {
+      guarded(root);
+      const document = `.apex/inception/${RUN}/research/nested/proposal.md`;
+      writeInceptionFile(root, document, 'original\n', { runId: RUN, expectedSha256: null });
+      const relativeAncestor = `.apex/inception/${RUN}${ancestor === 'intermediate' ? '/research' : ''}`;
+      const source = join(root, relativeAncestor);
+      const moved = join(outside, 'moved');
+      const suffix = ancestor === 'run' ? 'research/nested' : 'nested';
+      let stagedName;
+      let retainedParent;
+      assertCode(() => writeInceptionFile(root, document, 'replacement\n', {
+        runId: RUN,
+        expectedSha256: sha256Hex('original\n'),
+        onCheckpoint({ phase }) {
+          if (phase !== 'before-publish') return;
+          stagedName = readdirSync(join(source, suffix)).find((name) => name.endsWith('.tmp'));
+          assert.ok(stagedName);
+          renameSync(source, moved);
+          if (replacement === 'symlink') {
+            symlinkSync(moved, source);
+            retainedParent = join(moved, suffix);
+          } else {
+            mkdirSync(source);
+            const child = ancestor === 'run' ? 'research' : 'nested';
+            renameSync(join(moved, child), join(source, child));
+            retainedParent = join(source, suffix);
+          }
+        },
+      }), 'INCEPTION_UNSAFE', /changed|symlink/);
+      assert.equal(readFileSync(join(retainedParent, 'proposal.md'), 'utf8'), 'original\n');
+      assert.equal(readFileSync(join(retainedParent, stagedName), 'utf8'), 'replacement\n', 'unsafe cleanup leaves the owned temp in place');
+    })));
+  }
+}
+
+test('cleanup preserves the checkpoint error without inspecting paths beneath an unsafe ancestor', () => withTemp('cleanup-race', (root) => withTemp('cleanup-moved', (outside) => {
+  guarded(root);
+  const document = `.apex/inception/${RUN}/research/proposal.md`;
+  const run = join(realpathSync.native(root), `.apex/inception/${RUN}`);
+  const moved = join(outside, 'moved');
+  const failure = new Error('checkpoint interrupted');
+  const originalLstat = fs.lstatSync;
+  let stagedName;
+  const descendantInspections = [];
+  try {
+    assert.throws(() => writeInceptionFile(root, document, 'staged\n', {
+      runId: RUN,
+      expectedSha256: null,
+      onCheckpoint({ phase }) {
+        if (phase !== 'before-publish') return;
+        stagedName = readdirSync(join(run, 'research')).find((name) => name.endsWith('.tmp'));
+        renameSync(run, moved);
+        symlinkSync(moved, run);
+        fs.lstatSync = (...args) => {
+          if (String(args[0]).startsWith(`${run}/`)) descendantInspections.push(args[0]);
+          return originalLstat(...args);
+        };
+        syncBuiltinESMExports();
+        throw failure;
+      },
+    }), (error) => error === failure);
+  } finally {
+    fs.lstatSync = originalLstat;
+    syncBuiltinESMExports();
+  }
+  assert.deepEqual(descendantInspections, [], 'cleanup stops at the changed ancestor');
+  assert.equal(readFileSync(join(moved, 'research', stagedName), 'utf8'), 'staged\n');
+  assert.equal(existsSync(join(moved, 'research/proposal.md')), false);
+})));
+
+for (const replacement of ['file', 'symlink', 'hardlink', 'in-place edit']) {
+  test(`publication rejects staged temp ${replacement} substitution`, () => withTemp('staged-race', (root) => {
+    guarded(root);
+    writeInceptionFile(root, DOC, 'original\n', { runId: RUN, expectedSha256: null });
+    const parent = join(root, `.apex/inception/${RUN}`);
+    const foreign = join(root, 'foreign.md');
+    writeFileSync(foreign, 'foreign\n');
+    let staged;
+    assertCode(() => writeInceptionFile(root, DOC, 'replacement\n', {
+      runId: RUN,
+      expectedSha256: sha256Hex('original\n'),
+      onCheckpoint({ phase }) {
+        if (phase !== 'before-publish') return;
+        staged = join(parent, readdirSync(parent).find((name) => name.endsWith('.tmp')));
+        if (replacement === 'in-place edit') {
+          writeFileSync(staged, 'edited staging bytes\n');
+        } else if (replacement === 'hardlink') {
+          linkSync(staged, join(root, 'staging-link'));
+        } else {
+          renameSync(staged, join(root, 'owned-staging'));
+          if (replacement === 'symlink') symlinkSync(foreign, staged);
+          else writeFileSync(staged, 'foreign staging\n');
+        }
+      },
+    }), 'INCEPTION_UNSAFE', /staged|hard-linked/);
+    assert.equal(readFileSync(join(root, DOC), 'utf8'), 'original\n');
+    assert.equal(readFileSync(foreign, 'utf8'), 'foreign\n');
+    if (replacement === 'file') assert.equal(readFileSync(staged, 'utf8'), 'foreign staging\n');
+    if (replacement === 'symlink') assert.equal(lstatSync(staged).isSymbolicLink(), true);
+    if (replacement === 'hardlink') assert.equal(readFileSync(join(root, 'staging-link'), 'utf8'), 'replacement\n');
+  }));
+}
 
 test('run directories are created only below a guarded area and only as physical directories', () => withTemp('run-dir', (root) => {
   assertCode(() => ensureInceptionRunDirectory(root, RUN), 'INCEPTION_UNGUARDED');

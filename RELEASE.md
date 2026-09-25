@@ -124,6 +124,17 @@ conflict with `replace` or `abort`. Separately, `validate-hub` and the workflow 
 refuse a stable hub, root-instruction, or provider file with more than one hard link
 (`stable-read: <path> is hard-linked`); replace such a link with an ordinary copy.
 
+**Inception init recovery across versions.** Current `finalize` writes a descriptor
+finalization intent for the exact complete-receipt digest before replacing the prepared
+receipt, then verifies that receipt and records complete state. After interruption,
+rerun `finalize` with the same handoff and a freshly checked passing hub gate; a pending
+intent resumes only through this command. The pending intent is a new intermediate
+descriptor form that an older plugin engine rejects. Update collaborators before they
+resume that run. Ordinary legacy descriptors without the intent keep their original
+canonical form and remain usable when the receipt is still prepared or init is already
+complete. A legacy complete receipt beside a prepared descriptor without intent is
+ambiguous and refused without rewriting either file; retain both for manual review.
+
 **Interrupted bumps.** The writer provides recoverable per-file atomicity, not a
 multi-file atomic transaction. It holds the existing repository scaffold lease for cooperating
 writers, validates all initial versions, and durably records exact before/after bytes and modes

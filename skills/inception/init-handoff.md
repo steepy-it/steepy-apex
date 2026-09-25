@@ -20,6 +20,8 @@ structure of `<engine-root>/templates/inception-verification.md`:
 Finish the commits the Git policy allows before the final code checkpoint. Then record the final
 code checkpoint and bind it (`protocol.md` → "Code checkpoint"). From then on, change no code and
 make no commit until `init` finalizes: a changed file or a moved HEAD diverges the checkpoint.
+The helper rejects checkpoint and promotion destinations that are physical aliases before prepare,
+including a missing destination reached through a different supported mount of the same physical path.
 
 ## Inputs for init
 
@@ -33,6 +35,12 @@ Write these run files (`protocol.md` → "Transfer to init"):
 
 Set phase `init` with `update`. Then invoke the `init` skill with the exact handoff path. `init`
 asks only for missing data, new decisions, and real conflicts.
+
+If `prepare` reports a pending finalization intent, resume with `finalize` through the helper after
+the gate checks; do not restart promotion. A prepared receipt without intent follows the normal
+resume path. The helper refuses an ambiguous old complete receipt whose descriptor remains prepared
+without intent; preserve the receipt and descriptor. The helper must never offer cleanup or re-baseline
+of that prefix.
 
 If `init` reports `diverged` before it starts, loop back: re-run the checks the change affects,
 record and bind a new checkpoint, then write a new handoff at a new exact path. Once `init` has

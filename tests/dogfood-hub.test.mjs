@@ -1080,6 +1080,46 @@ test('docs/architecture.md rows for stable-paths, validate-hub, inception-state,
     'inception-handoff.mjs row must document the destination/checkpoint non-overlap rule');
 });
 
+test('inception finalize documentation locks the durable intent and legacy recovery boundary', () => {
+  const read = (...parts) => readFileSync(join(repoRoot, ...parts), 'utf8').replace(/\s+/g, ' ');
+  const scripts = read('.apex', 'standards', 'scripts.md');
+  const skills = read('.apex', 'standards', 'skills.md');
+  const architecture = readFileSync(join(repoRoot, 'docs', 'architecture.md'), 'utf8');
+  const architectureRow = (script) => architecture.split('\n')
+    .find((line) => line.startsWith(`| \`${script}.mjs\` |`)) ?? '';
+  const release = read('RELEASE.md');
+  const changelog = readFileSync(join(repoRoot, 'CHANGELOG.md'), 'utf8')
+    .split(/\n## v1\.0\.4/u)[0].replace(/\s+/g, ' ');
+
+  assert.match(scripts, /`init\.finalization`[^.]*`path`[^.]*`sha256`/i,
+    'state standard must describe the optional intent reference');
+  assert.match(scripts, /prepared receipt[^.]*finalization intent[^.]*final receipt[^.]*complete state/i,
+    'handoff standard must order the durable finalize writes');
+  assert.match(scripts, /legacy[^.]*complete receipt[^.]*without (?:an? )?intent[^.]*refus/i,
+    'handoff standard must refuse the ambiguous old prefix');
+  assert.match(skills, /finalization intent[^.]*resume[^.]*finalize/i,
+    'skill standard must route an existing intent to finalize');
+  assert.match(architectureRow('inception-state'), /finalization intent[^\n]*verifier/i,
+    'state architecture row must explain the guarded intent transition');
+  assert.match(architectureRow('inception-handoff'), /prepared receipt[^\n]*intent[^\n]*final receipt[^\n]*complete state/i,
+    'handoff architecture row must explain the save sequence');
+  assert.match(release, /legacy[^.]*complete receipt[^.]*without (?:an? )?intent[^.]*refus/i,
+    'release instructions must identify the unrecoverable legacy prefix');
+  assert.match(release, /intent[^.]*older (?:plugin|engine|version)/i,
+    'release instructions must state the mixed-version implication');
+  assert.match(changelog, /finalization intent[^.]*legacy[^.]*refus/i,
+    'v1.1.0 changelog must record the new recovery boundary');
+});
+
+test('tests standard records the inception fix regression matrix without claiming native evidence', () => {
+  const tests = readFileSync(join(repoRoot, '.apex', 'standards', 'tests.md'), 'utf8')
+    .replace(/\s+/g, ' ');
+  assert.match(tests, /finalization intent[^.]*durable write[^.]*crash[^.]*legacy[^.]*refus/i,
+    'tests standard must name the hermetic crash and legacy refusal coverage');
+  assert.match(tests, /approval\/checkpoint[^.]*create-only[^.]*ancestor swaps[^.]*cross-mount file aliases[^.]*before writes/i,
+    'tests standard must name the prewrite negative cases');
+});
+
 test('standards/tests.md keeps the structural-lock inventory at ten skills and flags duplicated fixture helpers', () => {
   const testsStandard = readFileSync(join(repoRoot, '.apex', 'standards', 'tests.md'), 'utf8');
   assert.match(testsStandard, /ten-skill, five-harness inventory/i, 'must update the stale nine-skill count');

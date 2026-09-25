@@ -107,12 +107,20 @@ export function validateInceptionState(value) {
   const approval = validateReference(value.approval, 'approval', value.runId);
   const checkpoint = validateReference(value.checkpoint, 'checkpoint', value.runId);
   if (!isPlainObject(value.init)) fail('INCEPTION_STATE_INVALID', 'init must be an object { status, handoff, receipt }');
-  assertExactKeys(value.init, INIT_KEYS, 'init');
+  const hasFinalization = Object.hasOwn(value.init, 'finalization');
+  assertExactKeys(value.init, hasFinalization ? [...INIT_KEYS, 'finalization'] : INIT_KEYS, 'init');
   if (!INCEPTION_INIT_STATUSES.includes(value.init.status)) {
     fail('INCEPTION_STATE_INVALID', `init.status must be one of ${INCEPTION_INIT_STATUSES.join(', ')}`);
   }
   const handoff = validateReference(value.init.handoff, 'init.handoff', value.runId);
   const receipt = validateReference(value.init.receipt, 'init.receipt', value.runId);
+  let finalization;
+  if (hasFinalization) {
+    finalization = validateReference(value.init.finalization, 'init.finalization', value.runId);
+    if (value.init.status !== 'in-progress' || finalization === null || finalization.path !== receipt?.path) {
+      fail('INCEPTION_STATE_INVALID', 'init.finalization requires in-progress init and the exact init.receipt path');
+    }
+  }
 
   const phaseIndex = INCEPTION_PHASES.indexOf(value.phase);
   if (phaseIndex >= INCEPTION_PHASES.indexOf('bootstrap') && approval === null) {
@@ -134,7 +142,7 @@ export function validateInceptionState(value) {
     status: value.status,
     approval,
     checkpoint,
-    init: Object.freeze({ status: value.init.status, handoff, receipt }),
+    init: Object.freeze({ status: value.init.status, handoff, receipt, ...(hasFinalization ? { finalization } : {}) }),
   });
 }
 
@@ -183,8 +191,8 @@ function sameReference(left, right) {
 
 // The static schema stays open so seeded descriptors remain classifiable; the
 // transfer rules apply to transitions: starting init binds its handoff and
-// its receipt identity, both paths stay fixed afterwards, and the receipt
-// digest advances only when init completes.
+// its receipt identity, freezes approval and checkpoint, keeps the bound paths
+// fixed afterwards, and advances the receipt digest only when init completes.
 export function assertInceptionTransition(previous, next) {
   const before = validateInceptionState(previous);
   const after = validateInceptionState(next);
@@ -200,6 +208,12 @@ export function assertInceptionTransition(previous, next) {
   if (from === 0 && to > 0 && after.init.receipt === null) {
     fail('INCEPTION_STATE_TRANSITION', 'starting init requires the init.receipt reference that binds its receipt');
   }
+  if (from > 0 && !sameReference(before.approval, after.approval)) {
+    fail('INCEPTION_STATE_TRANSITION', 'approval is immutable once init has started');
+  }
+  if (from > 0 && !sameReference(before.checkpoint, after.checkpoint)) {
+    fail('INCEPTION_STATE_TRANSITION', 'checkpoint is immutable once init has started');
+  }
   if (from > 0 && !sameReference(before.init.handoff, after.init.handoff)) {
     fail('INCEPTION_STATE_TRANSITION', 'init.handoff is immutable once init has started');
   }
@@ -209,6 +223,15 @@ export function assertInceptionTransition(previous, next) {
     }
     if (!(from === 1 && to === 2) && after.init.receipt.sha256 !== before.init.receipt.sha256) {
       fail('INCEPTION_STATE_TRANSITION', 'the init.receipt digest advances only when init completes');
+    }
+  }
+  if (before.init.finalization !== undefined) {
+    if (to === 2) {
+      if (!sameReference(before.init.finalization, after.init.receipt)) {
+        fail('INCEPTION_STATE_TRANSITION', 'completion must consume the exact init.finalization intent');
+      }
+    } else if (!sameReference(before.init.finalization, after.init.finalization)) {
+      fail('INCEPTION_STATE_TRANSITION', 'init.finalization is immutable until verified completion');
     }
   }
   if (from < 2 && to === 2 && after.init.receipt === null) {
@@ -469,11 +492,16 @@ function verifyReferences(root, descriptor) {
 // Nothing is derived: approval and completion are only what the caller sets,
 // and init completion additionally needs `verifyInitCompletion` (supplied by
 // the init receipt finalization) to accept the exact next descriptor, so the
-// CLI alone can never record it.
-export function updateInceptionState(root, { expectedSha256, changes, onCheckpoint, verifyInitCompletion } = {}) {
+// CLI alone can never record it. A prospective finalization intent likewise
+// needs verifyFinalizationIntent, is immutable while pending, and is consumed
+// only by verified completion; its digest is not an additional readable input.
+export function updateInceptionState(root, { expectedSha256, changes, onCheckpoint, verifyInitCompletion, verifyFinalizationIntent } = {}) {
   checkpointOption(onCheckpoint);
   if (verifyInitCompletion !== undefined && typeof verifyInitCompletion !== 'function') {
     fail('INCEPTION_STATE_ARGUMENT', 'verifyInitCompletion must be a function');
+  }
+  if (verifyFinalizationIntent !== undefined && typeof verifyFinalizationIntent !== 'function') {
+    fail('INCEPTION_STATE_ARGUMENT', 'verifyFinalizationIntent must be a function');
   }
   if (!isSha256Hex(expectedSha256)) {
     fail('INCEPTION_STATE_ARGUMENT', 'expectedSha256 must be the lowercase SHA-256 digest of the current descriptor');
@@ -491,12 +519,18 @@ export function updateInceptionState(root, { expectedSha256, changes, onCheckpoi
   }
   const next = validateInceptionState({ ...current.descriptor, ...changes });
   assertInceptionTransition(current.descriptor, next);
+  if (next.init.finalization !== undefined && current.descriptor.init.finalization === undefined) {
+    if (verifyFinalizationIntent === undefined) {
+      fail('INCEPTION_STATE_TRANSITION', 'init.finalization is recorded only through verified finalization (inception-handoff finalize)');
+    }
+    verifyFinalizationIntent(next, current.descriptor);
+  }
   verifyReferences(root, next);
   if (next.init.status === 'complete' && current.descriptor.init.status !== 'complete') {
     if (verifyInitCompletion === undefined) {
       fail('INCEPTION_STATE_TRANSITION', 'init completion is recorded only through a verified init receipt (inception-handoff finalize)');
     }
-    verifyInitCompletion(next);
+    verifyInitCompletion(next, current.descriptor);
   }
   const written = writeInceptionFile(root, INCEPTION_STATE_PATH, serializeInceptionState(next), {
     expectedSha256,

@@ -309,10 +309,20 @@ test('the inception entry marks init complete only after the gate, a copy withou
   assert.match(entry, /git ls-files --cached --others --exclude-standard/);
   assert.match(entry, /without Git, every file except `\.apex\/inception\/` and `\.apex\/work\/`/i);
   assert.match(entry, /run `validate-hub\.mjs` on the copy, and delete it/i);
-  assert.ok(entry.indexOf('validate-hub.mjs` on the copy') < entry.indexOf('--gate pass'), 'the copy check precedes finalize');
+  assert.ok(entry.indexOf('validate-hub.mjs` on the copy') < entry.indexOf('inception-handoff.mjs finalize --root'), 'the copy check precedes finalize');
   assert.match(entry, /never record completion by hand/i);
   assert.match(entry, /each decision's receipt outcome/i);
   assert.match(entry, /Do not commit between `prepare` and `finalize`/i);
+});
+
+test('the inception entry resumes pending finalization with the bound helper and refuses ambiguous legacy receipts', () => {
+  const entry = flatSection(skill(), '## Inception entry');
+  assert.match(entry, /`prepare` reports a pending finalization intent[^.]*run `finalize`[^.]*before any promotion/i);
+  assert.match(entry, /same handoff[^.]*bound receipt[^.]*`--gate pass`/i);
+  assert.match(entry, /prepared receipt without intent[^.]*normal resume/i);
+  assert.match(entry, /complete receipt with a prepared descriptor and no intent[^.]*ambiguous[^.]*refus/i);
+  assert.match(entry, /preserve[^.]*receipt and descriptor[^.]*no cleanup or re-baselining/i);
+  assert.doesNotMatch(entry, /inception-state\.mjs update[^\n]*finalization/i);
 });
 
 test('the ordinary path keeps its temporary record while the inception entry keeps its local authoritative copy', () => {

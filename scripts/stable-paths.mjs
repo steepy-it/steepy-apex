@@ -312,6 +312,49 @@ export function createStableReader(hubRoot, diagnostics = [], rootAdmission = ad
     return { state: 'present', label: display, path: join(root, ...stack), physicalPath: cursor, stat: finalStat };
   }
 
+  // Metadata-only localization of an exact file. Unlike inspect's relative
+  // link traversal, this capability requires a complete lexical file path
+  // before an absent component can terminate physical admission. Existing
+  // consumers keep inspect/read's results and traversal semantics unchanged.
+  function locateFile(rawPath, { reportUnsafe = true } = {}) {
+    if (rootAdmission.state === 'unsafe') return { state: 'unsafe' };
+    // Preserve empty components even where both native separators are valid.
+    const parts = typeof rawPath === 'string' ? rawPath.split(sep === '\\' ? /[\\/]/u : '/') : [];
+    if (parts.length === 0 || isAbsolute(rawPath) || rawPath.includes('\0')
+      || parts.some((part) => part === '' || part === '.' || part === '..')) {
+      if (reportUnsafe) report(typeof rawPath === 'string' ? rawPath : '.', 'is not an exact repository-relative file path');
+      return { state: 'unsafe' };
+    }
+    const area = rawPathEntersLocalArea('', rawPath);
+    if (area) return localAreaRefusal(area, displayNativePath(rawPath), reportUnsafe);
+    if (rootAdmission.state !== 'present') return { state: rootAdmission.state };
+    const admitted = inspect(rawPath, { reportUnsafe });
+    if (admitted.state === 'present') {
+      return {
+        state: 'present', physicalPath: admitted.physicalPath,
+        dev: admitted.stat.dev, ino: admitted.stat.ino,
+      };
+    }
+    if (admitted.state !== 'missing') return admitted;
+
+    // Each candidate still passes the same bound reader's component and
+    // local-area checks. Never realpath a missing input or enumerate siblings.
+    for (let count = parts.length - 1; count >= 0; count -= 1) {
+      const parent = inspect(count === 0 ? '.' : parts.slice(0, count).join(sep), {
+        kind: 'directory', reportUnsafe,
+      });
+      if (parent.state === 'missing') continue;
+      if (parent.state !== 'present') return parent;
+      const suffix = parts.slice(count).join(sep);
+      return {
+        state: 'missing', physicalPath: join(parent.physicalPath, suffix),
+        ancestor: { physicalPath: parent.physicalPath, dev: parent.stat.dev, ino: parent.stat.ino },
+        suffix,
+      };
+    }
+    return { state: 'missing' };
+  }
+
   function read(rawPath, options = {}) {
     const admitted = inspect(rawPath, { ...options, kind: 'file' });
     if (admitted.state !== 'present') return { ...admitted, text: undefined };
@@ -364,7 +407,7 @@ export function createStableReader(hubRoot, diagnostics = [], rootAdmission = ad
   }
 
   const fromAbsolute = (path) => relative(root, path);
-  return { diagnostics, fromAbsolute, inspect, isLocalAreaEntry, read, report, root };
+  return { diagnostics, fromAbsolute, inspect, isLocalAreaEntry, locateFile, read, report, root };
 }
 
 // A refusal of one stable document as a throwable error carrying the reader's

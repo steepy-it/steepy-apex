@@ -70,6 +70,15 @@ new exact path (`approval-2.json`, `checkpoint-3.json`).
 - `bootstrap` and later phases need `approval`. `phase: complete` and `status: complete` need
   `init.status: complete`.
 
+Once init starts, approval and checkpoint references, including both path and digest, are immutable.
+The handoff and receipt paths are bound too; only verified completion advances the receipt digest.
+The optional `init.finalization` is exactly `{ path, sha256 }` and exists only with
+`init.status: in-progress`. Its path is the same path as `init.receipt`; its SHA-256 is the expected
+digest of the complete receipt bytes. The helper writes it in canonical order after `receipt`.
+A legacy descriptor without `finalization` remains valid and keeps the same canonical bytes; do not
+add `finalization: null`. The helper removes the intent when it records completion. The intent is
+an expected digest, never an additional permission to read a file.
+
 ```bash
 node <engine-root>/scripts/inception-state.mjs inspect --root . --state .apex/inception/state.json
 node <engine-root>/scripts/inception-state.mjs update --root . --state .apex/inception/state.json --expected-sha256 <descriptor-sha256> --set '<changes-json>'
@@ -79,6 +88,9 @@ node <engine-root>/scripts/inception-state.mjs update --root . --state .apex/inc
 digest you last observed. `<changes-json>` sets `phase`, `status`, `approval`, or `checkpoint`, for
 example `{"phase":"architecture"}`. Leave `init` to `prepare` and `finalize`. Every reference is
 checked against its file on each update.
+`inception-state.mjs update` cannot record the intent or init completion: those transitions require
+the handoff helper's in-process verifiers. Do not put `init.finalization` in model-authored update
+JSON or try to complete init with an update command.
 
 ## Digests
 
@@ -309,6 +321,29 @@ template. A section with nothing approved gets a short explicit statement, never
 `prepare` writes it before the first hub write and binds it in the descriptor; `finalize` completes
 it. It holds the accepted input digests, one outcome per decision, the previous and observed digest
 of each destination, and the gate result. You never write it.
+
+`finalize` checks the bound handoff, inputs, code checkpoint, prepared receipt, promoted contents,
+and passed hub gate. It constructs the canonical complete receipt in memory. Its three durable writes
+are, in order: (1) state with the finalization intent while the prepared receipt stays bound,
+(2) complete receipt bytes at the same path, replacing only the bound prepared bytes, and
+(3) complete descriptor bound to those exact bytes with the intent removed. The helper verifies the
+published receipt before the final state write. A crash after any write is resumed by rerunning
+`finalize` with the same handoff and `--gate pass` after checking the gate again; never write the
+intent or receipt yourself.
+
+| Durable state | Bound receipt | Resume |
+|---|---|---|
+| In progress without intent | Exact prepared receipt | Normal `finalize` starts the sequence. |
+| In progress with intent | Exact prepared receipt | `finalize` reconstructs the complete receipt and requires the intent digest before publishing it. |
+| In progress with intent | Exact complete receipt | `finalize` verifies inputs, destinations, and the intent, then completes only the descriptor. |
+| Complete without intent | Exact complete receipt | `finalize` verifies it and is a no-op, including bytes, mode, and mtime. |
+| Any unexpected bytes or references | Any | Refuse without rewriting user files. |
+
+A legacy run stopped at the prepared receipt without intent can resume normally. An already complete
+legacy run with the exact complete receipt also remains valid. A complete receipt with a prepared
+descriptor and without intent is an ambiguous old prefix: the helper must refuse it, preserve both
+files, and offer no cleanup or re-baselining command. A digest records bytes, not native model
+compliance: deterministic helper tests prove this recovery contract, not native model compliance.
 
 ## Helper checks and your judgement
 
