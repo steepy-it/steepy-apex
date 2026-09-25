@@ -19,7 +19,9 @@ the checklist's reference links explicit. Historical observations do not certify
 
 ## Native evidence boundary
 
-Hermetic fake-harness cases may prove parser, redaction, identity, and false-PASS rejection behavior. They cannot prove a loaded plugin, a skill invocation, generated bootstrap use, or native specialist behavior. Structural locks must keep the nine-skill, five-harness inventory current and keep Pi/DSH out of invented Steepy headless support; release evidence records those capabilities only after the reproducible native protocol.
+Hermetic fake-harness cases may prove parser, redaction, identity, and false-PASS rejection behavior. They cannot prove a loaded plugin, a skill invocation, generated bootstrap use, or native specialist behavior. Structural locks must keep the ten-skill, five-harness inventory current and keep Pi/DSH out of invented Steepy headless support; release evidence records those capabilities only after the reproducible native protocol.
+
+Greenfield inception splits the same way. `inception-integration` is the hermetic vertical matrix: real helpers and public CLIs on labeled synthetic data, isolated HOME/XDG and Git, every read or enumeration recorded before it happens (CLI children through a `--import` preload), zero writes on each refused pre-hub state or transfer input, resume from every durable step converging to the uninterrupted bytes, and a versioned-only copy that validates. Finalization intent coverage exercises each durable write boundary with crashes, resumes exact bytes to a no-op, and tests legacy complete receipt without intent refusal; negative cases also bind approval/checkpoint references, create-only destination races, post-staging ancestor swaps, and cross-mount file aliases before writes. [Inception acceptance](../../docs/inception-acceptance.md) owns the native scenarios and the five-harness matrix; their results start `PENDING` and change only from native observation, each with its date, harness version, and plugin revision. Native runs this release use a model approver, so a PASS there is never observed human approval.
 
 ## Conventions
 - `node --test` with the built-in runner; no third-party framework.
@@ -119,12 +121,7 @@ Hermetic fake-harness cases may prove parser, redaction, identity, and false-PAS
 - A new engine script means a new suite — one-suite-per-script is the **floor** (extra
   integration, dogfood, and doc-content-lock suites are expected), so the narrow-test guidance
   stays true.
-- Assertion helpers are copy-pasted across suites (`assertNoBareWorkflowInvocations` in
-  three suites, `sectionBetween` byte-identical in two, the frontmatter-extraction regex in
-  three) — don't add a fourth copy; extract a shared helper or consciously flag the new
-  copy in review. The same tension applies to the `MODEL_SECTION_WITH_REVIEW` /
-  `MODEL_SECTION_WITHOUT_REVIEW` canonical strings, which byte-lock the five chain SKILL.mds
-  from one test file.
+- Assertion helpers are copy-pasted across suites (`assertNoBareWorkflowInvocations` in three suites, `sectionBetween` byte-identical in two, the frontmatter-extraction regex in three, plus the fs-access recorder and the `withTemp`/`put`/`git` fixture helpers duplicated across several inception and stable-paths suites; `inception-integration` adds one data-URL recorder variant that also instruments CLI children, and its own sandbox/`put`/`git` copies) — don't add a fourth copy; extract a shared helper or consciously flag the new copy in review. The same tension applies to the `MODEL_SECTION_WITH_REVIEW` / `MODEL_SECTION_WITHOUT_REVIEW` canonical strings, which byte-lock the five chain SKILL.mds from one test file. This duplication is acknowledged, not yet extracted; fixing it is out of scope here.
 - Reviewer-response regression uses real Git, the real conductor and synthetic reviewer responses:
   malformed approval resumes once, advances to the next task, preserves prior logs/progress, and
   blocks code changes, invalid corrections, receipt bypass, and corrupted replay. V2 coverage includes explicit NEEDS_CONTEXT retries preserving partial work and rejection of invalid ancestor provenance hidden behind a valid fix. Coverage also resumes retained final approval, advances final-review iterations, and rejects changed plan requirements while permitting exact lifecycle transitions. It does not prove native model compliance.

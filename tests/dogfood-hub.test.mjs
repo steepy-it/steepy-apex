@@ -73,7 +73,7 @@ function dogfoodTempDirectories() {
 function stableApexMarkdownPaths(directory = join(repoRoot, '.apex')) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const absolute = join(directory, entry.name);
-    if (entry.isDirectory()) return entry.name === 'work' ? [] : stableApexMarkdownPaths(absolute);
+    if (entry.isDirectory()) return ['work', 'inception'].includes(entry.name) ? [] : stableApexMarkdownPaths(absolute);
     return entry.isFile() && entry.name.endsWith('.md') ? [absolute] : [];
   });
 }
@@ -534,13 +534,73 @@ test('glossary.md Gear entry\'s scale reaches gear 4', () => {
   assert.match(entry, /gear 4/i, 'Gear entry must describe gear 4');
 });
 
-test('glossary.md Chain skill / Standalone skill entry documents the chain as five, with loop-engineer for gear 4', () => {
+test('glossary.md skill-family entry documents the chain as five, with loop-engineer for gear 4, among three families of ten skills', () => {
   const glossary = readFileSync(join(repoRoot, '.apex', 'glossary.md'), 'utf8');
-  const entry = glossaryEntry(glossary, 'Chain skill / Standalone skill');
-  assert.ok(entry, 'glossary.md must have a Chain skill / Standalone skill entry');
+  const entry = glossaryEntry(glossary, 'Chain skill / Standalone skill / Pre-hub skill');
+  assert.ok(entry, 'glossary.md must have a Chain skill / Standalone skill / Pre-hub skill entry');
   assert.match(entry, /five/i, 'entry must say the chain becomes five');
   assert.match(entry, /loop-engineer/, 'entry must mention loop-engineer');
   assert.match(entry, /gear 4/i, 'entry must relate loop-engineer to gear 4');
+  const flatEntry = entry.replace(/\s+/g, ' ');
+  assert.match(flatEntry, /three skill families of the ten canonical skills/i, 'entry must count three families and ten skills');
+  assert.match(flatEntry, /`init`, `new-surface`, `check`, `discovery`/, 'entry must list the standalone hub-aware skills');
+  assert.match(flatEntry, /pre-hub `inception` skill[^.]*needs no hub[^.]*no gear[^.]*`init`/i, 'entry must define the pre-hub family');
+});
+
+test('stable hub locks the pre-hub inception knowledge and keeps the local area out of stable docs', () => {
+  const read = (...parts) => readFileSync(join(repoRoot, ...parts), 'utf8');
+  const glossary = read('.apex', 'glossary.md');
+  const conventions = read('.apex', 'conventions.md');
+  const skills = read('.apex', 'standards', 'skills.md');
+
+  const entry = (term) => glossaryEntry(glossary, term)?.replace(/\s+/g, ' ') ?? null;
+  const run = entry('Inception run');
+  assert.ok(run, 'glossary.md must define Inception run');
+  assert.match(run, /pre-hub[^.]*`inception`[^.]*approved project[^.]*verified bootstrap[^.]*`init`/i);
+  assert.match(run, /`\.apex\/inception\/<run-id>\/`[^.]*ignored[^.]*outside the hub DAG/i);
+  const descriptor = entry('Inception descriptor');
+  assert.ok(descriptor, 'glossary.md must define Inception descriptor');
+  assert.match(descriptor, /`\.apex\/inception\/state\.json`[^.]*one canonical/i);
+  assert.match(descriptor, /never proves approval or a valid hub/i);
+  const handoff = entry('Inception handoff');
+  assert.ok(handoff, 'glossary.md must define Inception handoff');
+  assert.match(handoff, /`inception-handoff: steepy-apex\/v1`[\s\S]*`\.apex\/inception\/state\.json` for `state`[\s\S]*`approval`, `project`, `verification`, `confirmed-inputs`, `promotion`/);
+  assert.match(handoff, /separate from the chain's `handoff: steepy-apex\/v1`/i);
+  const promotion = entry('Promotion table');
+  assert.ok(promotion, 'glossary.md must define Promotion table');
+  assert.match(promotion, /promote[^.]*stable destination[^.]*exact text[^.]*exclude[^.]*reason/i);
+  const receipt = entry('Init receipt');
+  assert.ok(receipt, 'glossary.md must define Init receipt');
+  assert.match(receipt, /input digests[\s\S]*one outcome per decision[\s\S]*gate/i);
+
+  const section = conventions.match(/## Inception \(pre-hub\)\n([\s\S]*?)(?=\n## |$)/)?.[1];
+  assert.ok(section, 'conventions.md must have an "## Inception (pre-hub)" section');
+  const flat = section.replace(/\s+/g, ' ');
+  assert.match(flat, /invents no specialist, standard, or bootstrap before `init`[^.]*no chain role, gear, handoff grammar, or controller/i);
+  assert.match(flat, /own `\*` ignore guard before any document or state[^.]*outside the DAG, `validate-hub`, and every ordinary stable read/i);
+  assert.match(flat, /descriptor and exact paths named for the current step[^.]*nothing is browsed or picked by recency/i);
+  assert.match(flat, /approves the whole project once, before bootstrap[^.]*exact project bytes/i);
+  assert.match(flat, /substantial change[^.]*targeted decision and a new approval/i);
+  assert.match(flat, /official sources, explicit versions, and a verification date; no preset stack/i);
+  assert.match(flat, /Helpers verify formats, paths, digests, and receipts; the skill owns dialogue, architecture judgement, evidence interpretation, and promotion decisions/i);
+  assert.match(flat, /reuses the confirmed record, asks only for missing data, new decisions, or real conflicts, keeps the planner and Project model v1 unchanged/i);
+  assert.match(flat, /per-decision receipt, a passing gate, and a hub that validates without `\.apex\/inception\/` or `\.apex\/work\/`/i);
+  assert.match(flat, /Unbuilt intentions never appear as existing components; future flows stay context, not backlog/i);
+  assert.match(flat, /`discovery` reads only stable knowledge and ordinary source[^.]*never re-approves/i);
+  assert.match(conventions, /the ten skills in `skills\/`/);
+
+  const flatSkills = skills.replace(/\s+/g, ' ');
+  assert.match(flatSkills, /ten canonical skills in three families/i);
+  assert.match(flatSkills, /`discovery` has its own prose dispatch policy; `inception` may delegate only under its exact-path rule; the rest do not dispatch/i);
+  assert.match(flatSkills, /the pre-hub `inception` skill with its co-located `protocol\.md`, `reconnaissance\.md`, `architecture\.md`, `bootstrap\.md`, and `init-handoff\.md`/);
+  assert.match(flatSkills, /`inception` loads one support file per phase[^.]*`protocol\.md` mirrors the helper formats and the helpers win/i);
+  assert.match(flatSkills, /no gear-0, checklist, Model Selection lock, manual-handoff block, or workflow header/i);
+  assert.match(flatSkills, /`init` checks for an inception transfer before its fresh\/repair fork/i);
+  assert.match(flatSkills, /`discovery` and its explorer never read `\.apex\/inception\/\*\*` or `\.apex\/work\/\*\*` as knowledge/i);
+
+  for (const path of stableApexMarkdownPaths()) {
+    assert.doesNotMatch(readFileSync(path, 'utf8'), /\]\([^)]*\.apex\/inception\//, `${path} must not link local inception artifacts`);
+  }
 });
 
 test('glossary.md defines Loop Engineer as the gear-4 mode and the human role', () => {
@@ -739,4 +799,331 @@ test('standards/skills.md Conventions states the plan task-cutting criterion (di
   const section = match[1];
   assert.match(section, /`plan`[\s\S]{0,120}discover/i, "Conventions must state plan's task-cutting criterion");
   assert.match(section, /mis-cut/i, 'the criterion must name a mis-cut task');
+});
+
+test('docs/inception.md documents the greenfield path end to end and stays self-sufficient', () => {
+  const path = join(repoRoot, 'docs', 'inception.md');
+  assert.ok(existsSync(path), 'docs/inception.md must exist');
+  const text = readFileSync(path, 'utf8');
+  const flat = text.replace(/\s+/g, ' ');
+
+  assert.match(flat, /needs no hub to start/i, 'must state inception needs no hub');
+  assert.match(flat, /hands off to `init`/i, 'must state the handoff to init');
+
+  for (const material of ['Empty', 'Starter', 'Design system', 'UI/UX prototype']) {
+    assert.match(flat, new RegExp(`\\*\\*${material}\\*\\*`), `must list starting material: ${material}`);
+  }
+  assert.match(flat, /real \(working code, real data, a real integration\) or simulated/i,
+    'must distinguish real from simulated elements');
+  assert.match(flat, /mature application[^.]*out of scope/i, 'must exclude mature applications from scope');
+
+  for (const phase of ['Reconnaissance', 'Architecture', 'Research', 'Approval', 'Bootstrap', 'Verification', 'Init']) {
+    assert.match(flat, new RegExp(`\\*\\*${phase}\\*\\*`), `must name phase: ${phase}`);
+  }
+  assert.match(flat, /representative path/i, 'must describe the representative path');
+
+  assert.match(flat, /approve the whole project once[^.]*before bootstrap starts/i,
+    'must describe the one-time approval before bootstrap');
+  assert.match(flat, /substantial[^.]*database, a boundary, a flow, the design, the deploy choice, or a foundational technology/i,
+    'must enumerate what counts as a substantial change');
+  assert.match(flat, /targeted decision and a new approval/i, 'must require a new approval for a substantial change');
+
+  assert.match(flat, /configured\*\*, \*\*executed\*\*, \*\*succeeded\*\*, \*\*not-executed\*\*, or \*\*failed/i,
+    'must keep verification results distinct');
+
+  assert.match(flat, /deploy is optional/i, 'must state deploy is optional');
+  assert.match(flat, /excluded deploy is not a shortcut/i, 'must not let excluded deploy skip verification claims');
+  assert.match(flat, /never reported as succeeded without evidence/i, 'must never claim deploy success without evidence');
+
+  assert.match(flat, /resume reads only the exact files/i, 'must describe exact-path resume');
+  assert.match(flat, /never by browsing the run's own local directory/i, 'must forbid directory listing on resume');
+
+  assert.match(flat, /`init` reuses everything the run already confirmed/i, 'must describe init reuse');
+  assert.match(flat, /no deferred flow starts an implicit backlog/i, 'must deny an implicit backlog');
+  assert.match(flat, /without the run's local, gitignored records/i, 'must state the hub stands without local records');
+
+  assert.match(flat, /proposes no default stack/i, 'must not promise a universal stack');
+  assert.match(flat, /no fixed document count/i, 'must not promise a fixed document count');
+
+  assert.doesNotMatch(text, /\]\([^)]*\.apex\/work\//, 'must not link local .apex/work artifacts');
+  assert.doesNotMatch(text, /\]\([^)]*\.apex\/inception\//, 'must not link local .apex/inception artifacts');
+  assert.doesNotMatch(text, /\.apex\/work\/specs|\.apex\/work\/plans/, 'must not reference concrete spec/plan work paths');
+});
+
+// The native acceptance protocol is a stable, packaged document: reproducible
+// inputs and judging rules, one closed result vocabulary, and results that a
+// hermetic test can never supply. A result other than PENDING must carry the
+// observation that produced it.
+const ACCEPTANCE_RESULTS = ['PENDING', 'PASS', 'PARTIAL', 'FAIL', 'NOT RUN', 'BLOCKED'];
+const HARNESS_RESULTS = ['PENDING', 'OBSERVED', 'FAIL', 'NOT RUN'];
+const CRITERION_OUTCOMES = ['PASS', 'PARTIAL', 'FAIL', 'NOT OBSERVED', 'NOT RUN'];
+
+function markdownTable(text, heading) {
+  const section = text.split(`${heading}\n`)[1]?.split(/\n#{2,} /u)[0] ?? '';
+  const rows = section.split('\n').filter((line) => line.startsWith('|'));
+  assert.ok(rows.length >= 3, `${heading} must hold a table`);
+  const cells = (line) => line.slice(1, -1).split('|').map((cell) => cell.trim());
+  const header = cells(rows[0]);
+  return rows.slice(2).map((line) => Object.fromEntries(cells(line).map((cell, index) => [header[index], cell])));
+}
+
+// A result table that records runs names every run's approver, first word
+// `model` or `human`; only a human approver who is not a model can pass the
+// approval criterion.
+function assertObservedResult(row, label, { vocabulary = ACCEPTANCE_RESULTS, approver = false } = {}) {
+  assert.ok(vocabulary.includes(row.Result), `${label}: result '${row.Result}' is outside the closed vocabulary`);
+  if (approver) assert.ok(Object.hasOwn(row, 'Approver'), `${label}: the table keeps its Approver column`);
+  if (row.Result === 'PENDING') return;
+  assert.match(row['Observed on'], /^\d{4}-\d{2}-\d{2}$/u, `${label}: a ${row.Result} needs its observation date`);
+  if (!(row.Result === 'NOT RUN' && /\bnot installed\b/iu.test(row['Harness and version']))) {
+    assert.match(row['Harness and version'], /\S+ \S*\d/u, `${label}: a ${row.Result} needs the harness and its version`);
+  }
+  assert.match(row['Plugin revision'], /^`[0-9a-f]{7,40}`$/u, `${label}: a ${row.Result} needs the plugin revision`);
+  if (approver) {
+    assert.match(row.Approver, /^(?:model|human)\b/iu, `${label}: a ${row.Result} names its approver first, a model or a human`);
+  }
+  if (!['PASS', 'OBSERVED'].includes(row.Result)) {
+    assert.match(row.Limits ?? row.Notes ?? '', /\w{3}/u, `${label}: a ${row.Result} states its reason`);
+  }
+}
+
+const humanApprover = (approver) => /^human\b/iu.test(approver ?? '') && !/\bmodel\b/iu.test(approver);
+
+// A criterion table uses legend criteria, an outcome from its own closed
+// vocabulary, and a reason per row. Unless every approver is a human, the
+// approval criterion is never PASS.
+function assertCriterionTable(text, heading, criteria, approvers, label) {
+  const rows = markdownTable(text, heading);
+  for (const row of rows) {
+    assert.ok(criteria.includes(row.Criterion), `${label}: '${row.Criterion}' is a legend criterion`);
+    assert.ok(CRITERION_OUTCOMES.includes(row.Outcome), `${label} / ${row.Criterion}: outcome '${row.Outcome}' is outside the closed vocabulary`);
+    assert.match(row.Reason ?? '', /\w{3}/u, `${label} / ${row.Criterion}: the outcome states its reason`);
+  }
+  if (!approvers.every(humanApprover)) {
+    const approval = rows.find((row) => /^Approval\b/u.test(row.Criterion));
+    assert.notEqual(approval?.Outcome, 'PASS', `${label}: a model approval never passes the approval gate`);
+  }
+  return rows;
+}
+
+test('docs/inception-acceptance.md is a reproducible native protocol whose results only native observation fills', () => {
+  const path = join(repoRoot, 'docs', 'inception-acceptance.md');
+  assert.ok(existsSync(path), 'docs/inception-acceptance.md must exist');
+  const text = readFileSync(path, 'utf8');
+  const flat = text.replace(/\s+/g, ' ');
+
+  for (const [scenario, ecosystem] of [
+    ['A', /JavaScript or TypeScript/u],
+    ['B', /may reuse scenario A's ecosystem/iu],
+    ['C', /Python or another ecosystem that is not JavaScript/u],
+  ]) {
+    const section = text.split(new RegExp(`\\n### Scenario ${scenario} — `, 'u'))[1]?.split(/\n### |\n## /u)[0];
+    assert.ok(section, `must define scenario ${scenario}`);
+    for (const label of ['Inputs', 'Observe', 'Judge', 'Ecosystem']) {
+      assert.match(section, new RegExp(`\\*\\*${label}:\\*\\*`, 'u'), `scenario ${scenario} must state ${label}`);
+    }
+    assert.match(section.replace(/\s+/g, ' '), ecosystem, `scenario ${scenario} ecosystem`);
+  }
+  assert.match(flat, /through the public `inception` skill in a real harness/i, 'proofs run the public skill natively');
+  assert.match(flat, /at least one scenario interrupts and resumes/i, 'a resume must be observed natively');
+
+  for (const result of ['PARTIAL', 'OBSERVED', 'NOT OBSERVED']) {
+    assert.match(flat, new RegExp(`\`${result}\` \\(`, 'u'), `the judging rules must define ${result}`);
+  }
+  assert.match(flat, /A partial proof stays open/i, 'a partial proof stays open');
+  const criteria = markdownTable(text, '### Criteria').map((row) => row.Criterion);
+  assert.equal(criteria.length, 16, 'the criteria legend names every criterion');
+  assert.ok(criteria.some((name) => /^Approval\b/u.test(name)), 'the legend names the approval criterion');
+
+  const scenarios = markdownTable(text, '## Scenario results');
+  assert.deepEqual(scenarios.map((row) => row.Scenario), ['A', 'B', 'C']);
+  scenarios.forEach((row) => assertObservedResult(row, `scenario ${row.Scenario}`, { approver: true }));
+  let resultTables = 2;
+  let criterionTables = 0;
+  for (const scenario of scenarios.filter((row) => row.Result !== 'PENDING')) {
+    const label = `scenario ${scenario.Scenario}`;
+    const rows = assertCriterionTable(text, `### Scenario ${scenario.Scenario} result`, criteria, [scenario.Approver], label);
+    assert.deepEqual(rows.map((row) => row.Criterion), criteria, `${label} lists every criterion in order`);
+    criterionTables += 1;
+  }
+  if (text.includes('\n## Populated-hub re-check\n')) {
+    const runs = markdownTable(text, '## Populated-hub re-check');
+    runs.forEach((row) => assertObservedResult(row, `re-check ${row.Run}`, { approver: true }));
+    assertCriterionTable(text, '### Re-check criteria', criteria, runs.map((row) => row.Approver), 're-check');
+    resultTables += 1;
+    criterionTables += 1;
+  }
+  const harnesses = markdownTable(text, '## Harness discovery and invocation matrix');
+  assert.deepEqual(harnesses.map((row) => row.Harness), ['Claude Code', 'Codex', 'OpenCode', 'Pi', 'DeepSeek Harness']);
+  harnesses.forEach((row) => assertObservedResult(row, row.Harness, { vocabulary: HARNESS_RESULTS }));
+  const headers = text.split('\n').filter((line) => line.startsWith('|'));
+  assert.equal(headers.filter((line) => /\|\s*Result\s*\|\s*Observed on\s*\|/u.test(line)).length, resultTables,
+    'every result table sits under a checked heading');
+  assert.equal(headers.filter((line) => /^\|\s*Criterion\s*\|\s*Outcome\s*\|/u.test(line)).length, criterionTables,
+    'every criterion table sits under a checked heading');
+  assert.match(flat, /fake-host[^.]*not native evidence/i, 'fixture and fake-host tests are not native evidence');
+
+  assert.match(flat, /model approver/i, 'must state the approver used by native runs of this release');
+  assert.match(flat, /never counts as observed human approval/i, 'a model-approved PASS is not human approval');
+  assert.match(flat, /A blocked proof stays open/i, 'a blocked proof stays open');
+  assert.match(flat, /`tests\/inception-integration\.test\.mjs`[^.]*not native evidence/i, 'the hermetic suite is not native evidence');
+  assert.match(flat, /no paid service, publication, or real deploy/i);
+  assert.match(flat, /No proof runs an uncertain or a real deploy/i, 'no deploy is run or simulated');
+  assert.match(flat, /crash between a receipt write and its descriptor write[^.]*resumes by observing[^.]*never repeats/i,
+    'must name the real hermetic analog of an uncertain effect');
+  assert.match(flat, /uncertain[^.]*deploy[^.]*locked only as skill text[^.]*native observation/i,
+    'deploy-specific uncertain-outcome reconciliation needs native observation');
+  assert.doesNotMatch(flat, /(?:deploy|uncertain)[^.]*simulat[^.]*hermetic|hermetic[^.]*simulat[^.]*(?:deploy|uncertain)/i,
+    'must not claim a hermetic deploy or uncertain-outcome simulation');
+  assert.match(flat, /`<redacted>`/u, 'must state the redaction form');
+
+  assert.doesNotMatch(text, /\]\([^)]*\.apex\/(?:work|inception)\//u, 'must not link local artifacts');
+  assert.doesNotMatch(text, /\/(?:Users|home)\/[a-z]|[A-Z]:\\\\Users|\/private\/var\/|\/tmp\/steepy/u, 'must not carry local absolute paths');
+  assert.doesNotMatch(text, /\/var\/folders\/|\/private\/tmp\/|(?:^|[\s(`'"])\/tmp\/|~\/\.[a-z]|\$(?:TMPDIR|HOME)\b/u,
+    'must not carry a temporary, workspace, or home path');
+  assert.doesNotMatch(text, /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/iu, 'must not carry a session or run ID');
+  assert.doesNotMatch(text, /[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}\b/iu, 'must not carry an email address');
+  assert.doesNotMatch(text, /\b(?:sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{12,})|Bearer [A-Za-z0-9._-]{8,}/u,
+    'must not carry a credential');
+});
+
+test('standards/tests.md keeps the hermetic inception matrix apart from the native acceptance protocol', () => {
+  const tests = readFileSync(join(repoRoot, '.apex', 'standards', 'tests.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(tests, /`inception-integration`/u, 'must name the hermetic vertical suite');
+  assert.match(tests, /\[Inception acceptance\]\(\.\.\/\.\.\/docs\/inception-acceptance\.md\)/u, 'must link the native protocol');
+  assert.match(tests, /model approver/i, 'must state the approver boundary');
+});
+
+test('README introduces the greenfield inception entry alongside init and links docs/inception.md', () => {
+  const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
+  assert.match(readme, /\|\s*`\/steepy-apex:inception`\s*\|/, 'Skills table must list /steepy-apex:inception');
+  assert.match(readme, /new application with no code yet/i, 'Get started must name the greenfield entry point');
+  assert.match(readme, /\[docs\/inception\.md\]\(docs\/inception\.md\)/, 'README must link docs/inception.md');
+  const getStartedIdx = readme.indexOf('## Get started');
+  assert.ok(getStartedIdx !== -1, 'README must have a "## Get started" section');
+  const inceptionMentionIdx = readme.indexOf('inception', getStartedIdx);
+  const initStepIdx = readme.indexOf('/steepy-apex:init` - Initialize', getStartedIdx);
+  assert.ok(
+    inceptionMentionIdx !== -1 && initStepIdx !== -1 && inceptionMentionIdx < initStepIdx,
+    'README must introduce the greenfield entry before the ordinary numbered init step'
+  );
+});
+
+test('_INDEX.md separates the stable DAG from both local areas and states the pre-hub exception', () => {
+  const index = readFileSync(join(repoRoot, '.apex', '_INDEX.md'), 'utf8');
+  const flat = index.replace(/\s+/g, ' ');
+  assert.match(flat, /excludes `\.apex\/work\/\*\*` and `\.apex\/inception\/\*\*`/,
+    '_INDEX.md must exclude both local areas from the anti-orphan check');
+  assert.match(flat, /pre-hub `inception` run in progress/i, '_INDEX.md must name the pre-hub exception');
+  assert.match(flat, /without ever treating it as a coherent hub/i, '_INDEX.md must deny pre-hub coherence');
+  assert.match(flat, /never by listing the directory/i, '_INDEX.md must forbid directory listing of inception');
+});
+
+test('glossary.md defines Approved project, Representative path, Verified result, and Deferred flow', () => {
+  const glossary = readFileSync(join(repoRoot, '.apex', 'glossary.md'), 'utf8');
+  const flatEntry = (term) => glossaryEntry(glossary, term)?.replace(/\s+/g, ' ') ?? null;
+
+  const approved = flatEntry('Approved project');
+  assert.ok(approved, 'glossary.md must define Approved project');
+  assert.match(approved, /exact digests of that approved text/i);
+  assert.match(approved, /new approval at a new path/i);
+
+  const path = flatEntry('Representative path');
+  assert.ok(path, 'glossary.md must define Representative path');
+  assert.match(path, /crosses its agreed boundaries end to end/i);
+  assert.match(path, /other flows stay recorded context/i);
+
+  const verified = flatEntry('Verified result');
+  assert.ok(verified, 'glossary.md must define Verified result');
+  assert.match(verified, /configured[\s\S]*executed[\s\S]*succeeded[\s\S]*not-executed[\s\S]*failed/i);
+
+  const deferred = flatEntry('Deferred flow');
+  assert.ok(deferred, 'glossary.md must define Deferred flow');
+  assert.match(deferred, /project-context\.md/);
+  assert.match(deferred, /never as an existing component, a spec, or a started backlog item/i);
+});
+
+test('conventions.md distinguishes the DAG, work, and inception local areas and points to the public guide', () => {
+  const conventions = readFileSync(join(repoRoot, '.apex', 'conventions.md'), 'utf8');
+  const section = conventions.match(/## Inception \(pre-hub\)\n([\s\S]*?)(?=\n## |$)/)?.[1];
+  assert.ok(section, 'conventions.md must have an "## Inception (pre-hub)" section');
+  const flat = section.replace(/\s+/g, ' ');
+  assert.match(flat, /three distinct areas/i, 'must call out three distinct areas');
+  assert.match(flat, /only the DAG is versioned and reachable from `_INDEX\.md`/i);
+  assert.match(flat, /\[docs\/inception\.md\]\(\.\.\/docs\/inception\.md\)/, 'must link the public walkthrough');
+});
+
+test("standards/skills.md notes the public inception walkthrough is outside this standard's ownership", () => {
+  const skillsStandard = readFileSync(join(repoRoot, '.apex', 'standards', 'skills.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(skillsStandard, /docs\/inception\.md/, 'skills.md must reference docs/inception.md');
+  assert.match(skillsStandard, /outside this standard's ownership/i);
+});
+
+test('docs/architecture.md rows for stable-paths, validate-hub, inception-state, and inception-handoff match their implementation', () => {
+  const architecture = readFileSync(join(repoRoot, 'docs', 'architecture.md'), 'utf8');
+  const row = (script) => architecture.match(new RegExp(`\\| \`${script}\\.mjs\` \\|([^\\n]*)\\|`))?.[1] ?? '';
+
+  const stablePaths = row('stable-paths');
+  assert.match(stablePaths, /`\.apex\/inception`/, 'stable-paths.mjs row must name .apex/inception');
+  assert.match(stablePaths, /readStableDocument/, 'stable-paths.mjs row must name readStableDocument');
+
+  const validateHub = row('validate-hub');
+  assert.match(validateHub, /pre-hub `inception` state/i, 'validate-hub.mjs row must document pre-hub recognition');
+  assert.match(validateHub, /never counts as pre-hub|not[^.]*coherent hub/i);
+
+  const inceptionState = row('inception-state');
+  assert.match(inceptionState, /observeRepositoryRevision/, 'inception-state.mjs row must name observeRepositoryRevision');
+  assert.match(inceptionState, /assertInceptionTransition/, 'inception-state.mjs row must name assertInceptionTransition');
+
+  const inceptionHandoff = row('inception-handoff');
+  assert.match(inceptionHandoff, /checkpoint inventory path[^.]*is refused/i,
+    'inception-handoff.mjs row must document the destination/checkpoint non-overlap rule');
+});
+
+test('inception finalize documentation locks the durable intent and legacy recovery boundary', () => {
+  const read = (...parts) => readFileSync(join(repoRoot, ...parts), 'utf8').replace(/\s+/g, ' ');
+  const scripts = read('.apex', 'standards', 'scripts.md');
+  const skills = read('.apex', 'standards', 'skills.md');
+  const architecture = readFileSync(join(repoRoot, 'docs', 'architecture.md'), 'utf8');
+  const architectureRow = (script) => architecture.split('\n')
+    .find((line) => line.startsWith(`| \`${script}.mjs\` |`)) ?? '';
+  const release = read('RELEASE.md');
+  const changelog = readFileSync(join(repoRoot, 'CHANGELOG.md'), 'utf8')
+    .split(/\n## v1\.0\.4/u)[0].replace(/\s+/g, ' ');
+
+  assert.match(scripts, /`init\.finalization`[^.]*`path`[^.]*`sha256`/i,
+    'state standard must describe the optional intent reference');
+  assert.match(scripts, /prepared receipt[^.]*finalization intent[^.]*final receipt[^.]*complete state/i,
+    'handoff standard must order the durable finalize writes');
+  assert.match(scripts, /legacy[^.]*complete receipt[^.]*without (?:an? )?intent[^.]*refus/i,
+    'handoff standard must refuse the ambiguous old prefix');
+  assert.match(skills, /finalization intent[^.]*resume[^.]*finalize/i,
+    'skill standard must route an existing intent to finalize');
+  assert.match(architectureRow('inception-state'), /finalization intent[^\n]*verifier/i,
+    'state architecture row must explain the guarded intent transition');
+  assert.match(architectureRow('inception-handoff'), /prepared receipt[^\n]*intent[^\n]*final receipt[^\n]*complete state/i,
+    'handoff architecture row must explain the save sequence');
+  assert.match(release, /legacy[^.]*complete receipt[^.]*without (?:an? )?intent[^.]*refus/i,
+    'release instructions must identify the unrecoverable legacy prefix');
+  assert.match(release, /intent[^.]*older (?:plugin|engine|version)/i,
+    'release instructions must state the mixed-version implication');
+  assert.match(changelog, /finalization intent[^.]*legacy[^.]*refus/i,
+    'v1.1.0 changelog must record the new recovery boundary');
+});
+
+test('tests standard records the inception fix regression matrix without claiming native evidence', () => {
+  const tests = readFileSync(join(repoRoot, '.apex', 'standards', 'tests.md'), 'utf8')
+    .replace(/\s+/g, ' ');
+  assert.match(tests, /finalization intent[^.]*durable write[^.]*crash[^.]*legacy[^.]*refus/i,
+    'tests standard must name the hermetic crash and legacy refusal coverage');
+  assert.match(tests, /approval\/checkpoint[^.]*create-only[^.]*ancestor swaps[^.]*cross-mount file aliases[^.]*before writes/i,
+    'tests standard must name the prewrite negative cases');
+});
+
+test('standards/tests.md keeps the structural-lock inventory at ten skills and flags duplicated fixture helpers', () => {
+  const testsStandard = readFileSync(join(repoRoot, '.apex', 'standards', 'tests.md'), 'utf8');
+  assert.match(testsStandard, /ten-skill, five-harness inventory/i, 'must update the stale nine-skill count');
+  assert.doesNotMatch(testsStandard, /nine-skill/i, 'must not still say nine-skill');
+  assert.match(testsStandard, /fs-access recorder/i, 'must flag the duplicated fs-access recorder');
+  assert.match(testsStandard, /`withTemp`\/`put`\/`git`/, 'must flag the duplicated withTemp/put/git helpers');
 });

@@ -3,23 +3,19 @@
 > Owning surface: `skills`. Read this before editing `skills`.
 
 ## Scope
-- Owns: slash-command `SKILL.md` files and co-located prompts under `skills/`, including implementer,
-  task/final reviewer, discovery explorer, and `skills/loop-engineer/loop-implementer-prompt.md` plus
-  `skills/loop-engineer/loop-final-review-prompt.md`. The five chain skills
-  short-circuit Gear 2 through brainstorm → implement, run Gear 3 through brainstorm → plan →
-  implement → review, and assign Gear 4 to `loop-engineer`; standalone hub-aware skills are `init`,
-  `new-surface`, `check`, and additive/re-runnable `discovery`. Chain skills carry gear-0, a checklist,
-  and the locked Model Selection block; `discovery` has its own prose dispatch policy; the rest do not dispatch.
+- Owns: slash-command `SKILL.md` files and co-located prompts under `skills/`, including implementer, task/final reviewer, discovery explorer, `skills/loop-engineer/loop-implementer-prompt.md` plus `skills/loop-engineer/loop-final-review-prompt.md`, and the pre-hub `inception` skill with its co-located `protocol.md`, `reconnaissance.md`, `architecture.md`, `bootstrap.md`, and `init-handoff.md`.
+  Ten canonical skills in three families: the five chain skills short-circuit Gear 2 through brainstorm → implement, run Gear 3 through brainstorm → plan → implement → review, and assign Gear 4 to `loop-engineer`; standalone hub-aware skills are `init`, `new-surface`, `check`, and additive/re-runnable `discovery`; `inception` is the pre-hub family. Chain skills carry gear-0, a checklist, and the locked Model Selection block; `discovery` has its own prose dispatch policy; `inception` may delegate only under its exact-path rule; the rest do not dispatch.
 - Does NOT own: the engine scripts they call (→ `scripts`) or the markdown templates they copy
-  (→ `templates`).
+  (→ `templates`). `docs/inception.md`, the pre-hub skill's public walkthrough, is outside this
+  standard's ownership.
 - Exemplar: `skills/init/SKILL.md`
 
 ## Conventions
 - Each `SKILL.md` has YAML frontmatter (`user-invocable: true`) plus deterministic gates; the
   five chain skills (brainstorm/plan/implement/review/loop-engineer) additionally carry a
   `## Checklist`.
-- Skills are hub-aware: read the `_INDEX.md` routing table, write governed
-  artifacts under `.apex/`, keep the graph coherent.
+- Chain and standalone skills are hub-aware: read the `_INDEX.md` routing table, write governed
+  artifacts under `.apex/`, keep the graph coherent. `inception` runs before the hub exists.
 - Reviewer dispatch uses abstract model tiers, translated to a concrete model at dispatch time per
   harness (single canonical source: the Model Selection block); weigh **turn count, not just
   token price** (mid-tier is the floor for reviewers and prose-fed implementers); never hardcode
@@ -39,6 +35,7 @@
 - Engine scripts are invoked as `node <engine-root>/scripts/<x>.mjs`, resolved relative to the
   skill's own base directory — never a machine-specific absolute path or a `CLAUDE_*` env var
   (`conventions.md` → "Multi-harness distribution").
+- `inception` loads one support file per phase from its phase table; `protocol.md` mirrors the helper formats and the helpers win. It carries no gear-0, checklist, Model Selection lock, manual-handoff block, or workflow header, and invents no hub artifact before `init`. `init` checks for an inception transfer before its fresh/repair fork and takes it through the unchanged helpers and planner. A pending finalization intent makes `init` resume `finalize` before promotion, using the same bound handoff and receipt after rechecking the gate. A legacy complete receipt with a prepared descriptor and no intent is ambiguous: refuse it without rewriting either file; ordinary prepared and completed legacy transfers remain usable. `discovery` and its explorer never read `.apex/inception/**` or `.apex/work/**` as knowledge.
 - Gear-4 has a hard engine/skill boundary. `loop-engineer` validates the exact fresh/resume capability and complete ratified goal, reads stable routed inputs, selects an active harness with a supported `adapters/headless.mjs` mapping, asks once for controller-owned commits (both modes require yes), and invokes `node <engine-root>/scripts/loop-engineer.mjs --repo-root . --goal ... --harness ... --commit-authorized`, adding `--resume --ledger ...` only for an exact authorized resume.
   The script owns attempts, immutable event state, verifier policy, Git, blast radius, fixed mutation budget, final branch review, lifecycle, and terminal outcome; the skill never interprets ledger Markdown as state, grants extra fixes, or offers an inline fallback, and may only report output plus emit the exact terminal `goal` + `loop-ledger` handoff.
   Its terminal result carries an explicit validated-terminal bit and exact paths, so the skill never reopens Markdown lifecycle. Gear-4 review preserves the public `goal` + `loop-ledger` capability while the script's exclusive read-only `--validate-terminal` mode safely derives and replays private events, authenticates the complete projection, makes no Git/lifecycle mutation, and returns bounded branch-review, attempt-budget, and goal-candidate facts.

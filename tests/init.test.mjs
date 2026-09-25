@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { devNull, tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scaffold } from '../scripts/new-surface.mjs';
@@ -211,4 +212,173 @@ test('repair adds a missing surface without clobbering the existing _INDEX.md or
   const plan = readFileSync(join(hub, '.apex', 'work', 'plans', 'auth-plan.md'), 'utf8');
   assert.match(spec, /Auth spec/, 'local work spec preserved');
   assert.match(plan, /Auth plan/, 'local work plan preserved');
+});
+
+// --- Inception entry (instruction checks, not proof that a model applies them) -------
+// The new entry precedes the ordinary fresh/repair fork, reuses the inception
+// transfer's confirmed record through the unchanged helpers and planner, and
+// marks init complete only through the receipt helper after the hub gate.
+
+function flatSection(text, start, end) {
+  const from = text.indexOf(start);
+  assert.notEqual(from, -1, `missing heading '${start}'`);
+  const to = end ? text.indexOf(end, from + start.length) : -1;
+  return (to === -1 ? text.slice(from) : text.slice(from, to)).replace(/\s+/g, ' ');
+}
+
+test('init checks for an inception transfer before the ordinary fresh/repair fork and recognizes an interrupted init', () => {
+  const text = skill();
+  const entry = text.indexOf('### Entry — Check for an inception transfer');
+  assert.notEqual(entry, -1, 'init must open its procedure with the inception entry check');
+  assert.ok(entry < text.indexOf('### Step 0 — Choose fresh init or repair'), 'the entry check precedes the fork');
+  const route = flatSection(text, '### Entry — Check for an inception transfer', '### Step 0');
+  assert.ok(route.includes(
+    'node <engine-root>/scripts/inception-state.mjs inspect --root <repo-root> --state .apex/inception/state.json',
+  ));
+  assert.match(route, /reads only the inception descriptor and its ignore guard/i);
+  assert.match(route, /exact inception handoff path[^→]*or `init-in-progress` → "Inception entry"/i);
+  assert.match(route, /`init-in-progress` means an earlier init was interrupted: keep its accepted inputs[^.]*`init\.handoff\.path`/i);
+  assert.match(route, /`absent` or `init-complete` → the ordinary path: Step 0/i);
+  assert.match(route, /`init-complete` wins even when a handoff path is supplied: the transfer is already done/i);
+  assert.match(route, /`pre-hub` without a handoff path →[^.]*has not handed off[^.]*\. Ask whether to finish it with the `inception` skill or to run an ordinary init/i);
+  assert.match(route, /`incomplete` or `invalid` → report the reason and ask before continuing\. Never repair the inception area/i);
+});
+
+test('the inception entry reuses the confirmed record through the unchanged helpers and planner, never a second interview', () => {
+  const text = skill();
+  const entry = flatSection(text, '## Inception entry');
+  assert.match(entry, /Never repeat the general interview/i);
+  assert.match(entry, /`confirmed-inputs` record is the authoritative confirmed interview record, already confirmed/i);
+  assert.match(entry, /Read only the handoff and the exact paths it names/i);
+  const commands = [
+    'inception-handoff.mjs verify --root <repo-root> --handoff <handoff-path>',
+    'inception-handoff.mjs prepare --root <repo-root> --handoff <handoff-path> --receipt .apex/inception/<run-id>/init-receipt.json',
+    'inception-handoff.mjs project --root <repo-root> --handoff <handoff-path> > <planner-model-json>',
+    'inception-handoff.mjs finalize --root <repo-root> --handoff <handoff-path> --gate pass',
+  ];
+  let previous = -1;
+  for (const command of commands) {
+    const index = entry.indexOf(`node <engine-root>/scripts/${command}`);
+    assert.ok(index > previous, `the entry must run ${command.split(' ')[1]} in order`);
+    previous = index;
+  }
+  assert.match(entry, /Reuse every value already confirmed\. Ask only/i);
+  assert.match(entry, /planner conflict → Step 3's choices/i);
+  assert.match(entry, /divergence between decisions and code[^.]*`status: diverged`[^.]*never resolve it silently/i);
+  assert.match(entry, /datum a hub document needs that the record and the promotion table do not hold → one targeted question; the answer goes only into that document/i);
+  assert.match(entry, /`detect-stack\.mjs` only as a hint/i);
+  assert.match(entry, /run Step 3 unchanged/i);
+  assert.match(entry, /--resolution <id=choice>[^.]*; the record never changes/i);
+  assert.match(entry, /On resume, omit `--receipt`: the descriptor binds the receipt/i);
+  assert.match(entry, /reported `changed` differs from its prepared bytes and still misses promoted text/i);
+  assert.match(entry, /this entry's own partial write or a human edit/i);
+  assert.match(entry, /ask the user only about text this entry did not write; never overwrite human text/i);
+});
+
+test('the inception entry populates the hub from the promotion table and keeps chosen rules apart from observed patterns', () => {
+  const entry = flatSection(skill(), '## Inception entry');
+  assert.match(entry, /Run Step 4 with the record as its authoritative input/i);
+  assert.match(entry, /write each promoted text verbatim at its destination/i);
+  assert.match(entry, /`<engine-root>\/templates\/project-context\.md` and `<engine-root>\/templates\/project-architecture\.md`[^.]*link them from `_INDEX\.md`/i);
+  assert.match(entry, /never overwrite human text/i);
+  assert.match(entry, /chosen rules as rules with their reasons, keep observed patterns labeled as observed/i);
+  assert.match(entry, /excluded decisions nowhere/i);
+  assert.match(entry, /routing, standards, glossary, conventions, testing, and project context/i);
+});
+
+test('the inception entry fills the documents it creates and never finalizes with a template placeholder', () => {
+  const text = skill();
+  const complete = flatSection(text, '5. **Complete the hub.**', '6. **Verify and finalize.**');
+  assert.match(complete, /a standard or project document this entry creates in this transfer \(`prepare` reported it with `previous: null`\) → replace each template placeholder with the promoted texts for its section/i);
+  assert.match(complete, /A placeholder is the parenthesized guidance a template puts under a heading, every line of it, continuation lines included, such as `- Owns: \(what this surface is responsible for\)`/i);
+  assert.match(complete, /a document that existed before this transfer → append; never overwrite human text/i);
+  assert.match(complete, /On resume, documents already written stay; write only what is missing, and still replace any placeholder left in a document this transfer created/i);
+  const start = flatSection(text, '3. **Start init.**', '4. **Plan and apply.**');
+  assert.match(start, /Template guidance this entry wrote is not human text; Step 5 replaces it/i);
+  const verify = flatSection(text, '6. **Verify and finalize.**');
+  assert.match(verify, /First check every document this transfer created: none may still hold any line of a template placeholder/i);
+  assert.match(verify, /complete it from the promotion table when the approved content exists; otherwise ask one targeted question/i);
+  assert.match(verify, /Never finalize with a placeholder/i);
+  assert.ok(verify.indexOf('line of a template placeholder') < verify.indexOf('--gate pass'), 'the placeholder check precedes finalize');
+  assert.doesNotMatch(flatSection(text, '### Step 0', '## Inception entry'), /placeholder/i, 'the ordinary init/repair path is unchanged');
+});
+
+test('the inception entry marks init complete only after the gate, a copy without local areas, and the receipt helper', () => {
+  const entry = flatSection(skill(), '## Inception entry');
+  assert.match(entry, /Run Step 8's gate/i);
+  assert.match(entry, /git ls-files --cached --others --exclude-standard/);
+  assert.match(entry, /without Git, every file except `\.apex\/inception\/` and `\.apex\/work\/`/i);
+  assert.match(entry, /run `validate-hub\.mjs` on the copy, and delete it/i);
+  assert.ok(entry.indexOf('validate-hub.mjs` on the copy') < entry.indexOf('inception-handoff.mjs finalize --root'), 'the copy check precedes finalize');
+  assert.match(entry, /never record completion by hand/i);
+  assert.match(entry, /each decision's receipt outcome/i);
+  assert.match(entry, /Do not commit between `prepare` and `finalize`/i);
+});
+
+test('the inception entry resumes pending finalization with the bound helper and refuses ambiguous legacy receipts', () => {
+  const entry = flatSection(skill(), '## Inception entry');
+  assert.match(entry, /`prepare` reports a pending finalization intent[^.]*run `finalize`[^.]*before any promotion/i);
+  assert.match(entry, /same handoff[^.]*bound receipt[^.]*`--gate pass`/i);
+  assert.match(entry, /prepared receipt without intent[^.]*normal resume/i);
+  assert.match(entry, /complete receipt with a prepared descriptor and no intent[^.]*ambiguous[^.]*refus/i);
+  assert.match(entry, /preserve[^.]*receipt and descriptor[^.]*no cleanup or re-baselining/i);
+  assert.doesNotMatch(entry, /inception-state\.mjs update[^\n]*finalization/i);
+});
+
+test('the ordinary path keeps its temporary record while the inception entry keeps its local authoritative copy', () => {
+  const text = skill();
+  assert.match(text.replace(/\s+/g, ' '), /one temporary JSON file outside the repository/i);
+  assert.match(text.replace(/\s+/g, ' '), /Delete both temporary files when the workflow ends/i);
+  const entry = flatSection(text, '## Inception entry');
+  assert.match(entry, /keeps the run's `confirmed-inputs` record in place: it is the authoritative copy a resume needs\. Delete only the temporary planner projection/i);
+});
+
+// The inception entry's commands, exactly as the skill prints them, against the
+// real helper CLIs. An empty repository makes each one fail at runtime (exit 1)
+// or report `absent` (exit 0); a usage error (exit 2) would mean the skill
+// documents a command the helper does not accept. Syntax only: the behavior is
+// owned by tests/inception-integration.test.mjs.
+test('every command the inception entry documents is accepted by the real helper CLI', () => {
+  const text = skill();
+  const blocks = [
+    flatSection(text, '### Entry — Check for an inception transfer', '### Step 0'),
+    flatSection(text, '## Inception entry'),
+  ].join('\n');
+  const commands = [...blocks.matchAll(/node <engine-root>\/scripts\/(inception-(?:state|handoff)\.mjs) ([^`]*?)(?= ```)/gu)]
+    .map(([, script, args]) => [script, args.split(' > ')[0].trim()]);
+  assert.deepEqual(commands.map(([script, args]) => `${script} ${args.split(' ')[0]}`), [
+    'inception-state.mjs inspect',
+    'inception-handoff.mjs verify',
+    'inception-handoff.mjs prepare',
+    'inception-handoff.mjs project',
+    'inception-handoff.mjs finalize',
+  ]);
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'steepy-init-commands-')));
+  try {
+    const repo = join(base, 'repo');
+    mkdirSync(repo);
+    mkdirSync(join(base, 'home'));
+    const env = {
+      PATH: process.env.PATH ?? '', HOME: join(base, 'home'), XDG_CONFIG_HOME: join(base, 'home', '.config'),
+      GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull, GIT_CEILING_DIRECTORIES: base,
+    };
+    const run = '0b6f1b8e-3c1a-4e2b-9f3d-5a7c9e1b2d4f';
+    const fill = (args) => args
+      .replaceAll('<repo-root>', repo)
+      .replaceAll('<handoff-path>', `.apex/inception/${run}/init-handoff.json`)
+      .replaceAll('<run-id>', run)
+      .split(' ');
+    const variants = [...commands, ['inception-handoff.mjs', `${commands[3][1]} --resolution v1:project-instructions:customized=replace`]];
+    for (const [script, args] of variants) {
+      const argv = fill(args);
+      assert.ok(argv.every((arg) => !/[<>]/u.test(arg)), `${script}: every placeholder is filled`);
+      const result = spawnSync(process.execPath, [join(root, 'scripts', script), ...argv], { cwd: repo, env, encoding: 'utf8' });
+      assert.notEqual(result.status, 2, `${script} ${args}: ${result.stderr}`);
+      assert.doesNotMatch(result.stderr, /usage:/u, `${script} ${args}`);
+      assert.equal(result.status, argv[0] === 'inspect' ? 0 : 1, `${script} ${args}: ${result.stderr}`);
+    }
+    assert.equal(existsSync(join(repo, '.apex')), false, 'no documented command creates a hub or an inception area on refusal');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });

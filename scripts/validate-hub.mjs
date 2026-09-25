@@ -1,22 +1,19 @@
 #!/usr/bin/env node
-import {
-  closeSync,
-  constants as FS_CONSTANTS,
-  existsSync,
-  fstatSync,
-  lstatSync,
-  openSync,
-  readdirSync,
-  realpathSync,
-  readSync,
-} from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { join, dirname, relative, resolve, basename, sep, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bindProjectMount, PROJECT_MOUNTS } from './sanitize.mjs';
+import {
+  admitHubRoot,
+  createStableReader,
+  displayNativePath,
+  rawPathEntersLocalArea,
+} from './stable-paths.mjs';
+import { inspectPreHubState } from './inception-state.mjs';
 import {
   countActiveClaudeImports,
   normalizeProjectModel,
   parseProjectInstructions,
+  priorCanonicalRelease,
   renderProjectArtifact,
 } from './project-scaffold.mjs';
 
@@ -24,282 +21,13 @@ import {
 // (a directory of smaller files instead of one long one). This is a `warn`, not
 // an `error`: it never affects the exit code (see check 8 below).
 const STANDARD_WARN_LINES = 150;
-const MAX_STABLE_FILE_BYTES = 1024 * 1024;
-const ROOT_ADMISSION = Symbol('root-admission');
 
-function displayNativePath(path) {
-  return sep === '/' ? path : path.split(sep).join('/');
-}
-
-function splitNativePath(path) {
-  return sep === '\\' ? path.split(/[\\/]+/u) : path.split('/');
-}
-
-function admitHubRoot(hubRoot) {
-  const raw = typeof hubRoot === 'string' && hubRoot.length > 0 ? hubRoot : process.cwd();
-  if (splitNativePath(raw).includes('..')) {
-    return {
-      state: 'unsafe',
-      root: resolve(raw),
-      reason: 'contains unsupported parent traversal',
-    };
-  }
-
-  const lexical = resolve(raw);
-  let stat;
-  try {
-    stat = lstatSync(lexical, { bigint: true });
-  } catch (error) {
-    if (error?.code === 'ENOENT') return { state: 'missing', root: lexical };
-    return { state: 'unsafe', root: lexical, reason: 'is unreadable' };
-  }
-  if (stat.isSymbolicLink()) return { state: 'unsafe', root: lexical, reason: 'is symlink' };
-  if (!stat.isDirectory()) return { state: 'unsafe', root: lexical, reason: 'is non-directory' };
-  try {
-    return { state: 'present', root: realpathSync.native(lexical) };
-  } catch {
-    return { state: 'unsafe', root: lexical, reason: 'could not be resolved safely' };
-  }
-}
-
-function rawPathEntersWork(base, target) {
-  const stack = [];
-  for (const component of [...splitNativePath(base), ...splitNativePath(target)]) {
-    if (component === '' || component === '.') continue;
-    if (component === '..') stack.pop();
-    else stack.push(component);
-    const candidate = displayNativePath(stack.join(sep));
-    if (candidate === '.apex/work' || candidate.startsWith('.apex/work/')) return true;
-  }
-  return false;
-}
-
-// The repository's exact .apex entry is an explicit hub mount. Resolve it
-// once; all descendants still pass ordinary-file/component admission.
-function bindApexRoot(root) {
-  const lexical = join(root, '.apex');
-  let entry;
-  try {
-    entry = lstatSync(lexical, { bigint: true });
-  } catch (error) {
-    return { state: error?.code === 'ENOENT' ? 'missing' : 'unsafe', reason: 'is unreadable' };
-  }
-  try {
-    const path = entry.isSymbolicLink() ? realpathSync.native(lexical) : lexical;
-    const stat = lstatSync(path, { bigint: true });
-    if (!stat.isDirectory()) return { state: 'unsafe', reason: 'is non-directory' };
-    return { state: 'present', path, stat };
-  } catch {
-    return { state: 'unsafe', reason: 'could not be resolved safely' };
-  }
-}
-
-function bindReservedWorkIdentity(apex) {
-  if (apex.state !== 'present') return null;
-  try {
-    const work = lstatSync(join(apex.path, 'work'), { bigint: true });
-    if (!work.isDirectory() || work.isSymbolicLink()) return null;
-    return { dev: work.dev, ino: work.ino };
-  } catch {
-    return null;
-  }
-}
-
-// Stable documentation is read through one physical capability. It admits raw
-// native path components before resolving `..`, rejects links/non-files, then
-// opens with no-follow + non-blocking flags and binds the descriptor to the
-// lstat identity. Incremental reads enforce the cap even if a file grows.
-function createStableReader(hubRoot, violations, rootAdmission = admitHubRoot(hubRoot)) {
-  const root = rootAdmission.root;
-  const apex = rootAdmission.state === 'present' ? bindApexRoot(root) : { state: 'missing' };
-  const reservedWorkIdentity = bindReservedWorkIdentity(apex);
-  const mounts = new Map();
-  if (rootAdmission.state === 'present') {
-    for (const name of PROJECT_MOUNTS.filter((name) => name !== '.apex')) {
-      try {
-        const mount = bindProjectMount(root, name);
-        if (mount) mounts.set(name, { state: 'present', ...mount });
-      } catch {
-        mounts.set(name, { state: 'unsafe' });
-      }
-    }
-  }
-  const physicalPath = (parts) => parts[0] === '.apex' && apex.state === 'present'
-    ? join(apex.path, ...parts.slice(1))
-    : mounts.get(parts[0])?.state === 'present'
-      ? join(mounts.get(parts[0]).physical, ...parts.slice(1))
-      : join(root, ...parts);
-  const diagnosed = new Set();
-  const report = (label, reason) => {
-    const key = `${label}\0${reason}`;
-    if (diagnosed.has(key)) return;
-    diagnosed.add(key);
-    violations.push({ level: 'error', msg: `stable-read: ${label} ${reason}` });
-  };
-  if (rootAdmission.state === 'unsafe') report('hub root', rootAdmission.reason);
-
-  function inspect(rawPath, { base = '', kind = 'file', reportUnsafe = true } = {}) {
-    if (typeof rawPath !== 'string' || rawPath.length === 0 || isAbsolute(rawPath)) {
-      if (reportUnsafe) report(rawPath || '.', 'escapes the repository root');
-      return { state: 'unsafe' };
-    }
-    // POSIX backslash is a legal filename byte. Windows accepts both native
-    // separator spellings; do not impose Windows splitting on POSIX paths.
-    const baseParts = splitNativePath(base).filter((part) => part !== '' && part !== '.');
-    const rawParts = splitNativePath(rawPath);
-    const display = displayNativePath([base, rawPath].filter(Boolean).join(sep));
-    const stack = [];
-    let cursor = root;
-    const parts = [...baseParts, ...rawParts];
-
-    for (let index = 0; index < parts.length; index += 1) {
-      const part = parts[index];
-      if (part === '' || part === '.') continue;
-      if (part === '..') {
-        if (stack.length === 0) {
-          if (reportUnsafe) report(display, 'escapes the repository root');
-          return { state: 'unsafe', label: display, physicalReason: 'outside-root' };
-        }
-        stack.pop();
-        cursor = physicalPath(stack);
-        continue;
-      }
-
-      const candidateStack = [...stack, part];
-      const candidateRel = candidateStack.join('/');
-      if (candidateRel === '.apex/work' || candidateRel.startsWith('.apex/work/')) {
-        if (reportUnsafe) report(display, 'enters excluded .apex/work');
-        return { state: 'unsafe', label: display, physicalReason: 'work-path' };
-      }
-      if (candidateRel === '.apex' && apex.state !== 'present') {
-        if (apex.state === 'unsafe' && reportUnsafe) report(display, apex.reason);
-        return { state: apex.state, label: display };
-      }
-      if (mounts.get(candidateRel)?.state === 'unsafe') {
-        if (reportUnsafe) report(display, 'symlink mount could not be resolved safely');
-        return { state: 'unsafe', label: display, physicalReason: 'symlink' };
-      }
-      cursor = physicalPath(candidateStack);
-      let stat;
-      try {
-        stat = lstatSync(cursor, { bigint: true });
-      } catch (error) {
-        if (error?.code === 'ENOENT') return { state: 'missing', label: display };
-        if (reportUnsafe) report(display, 'is unreadable');
-        return { state: 'unsafe', label: display, physicalReason: 'unreadable' };
-      }
-      if (candidateRel === '.apex'
-        && (!stat.isDirectory() || stat.dev !== apex.stat.dev || stat.ino !== apex.stat.ino)) {
-        if (reportUnsafe) report(display, 'changed physical identity');
-        return { state: 'unsafe', label: display };
-      }
-      const mount = mounts.get(candidateRel);
-      if (mount?.state === 'present'
-        && (stat.dev !== mount.stat.dev || stat.ino !== mount.stat.ino)) {
-        if (reportUnsafe) report(display, 'changed physical identity');
-        return { state: 'unsafe', label: display };
-      }
-      if (reservedWorkIdentity
-        && stat.isDirectory()
-        && stat.dev === reservedWorkIdentity.dev
-        && stat.ino === reservedWorkIdentity.ino) {
-        if (reportUnsafe) report(display, 'enters excluded .apex/work');
-        return { state: 'unsafe', label: display, physicalReason: 'work-path' };
-      }
-      const hasLaterComponent = index < parts.length - 1;
-      if (stat.isSymbolicLink()) {
-        if (reportUnsafe) report(display, hasLaterComponent ? 'has symlinked component' : 'is symlink');
-        return {
-          state: 'unsafe',
-          label: display,
-          physicalReason: hasLaterComponent ? 'symlinked-ancestor' : 'symlink',
-        };
-      }
-      if (hasLaterComponent && !stat.isDirectory()) {
-        if (reportUnsafe) report(display, 'has non-directory component');
-        return { state: 'unsafe', label: display, physicalReason: 'non-directory-ancestor' };
-      }
-      stack.push(part);
-    }
-
-    let finalStat;
-    try {
-      finalStat = lstatSync(cursor, { bigint: true });
-    } catch (error) {
-      if (error?.code === 'ENOENT') return { state: 'missing', label: display };
-      if (reportUnsafe) report(display, 'is unreadable');
-      return { state: 'unsafe', label: display, physicalReason: 'unreadable' };
-    }
-    const valid = kind === 'directory'
-      ? finalStat.isDirectory()
-      : kind === 'entry'
-        ? finalStat.isDirectory() || finalStat.isFile()
-        : finalStat.isFile();
-    if (!valid) {
-      if (reportUnsafe) report(display, kind === 'directory' ? 'is non-directory' : 'is non-file');
-      return {
-        state: 'unsafe',
-        label: display,
-        physicalReason: kind === 'directory' ? 'non-directory' : 'non-file',
-      };
-    }
-    return { state: 'present', label: display, path: join(root, ...stack), physicalPath: cursor, stat: finalStat };
-  }
-
-  function read(rawPath, options = {}) {
-    const admitted = inspect(rawPath, { ...options, kind: 'file' });
-    if (admitted.state !== 'present') return { ...admitted, text: undefined };
-    const reportUnsafe = options.reportUnsafe !== false;
-    if (admitted.stat.size > BigInt(MAX_STABLE_FILE_BYTES)) {
-      if (reportUnsafe) report(admitted.label, `exceeds ${MAX_STABLE_FILE_BYTES} bytes`);
-      return { state: 'unsafe', label: admitted.label, text: undefined };
-    }
-
-    let fd;
-    try {
-      const noFollow = typeof FS_CONSTANTS.O_NOFOLLOW === 'number' ? FS_CONSTANTS.O_NOFOLLOW : 0;
-      const nonBlock = typeof FS_CONSTANTS.O_NONBLOCK === 'number' ? FS_CONSTANTS.O_NONBLOCK : 0;
-      fd = openSync(admitted.physicalPath, FS_CONSTANTS.O_RDONLY | noFollow | nonBlock);
-      const opened = fstatSync(fd, { bigint: true });
-      if (!opened.isFile()
-        || opened.dev !== admitted.stat.dev
-        || opened.ino !== admitted.stat.ino) {
-        if (reportUnsafe) report(admitted.label, 'changed physical identity during open');
-        return { state: 'unsafe', label: admitted.label, text: undefined };
-      }
-      if (opened.size > BigInt(MAX_STABLE_FILE_BYTES)) {
-        if (reportUnsafe) report(admitted.label, `exceeds ${MAX_STABLE_FILE_BYTES} bytes`);
-        return { state: 'unsafe', label: admitted.label, text: undefined };
-      }
-
-      const chunks = [];
-      let total = 0;
-      while (total <= MAX_STABLE_FILE_BYTES) {
-        const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, MAX_STABLE_FILE_BYTES + 1 - total));
-        const count = readSync(fd, chunk, 0, chunk.length, null);
-        if (count === 0) break;
-        total += count;
-        if (total > MAX_STABLE_FILE_BYTES) {
-          if (reportUnsafe) report(admitted.label, `grew beyond ${MAX_STABLE_FILE_BYTES} bytes`);
-          return { state: 'unsafe', label: admitted.label, text: undefined };
-        }
-        chunks.push(chunk.subarray(0, count));
-      }
-      return { ...admitted, text: Buffer.concat(chunks, total).toString('utf8') };
-    } catch {
-      if (reportUnsafe) report(admitted.label, 'could not be opened safely');
-      return { state: 'unsafe', label: admitted.label, text: undefined };
-    } finally {
-      if (fd !== undefined) {
-        try { closeSync(fd); } catch { /* validation already has its result */ }
-      }
-    }
-  }
-
-  const fromAbsolute = (path) => relative(root, path);
-  return { fromAbsolute, inspect, read, report, root };
-}
-
+// Root admission, mount binding, bounded physical reads, and local-area
+// exclusion live in stable-paths.mjs; this linter only walks and judges.
+// `skipLocal` silently skips only a literal `.apex/<area>` entry (directory or
+// link, by name or stored case alias), so local state never becomes a hub
+// error. Any other directory that aliases a linked area's target is walked,
+// and the reader refuses it loudly (`aliases excluded`).
 function walkStableFiles(reader, directory, pred, acc = [], opts = {}) {
   const directoryState = reader.inspect(directory, { kind: 'directory' });
   if (directoryState.state !== 'present') return acc;
@@ -312,6 +40,9 @@ function walkStableFiles(reader, directory, pred, acc = [], opts = {}) {
   }
   for (const entry of entries) {
     const relativePath = [directory, entry.name].filter(Boolean).join(sep);
+    if (opts.skipLocal && (entry.isDirectory() || entry.isSymbolicLink()) && reader.isLocalAreaEntry(relativePath)) {
+      continue;
+    }
     if (entry.isDirectory()) {
       if (opts.skipDir && opts.skipDir(relativePath)) continue;
       walkStableFiles(reader, relativePath, pred, acc, opts);
@@ -629,7 +360,7 @@ function reachableMarkdownFiles(reader, indexPath) {
     const text = result.text;
     for (const target of linkTargets(text)) {
       if (!target.endsWith('.md')) continue;
-      if (rawPathEntersWork(dirname(current), target)) continue;
+      if (rawPathEntersLocalArea(dirname(current), target)) continue;
       const admitted = reader.inspect(target, { base: dirname(current) });
       if (admitted.state !== 'present') continue;
       const rel = relative(apexRoot, admitted.path);
@@ -643,6 +374,7 @@ function reachableMarkdownFiles(reader, indexPath) {
 function validatePortableV1(hubRoot, indexText, reader) {
   const violations = [];
   const error = (msg) => violations.push({ level: 'error', msg: `portable-v1: ${msg}` });
+  const warn = (msg) => violations.push({ level: 'warn', msg: `portable-v1: ${msg}` });
   const rootCandidates = ['AGENTS.md', 'CLAUDE.md'];
   const generatedCandidates = ['.agents', '.claude', '.codex', '.opencode']
     .flatMap((provider) => walkProviderFiles(
@@ -799,12 +531,14 @@ function validatePortableV1(hubRoot, indexText, reader) {
         label: 'canonical bootstrap',
         artifactId: `${model.projectName}-bootstrap`,
         path: `.agents/skills/${model.projectName}-bootstrap/SKILL.md`,
+        plannerId: 'project-bootstrap',
         content: renderBootstrap(model),
       },
       {
         label: 'Claude bootstrap stub',
         artifactId: `${model.projectName}-bootstrap-stub`,
         path: `.claude/skills/${model.projectName}-bootstrap/SKILL.md`,
+        plannerId: 'claude-bootstrap-stub',
         content: renderBootstrapStub(model),
       },
     ];
@@ -819,7 +553,17 @@ function validatePortableV1(hubRoot, indexText, reader) {
         continue;
       }
       const reason = classifyGenerated(result.text, artifact.artifactId, artifact.content);
-      if (reason) error(`${artifact.label} at ${artifact.path} is ${reason}`);
+      // Exact bytes of a registered prior release rendering are stale generated
+      // output, not customization: warn only (`--quiet` and the Stop hook stay
+      // silent); init repair updates them. Any other drift stays an error.
+      const priorRelease = reason === 'customized'
+        ? priorCanonicalRelease(artifact.plannerId, result.text, normalizedProject(model))
+        : null;
+      if (priorRelease) {
+        warn(`${artifact.label} at ${artifact.path} is the ${priorRelease} rendering; init repair updates it to the current rendering`);
+      } else if (reason) {
+        error(`${artifact.label} at ${artifact.path} is ${reason}`);
+      }
     }
   } else {
     error('canonical bootstrap is missing or cannot be validated without canonical project instructions');
@@ -910,50 +654,121 @@ function validatePortableV1(hubRoot, indexText, reader) {
   return violations;
 }
 
-export function collectViolations(hubRoot, opts = {}) {
+// Steepy provenance in root instructions or provider namespaces: a managed
+// block, a generated marker, or the legacy block. User documents without it do
+// not prove a hub on their own.
+const STEEPY_PROVENANCE_RE = /steepy:(?:managed|generated):[^:\s>]+:v[^\s>]+|<!-- steepy:(?:start|end) -->/u;
+
+// Stable hub artifacts that make an index-less `.apex` a partial hub rather
+// than a pre-hub: a standards entry of any kind, any stable Markdown document
+// outside the local areas (conventions, glossary, residual routing indexes),
+// and Steepy provenance at the root or in a provider namespace. Non-Markdown
+// residue such as `.DS_Store` is not a hub artifact. Local bodies are never read.
+function preHubIncompatibilities(reader) {
+  const artifacts = [];
+  if (reader.inspect(join('.apex', 'standards'), { kind: 'entry', reportUnsafe: false }).state !== 'missing') {
+    artifacts.push('.apex/standards');
+  }
+  for (const file of walkStableFiles(reader, '.apex', (path) => path.endsWith('.md'), [], { skipLocal: true })) {
+    const path = displayNativePath(file);
+    if (!path.startsWith('.apex/standards/')) artifacts.push(path);
+  }
+  const candidates = [
+    ...['AGENTS.md', 'CLAUDE.md'].filter((name) => reader.inspect(name, { kind: 'entry', reportUnsafe: false }).state !== 'missing'),
+    ...['.agents', '.claude', '.codex', '.opencode'].flatMap((provider) => walkProviderFiles(reader, provider, () => true)),
+  ];
+  for (const file of candidates) {
+    if (STEEPY_PROVENANCE_RE.test(reader.read(file).text ?? '')) artifacts.push(displayNativePath(file));
+  }
+  return artifacts;
+}
+
+function bounded(text) {
+  return String(text ?? '').replace(/[\x00-\x1F\x7F]+/gu, ' ').slice(0, 300);
+}
+
+// Spec §8 for an `.apex` without `_INDEX.md`. Only a valid, guarded,
+// not-started v1 descriptor beside no hub artifact is a recognized pre-hub;
+// any other observation keeps today's missing-index error plus its reason.
+// The descriptor's references are never followed.
+function classifyIndexlessHub(reader, admittedRoot, indexPath, violations) {
+  const missing = { level: 'error', msg: `missing _INDEX.md at ${indexPath}` };
+  const inception = inspectPreHubState(admittedRoot);
+  if (inception.state === 'absent') return { state: 'invalid', violations: [missing] };
+  const reasons = [];
+  if (inception.state === 'init-in-progress' || inception.state === 'init-complete') {
+    reasons.push(`inception: init is ${inception.state.slice('init-'.length)}; an activated hub requires .apex/_INDEX.md and never returns to pre-hub`);
+  } else if (inception.state !== 'pre-hub') {
+    reasons.push(`inception: pre-hub state not recognized (${inception.state}): ${bounded(inception.reason)}`);
+  } else {
+    for (const artifact of preHubIncompatibilities(reader)) {
+      reasons.push(`inception: pre-hub state is incompatible with hub artifact ${artifact}`);
+    }
+    if (reasons.length === 0 && violations.length === 0) {
+      return { state: 'pre-hub', violations: [], inception };
+    }
+    if (reasons.length === 0) reasons.push('inception: pre-hub state not recognized: stable reads failed');
+  }
+  return {
+    state: 'invalid',
+    violations: [missing, ...reasons.map((msg) => ({ level: 'error', msg })), ...violations],
+  };
+}
+
+// One classification drives the linter, main(), and (through
+// collectViolations) the Stop hook: `no-hub` (no `.apex`), `pre-hub` (a
+// recognized inception without an index), `hub` (index present: every check
+// runs and local areas are excluded), or `invalid`.
+export function classifyHub(hubRoot, opts = {}) {
   const violations = [];
-  const rootAdmission = opts[ROOT_ADMISSION] ?? admitHubRoot(hubRoot);
+  const rootAdmission = admitHubRoot(hubRoot);
   const reader = createStableReader(hubRoot, violations, rootAdmission);
-  if (rootAdmission.state === 'unsafe') return violations;
+  if (rootAdmission.state === 'unsafe') return { state: 'invalid', violations };
   const admittedRoot = rootAdmission.root;
   const apexDir = join(admittedRoot, '.apex');
   const indexPath = join(apexDir, '_INDEX.md');
-  const skipWorkDir = (dir) => reader.inspect(dir, {
-    kind: 'directory',
-    reportUnsafe: false,
-  }).physicalReason === 'work-path';
   // Uninitialized repo: no .apex/ hub at all. steepy was never run here, so there is
   // nothing to validate. Stay silent (no violations) — this keeps the Stop hook a
   // no-op in every project that has not opted into steepy. An .apex/ that exists but
-  // lacks _INDEX.md is a genuine error: the repo opted in but the hub is broken.
+  // lacks _INDEX.md is a genuine error unless it is a recognized pre-hub inception.
   const apexState = reader.inspect('.apex', { kind: 'directory' });
-  if (apexState.state === 'missing') return [];
-  if (apexState.state !== 'present') return violations;
+  if (apexState.state === 'missing') return { state: 'no-hub', violations: [] };
+  if (apexState.state !== 'present') return { state: 'invalid', violations };
   const indexResult = reader.read(join('.apex', '_INDEX.md'));
-  if (indexResult.state === 'missing') {
-    return [{ level: 'error', msg: `missing _INDEX.md at ${indexPath}` }];
-  }
-  if (indexResult.text === undefined) return violations;
-  const indexText = indexResult.text;
+  if (indexResult.state === 'missing') return classifyIndexlessHub(reader, admittedRoot, indexPath, violations);
+  if (indexResult.text === undefined) return { state: 'invalid', violations };
+  return { state: 'hub', violations: collectHubViolations(reader, admittedRoot, indexResult.text, opts) };
+}
+
+export function collectViolations(hubRoot, opts = {}) {
+  return classifyHub(hubRoot, opts).violations;
+}
+
+// Every check of an operational hub (index present). Local areas are excluded
+// from enumeration and reads; their state is never an input.
+function collectHubViolations(reader, admittedRoot, indexText, opts) {
+  const violations = reader.diagnostics;
+  const apexDir = join(admittedRoot, '.apex');
+  const indexPath = join(apexDir, '_INDEX.md');
   const apexMarkdownFiles = walkStableFiles(
     reader,
     '.apex',
     (file) => file.endsWith('.md'),
     [],
-    { skipDir: skipWorkDir },
+    { skipLocal: true },
   );
   violations.push(...validatePortableV1(admittedRoot, indexText, reader));
   const routingRowTokens = backtickTokens(indexText, isRoutingTableRow);
-  const seenWorkLinkViolations = new Set();
-  const rejectWorkLink = (fileRelative, target) => {
-    const base = dirname(fileRelative);
-    if (!rawPathEntersWork(base, target)) return false;
+  const seenLocalAreaLinkViolations = new Set();
+  const rejectLocalAreaLink = (fileRelative, target) => {
+    const area = rawPathEntersLocalArea(dirname(fileRelative), target);
+    if (!area) return false;
     const key = `${fileRelative}::${target}`;
-    if (seenWorkLinkViolations.has(key)) return true;
-    seenWorkLinkViolations.add(key);
+    if (seenLocalAreaLinkViolations.has(key)) return true;
+    seenLocalAreaLinkViolations.add(key);
     violations.push({
       level: 'error',
-      msg: `stable docs must not link into .apex/work: ${displayNativePath(fileRelative)} -> ${target}`,
+      msg: `stable docs must not link into ${area.path}: ${displayNativePath(fileRelative)} -> ${target}`,
     });
     return true;
   };
@@ -968,6 +783,9 @@ export function collectViolations(hubRoot, opts = {}) {
   for (const fileRelative of apexMarkdownFiles) {
     const file = resolve(admittedRoot, fileRelative);
     if (file === indexPath) continue;
+    // A file the reader refuses (e.g. hard-linked) is reported by its read in
+    // check 4; BFS cannot admit it, so it is not also a false orphan.
+    if (reader.inspect(fileRelative, { reportUnsafe: false }).state !== 'present') continue;
     if (!reachable.has(file)) {
       violations.push({ level: 'error', msg: `anti-orphan: ${displayNativePath(fileRelative)} is not linked from .apex/_INDEX.md` });
     }
@@ -999,7 +817,7 @@ export function collectViolations(hubRoot, opts = {}) {
   //    Only routing-table rows are checked here; prose links are owned by check 4.
   const seenRoutingTargets = new Set();
   for (const target of linkTargets(indexText, isRoutingTableRow)) {
-    if (rejectWorkLink(join('.apex', '_INDEX.md'), target)) continue;
+    if (rejectLocalAreaLink(join('.apex', '_INDEX.md'), target)) continue;
     if (!target.includes('standards/')) continue;
     if (seenRoutingTargets.has(target)) continue;
     seenRoutingTargets.add(target);
@@ -1027,7 +845,7 @@ export function collectViolations(hubRoot, opts = {}) {
       // Pass A: routing-table-row targets — skip check-3-owned standards/ links.
       const seenTable = new Set();
       for (const target of linkTargets(text, isRoutingTableRow)) {
-        if (rejectWorkLink(file, target)) continue;
+        if (rejectLocalAreaLink(file, target)) continue;
         if (seenRoutingTargets.has(target)) continue; // owned by check 3
         if (seenTable.has(target)) continue;
         seenTable.add(target);
@@ -1040,7 +858,7 @@ export function collectViolations(hubRoot, opts = {}) {
       for (const target of linkTargets(text, (l) => !isRoutingTableRow(l))) {
         if (seenProse.has(target)) continue;
         seenProse.add(target);
-        if (rejectWorkLink(file, target)) continue;
+        if (rejectLocalAreaLink(file, target)) continue;
         if (reader.inspect(target, { base: dirname(file), kind: 'entry' }).state === 'missing') {
           violations.push({ level: 'error', msg: `broken link: ${displayNativePath(file)} -> ${target}` });
         }
@@ -1051,7 +869,7 @@ export function collectViolations(hubRoot, opts = {}) {
       for (const target of targets) {
         if (seen.has(target)) continue;
         seen.add(target);
-        if (rejectWorkLink(file, target)) continue;
+        if (rejectLocalAreaLink(file, target)) continue;
         if (reader.inspect(target, { base: dirname(file), kind: 'entry' }).state === 'missing') {
           violations.push({ level: 'error', msg: `broken link: ${displayNativePath(file)} -> ${target}` });
         }
@@ -1151,9 +969,9 @@ export function collectViolations(hubRoot, opts = {}) {
       const key = `${file}::${token}`;
       if (seenCodeAnchors.has(key)) continue;
       seenCodeAnchors.add(key);
-      const resolves = rawPathEntersWork('', token)
-        || rawPathEntersWork(dirname(file), token)
-        || rawPathEntersWork('.apex', token)
+      const resolves = rawPathEntersLocalArea('', token)
+        || rawPathEntersLocalArea(dirname(file), token)
+        || rawPathEntersLocalArea('.apex', token)
         || reader.inspect(token, { kind: 'entry', reportUnsafe: false }).state === 'present'
         || reader.inspect(token, { base: dirname(file), kind: 'entry', reportUnsafe: false }).state === 'present'
         || reader.inspect(token, { base: '.apex', kind: 'entry', reportUnsafe: false }).state === 'present';
@@ -1262,20 +1080,21 @@ export function main(argv = process.argv.slice(2)) {
   const quiet = argv.includes('--quiet');
   const enforceSingleClaudeMd = argv.includes('--single-claude');
   const root = argv.find((a) => !a.startsWith('--')) || process.cwd();
-  const rootAdmission = admitHubRoot(root);
-  const all = collectViolations(root, { enforceSingleClaudeMd, [ROOT_ADMISSION]: rootAdmission });
+  const classified = classifyHub(root, { enforceSingleClaudeMd });
+  const all = classified.violations;
   const errors = all.filter((v) => v.level === 'error');
   const warns = all.filter((v) => v.level === 'warn');
   if (errors.length === 0) {
-    // No .apex/ hub means the repo never opted into steepy — there is genuinely
-    // nothing to validate, so don't claim the doc graph is "coherent". In --quiet
-    // mode (the Stop hook, which runs in every repo) stay a silent no-op regardless.
+    // Only an operational hub is "coherent". No .apex/ hub means the repo never
+    // opted into steepy, and a recognized pre-hub inception has no hub yet —
+    // neither has a doc graph to call coherent. In --quiet mode (the Stop hook,
+    // which runs in every repo) stay a silent no-op regardless.
     if (!quiet) {
-      console.log(
-        rootAdmission.state === 'present' && existsSync(join(rootAdmission.root, '.apex'))
-          ? 'steepy validate-hub: OK — doc graph is coherent'
-          : 'steepy validate-hub: no .apex hub found — run /steepy-apex:init to create one'
-      );
+      const { inception } = classified;
+      console.log({
+        hub: 'steepy validate-hub: OK — doc graph is coherent',
+        'pre-hub': `steepy validate-hub: valid pre-hub inception state (run ${inception?.runId}, phase ${inception?.phase}) — no hub yet; init creates .apex/_INDEX.md`,
+      }[classified.state] ?? 'steepy validate-hub: no .apex hub found — run /steepy-apex:init to create one');
       for (const v of warns) console.warn(`  - warn: ${v.msg}`);
     }
     return 0;

@@ -30,7 +30,8 @@ import {
   previewProjectScaffold,
   renderProjectArtifact,
 } from '../scripts/project-scaffold.mjs';
-import { collectViolations, main as validateHubMain } from '../scripts/validate-hub.mjs';
+import { createInitialInceptionState, serializeInceptionState } from '../scripts/inception-state.mjs';
+import { classifyHub, collectViolations, main as validateHubMain } from '../scripts/validate-hub.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const templatesDir = join(here, '..', 'templates');
@@ -214,6 +215,149 @@ test('public repair refuses incomplete bootstrap bytes and preserves the full tr
   assert.deepEqual(fileState(hubRoot), before);
 });
 
+
+// The canonical bootstrap every release from v1.0.0 through v1.0.4 rendered for
+// `portable-demo` (the released template before its inception boundary section).
+// validate-hub.test.mjs keeps the linter-side copy of these literal bytes; the
+// duplication is deliberate so each suite stays hermetic.
+const V1_0_PORTABLE_DEMO_BOOTSTRAP = [
+  '---',
+  'name: portable-demo-bootstrap',
+  'description: Project entry point for portable-demo. Loads the root instructions and routes work through the governed hub.',
+  'user-invocable: true',
+  '---',
+  '<!-- steepy:generated:portable-demo-bootstrap:v1 -->',
+  '',
+  '# portable-demo bootstrap',
+  '',
+  'Use this skill before working on the project.',
+  '',
+  '## Procedure',
+  '',
+  '1. Read `AGENTS.md` in full for the project overview, development commands, and confirmed surfaces.',
+  '2. Read `.apex/_INDEX.md` in full for the routing table and semantic knowledge map.',
+  '3. Match the task to the owning surface and read only the minimum documents named by its routing row.',
+  '4. State the owning surface and specialist agent before changing files.',
+  '5. When a Steepy workflow is needed, invoke it by its semantic skill name as listed in `.apex/_INDEX.md`.',
+  '6. Run the owning surface\'s test command and the hub coherence gate before reporting completion.',
+  '',
+  '## Work-artifact boundary',
+  '',
+  'Do not ordinarily enumerate, search, or read under `.apex/work/**`.',
+  '',
+  'A workflow phase may consume only the exact work inputs named by an accepted handoff. A pathless workflow invocation may perform only bounded workflow-header recovery discovery. Exact paths or a broader work-area scope are permitted only when the user explicitly delimits them. This applies transitively to child agents: only the phase orchestrator interprets a handoff.',
+  '',
+].join('\n');
+const PORTABLE_DEMO_BOOTSTRAP_PATH = '.agents/skills/portable-demo-bootstrap/SKILL.md';
+
+function seedV1_0Hub(model = baseModel()) {
+  const hubRoot = seedHub(model);
+  writeFileSync(join(hubRoot, PORTABLE_DEMO_BOOTSTRAP_PATH), V1_0_PORTABLE_DEMO_BOOTSTRAP);
+  return hubRoot;
+}
+
+function portableMessages(hubRoot) {
+  return collectViolations(hubRoot).filter(({ msg }) => msg.startsWith('portable-v1:'));
+}
+
+test('an untouched v1.0.0-v1.0.4 bootstrap is a stale generated update in linter and planner', () => {
+  const model = baseModel();
+  const hubRoot = seedV1_0Hub(model);
+  try {
+    assert.deepEqual(portableMessages(hubRoot), [{
+      level: 'warn',
+      msg: `portable-v1: canonical bootstrap at ${PORTABLE_DEMO_BOOTSTRAP_PATH} is the v1.0.0-v1.0.4 rendering; init repair updates it to the current rendering`,
+    }]);
+    assert.equal(captureValidateHub([hubRoot, '--quiet']).code, 0);
+
+    const plan = planProjectScaffold({ hubRoot, model, templatesDir });
+    assert.deepEqual(plan.conflicts, []);
+    assert.deepEqual(previewProjectScaffold(plan), [{
+      id: 'v1:op:project-bootstrap',
+      kind: 'replace-generated',
+      artifactId: 'project-bootstrap',
+      path: PORTABLE_DEMO_BOOTSTRAP_PATH,
+      priorState: 'stale',
+    }]);
+    assert.deepEqual(applyProjectScaffold({ hubRoot, plan }), { applied: 1, paths: [PORTABLE_DEMO_BOOTSTRAP_PATH] });
+    const current = renderProjectArtifact('project-bootstrap', normalizeProjectModel(model), templatesDir);
+    assert.match(current, /## Inception boundary/u);
+    assert.equal(readFileSync(join(hubRoot, PORTABLE_DEMO_BOOTSTRAP_PATH), 'utf8'), current);
+    assert.deepEqual(portableMessages(hubRoot), []);
+
+    const before = fileState(hubRoot);
+    const second = planProjectScaffold({ hubRoot, model, templatesDir });
+    assert.deepEqual([second.operations, second.conflicts], [[], []]);
+    assert.deepEqual(applyProjectScaffold({ hubRoot, plan: second }), { applied: 0, paths: [] });
+    assert.deepEqual(fileState(hubRoot), before);
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
+  }
+});
+
+test('new-surface repairs and extends a hub carrying the v1.0.0-v1.0.4 bootstrap without a bootstrap conflict', () => {
+  const repairRoot = seedV1_0Hub();
+  const additionRoot = seedV1_0Hub();
+  try {
+    const current = renderProjectArtifact('project-bootstrap', normalizeProjectModel(baseModel()), templatesDir);
+
+    const repaired = captureNewSurface([
+      '--name', 'web', '--path', 'apps/web', '--agent', 'web-agent',
+      '--hub', repairRoot, '--test', 'npm test', '--repair',
+    ]);
+    assert.equal(repaired.code, 0, repaired.stderr);
+    assert.equal(readFileSync(join(repairRoot, PORTABLE_DEMO_BOOTSTRAP_PATH), 'utf8'), current);
+    assert.deepEqual(portableMessages(repairRoot), []);
+
+    mkdirSync(join(additionRoot, 'services', 'api'), { recursive: true });
+    const addition = [
+      '--name', 'api', '--path', 'services/api', '--agent', 'api-agent',
+      '--hub', additionRoot, '--test', 'npm run test:api',
+    ];
+    const unresolved = captureNewSurface(addition);
+    assert.equal(unresolved.code, 1);
+    assert.match(unresolved.stderr, /v1:project-instructions:customized/u);
+    assert.doesNotMatch(unresolved.stderr, /project-bootstrap/u);
+    const added = captureNewSurface([...addition, '--resolution', 'v1:project-instructions:customized=replace']);
+    assert.equal(added.code, 0, added.stderr);
+    assert.equal(readFileSync(join(additionRoot, PORTABLE_DEMO_BOOTSTRAP_PATH), 'utf8'), current);
+    assert.deepEqual(portableMessages(additionRoot), []);
+  } finally {
+    rmSync(repairRoot, { recursive: true, force: true });
+    rmSync(additionRoot, { recursive: true, force: true });
+  }
+});
+
+test('one extra byte on the v1.0.0-v1.0.4 bootstrap is customized in linter, planner, and new-surface', () => {
+  const model = baseModel();
+  const hubRoot = seedV1_0Hub(model);
+  try {
+    writeFileSync(join(hubRoot, PORTABLE_DEMO_BOOTSTRAP_PATH), `${V1_0_PORTABLE_DEMO_BOOTSTRAP}x`);
+    const before = fileState(hubRoot);
+    assert.deepEqual(portableMessages(hubRoot), [{
+      level: 'error',
+      msg: `portable-v1: canonical bootstrap at ${PORTABLE_DEMO_BOOTSTRAP_PATH} is customized`,
+    }]);
+    const plan = planProjectScaffold({ hubRoot, model, templatesDir });
+    assert.deepEqual(plan.conflicts, [{
+      id: 'v1:project-bootstrap:customized',
+      artifactId: 'project-bootstrap',
+      path: PORTABLE_DEMO_BOOTSTRAP_PATH,
+      reason: 'customized',
+      choices: ['replace', 'abort'],
+    }]);
+    assert.deepEqual(previewProjectScaffold(plan), []);
+    const repaired = captureNewSurface([
+      '--name', 'web', '--path', 'apps/web', '--agent', 'web-agent',
+      '--hub', hubRoot, '--test', 'npm test', '--repair',
+    ]);
+    assert.equal(repaired.code, 1);
+    assert.match(repaired.stderr, /v1:project-bootstrap:customized/u);
+    assert.deepEqual(fileState(hubRoot), before);
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
+  }
+});
 
 test('public repair refuses explicit Codex inherit and preserves the full tree', () => {
   const model = baseModel();
@@ -1088,4 +1232,36 @@ test('portable-v1 returns stable non-file violations for every canonical artifac
     assert.deepEqual(planProjectScaffold({ hubRoot, model, templatesDir }).conflicts, []);
     assert.deepEqual(collectViolations(hubRoot).filter(({ level }) => level === 'error'), []);
   });
+});
+
+// Pre-hub recognition and the public planner must agree on what a hub artifact
+// is: whatever the planner writes beside a pre-init inception descriptor makes
+// the repository a partial hub, named artifact by artifact, never a pre-hub. A planner artifact family the classifier missed would let a
+// half-initialized hub pass as an inception.
+test('every artifact the public planner writes turns an index-less pre-init repository into a named partial hub', () => {
+  const hubRoot = tempHub();
+  try {
+    put(hubRoot, '.apex/inception/.gitignore', '*\n');
+    put(hubRoot, '.apex/inception/state.json',
+      serializeInceptionState(createInitialInceptionState('0b6f1b8e-3c1a-4e2b-9f3d-5a7c9e1b2d4f')));
+    assert.equal(classifyHub(hubRoot).state, 'pre-hub');
+    const model = baseModel({
+      surfaces: [
+        { name: 'web', path: 'apps/web', agent: 'web-agent', testCmd: 'npm test' },
+        { name: 'api', path: 'services/api', agent: 'api-agent', testCmd: 'npm run test:api' },
+      ],
+    });
+    const plan = planProjectScaffold({ hubRoot, model, templatesDir });
+    assert.deepEqual(plan.conflicts, []);
+    const { paths } = applyProjectScaffold({ hubRoot, plan });
+    const classified = classifyHub(hubRoot);
+    assert.equal(classified.state, 'invalid');
+    const messages = classified.violations.filter(({ level }) => level === 'error').map(({ msg }) => msg);
+    assert.ok(messages.some((msg) => /^missing _INDEX\.md at .*_INDEX\.md$/u.test(msg)), messages.join('\n'));
+    const named = messages.map((msg) => msg.match(/^inception: pre-hub state is incompatible with hub artifact (.+)$/u)?.[1])
+      .filter(Boolean);
+    assert.deepEqual(named.sort(), [...paths].sort(), 'the classifier names exactly the planner outputs');
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
+  }
 });

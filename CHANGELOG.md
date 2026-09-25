@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.1.0 (2026-09-25)
+
+- Add the pre-hub `inception` skill, the tenth canonical skill: it takes a new application
+  from its starting materials to an approved, verified bootstrap before any hub exists,
+  then hands it to `init` through the exact `inception-handoff: steepy-apex/v1` transfer.
+- Add `inception-paths.mjs`, `inception-state.mjs`, and `inception-handoff.mjs` for the
+  ignored local `.apex/inception/` area, its closed v1 descriptor, byte-bound approval,
+  code checkpoints, and the per-decision init receipt.
+- Give `init` an inception entry that reuses the confirmed record, fills every document
+  it creates, and completes only after the hub gate and a versioned-files-only copy pass.
+- Share one stable-document reader (`stable-paths.mjs`) across the linter and controllers;
+  `validate-hub` recognizes a valid pre-hub inception without calling it a coherent hub.
+- List all ten skills in the OpenCode, Pi, and DeepSeek Harness adapters; without a hub,
+  they offer `inception` or `init` without starting either.
+- Document the greenfield path (`docs/inception.md`) and its native acceptance protocol
+  (`docs/inception-acceptance.md`); native proofs this release used a model approver.
+- Upgrade note for existing hubs: the canonical bootstrap gained an `## Inception boundary`
+  section while its generated provenance stayed `v1`. An untouched v1.0.0-v1.0.4 bootstrap
+  stays valid: `validate-hub` exits 0 with one warning (silent under `--quiet` and in the
+  Stop hook), and `/steepy-apex:init` repair or `/steepy-apex:new-surface` rewrites it with
+  no conflict question. A bootstrap changed by even one byte or line ending remains a
+  `customized` conflict. `validate-hub` and the workflow controllers now refuse a stable
+  hub, root-instruction, or provider file with more than one hard link
+  (`stable-read: <path> is hard-linked`); replace such a link with an ordinary copy.
+- Mixed versions: a hub repaired by this release fails the 1.0.x linter and Stop hook
+  (`canonical bootstrap ... is customized`) until every collaborator updates the plugin.
+- Finalize now binds a complete init receipt through a durable finalization intent before
+  replacing the prepared receipt, then records complete state only after verifying its
+  exact digest and promoted contents. Crash retries with that intent recover without
+  rewriting unexpected bytes; a legacy complete receipt beside a prepared descriptor
+  without intent is ambiguous and refused, while ordinary prepared or already complete
+  legacy runs remain usable. The finalization intent makes this recovery explicit, while
+  the legacy ambiguous prefix is refused without rewriting either file. The state CLI
+  cannot create the intent or complete init.
+- Inception freezes approval and checkpoint references once init starts, refuses a
+  promotion that reaches the same checkpoint file through a different mount, and
+  rechecks create-only absence and ancestor identities before file publication.
+
 ## v1.0.4 (2026-09-18)
 
 - Let halted Gear-3 implementation runs receive exact additional evidence through

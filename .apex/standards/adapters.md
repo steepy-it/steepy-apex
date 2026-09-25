@@ -50,8 +50,15 @@ Adapters declare configured host wiring, not a timeless host-runtime guarantee. 
 - Bootstrap guidance is project-name agnostic: instruct the host to read applicable
   `AGENTS.md` files in root-to-project order, locate the canonical bootstrap under
   `.agents/skills`, fall back to `.apex/_INDEX.md`, and declare inline execution of
-  the relevant owning standard when that bootstrap is unavailable. Do not hardcode a
-  repository bootstrap name.
+  the relevant owning standard when that bootstrap is unavailable. When neither the
+  bootstrap nor the index exists, the project has no governed hub yet: do not impose
+  a standard. For a brand-new application the user wants governed, offer the pre-hub
+  `inception` skill; for an existing codebase, offer `init`, then `discovery`. Never
+  start either skill unless the user asks. Do not hardcode a repository bootstrap name.
+- The skill-name allowlist is closed and flat: each adapter lists all ten canonical
+  skills, including the pre-hub `inception` skill, purely as invocation identifiers.
+  Registering `inception` never scans or reads `.apex/inception/**`; that area's
+  boundary is owned by the skill itself, not by the adapter that names it.
 - OpenCode discovers project specialists only from `.opencode/agents`, using the
   native thin frontmatter and filename-derived agent name. Missing, invalid, unreadable,
   or non-directory native layouts register no project specialists; `.claude/agents` is never read.

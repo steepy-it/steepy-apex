@@ -16,6 +16,7 @@ const workflowCommands = [
   'implement',
   'review',
   'loop-engineer',
+  'inception',
 ];
 
 function namespacedCommand(command) {
@@ -2304,6 +2305,55 @@ test('standalone skills (init, check, new-surface, discovery) are harness-neutra
   }
 });
 
+test('skill families: ten canonical skills — five chain, four standalone hub-aware, and the pre-hub inception skill', () => {
+  const families = {
+    chain: ['brainstorm', 'plan', 'implement', 'review', 'loop-engineer'],
+    standalone: ['init', 'new-surface', 'check', 'discovery'],
+    preHub: ['inception'],
+  };
+  const all = Object.values(families).flat();
+  assert.deepEqual(
+    readdirSync(skillsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort(),
+    [...all].sort(),
+    'skills/ holds exactly the ten canonical skills',
+  );
+  const handoffBlock = /<!-- steepy:manual-handoff:v1:start -->/;
+  for (const name of all) {
+    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const isChain = families.chain.includes(name);
+    assert.equal(handoffBlock.test(text), isChain, `${name}: only chain skills carry the manual-handoff block`);
+    assert.equal(/^## Checklist$/m.test(text), isChain, `${name}: only chain skills carry a checklist`);
+  }
+  const inception = readFileSync(join(skillsDir, 'inception', 'SKILL.md'), 'utf8');
+  const engineRootBlock =
+    '> **Engine root:** this skill\'s base directory is `<engine-root>/skills/inception/`; engine\n' +
+    '> scripts live two levels up, at `<engine-root>/scripts/`. Resolve them relative to the base\n' +
+    '> directory your harness reports for this skill.';
+  assert.ok(inception.includes(engineRootBlock), 'inception must carry the byte-exact Engine-root block');
+  assert.doesNotMatch(inception, /\/steepy(?:-apex)?:|CLAUDE_/, 'inception names skills semantically and stays harness-neutral');
+  assert.doesNotMatch(inception, /<!-- steepy-workflow: v1|### Step 0 — Read the gear|## Model Selection/,
+    'inception adds no workflow header, gear read, or Model Selection lock');
+  for (const name of families.chain) {
+    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+    assert.ok(text.includes('phase: <brainstorm|plan|implement|review|loop-engineer|goal-contract>'),
+      `${name}: the chain phase domain is unchanged and never includes inception`);
+  }
+});
+
+test('inception and init prose keep the finalization helper boundary consistent', () => {
+  const protocol = readFileSync(join(skillsDir, 'inception', 'protocol.md'), 'utf8');
+  const transfer = readFileSync(join(skillsDir, 'inception', 'init-handoff.md'), 'utf8');
+  const init = readFileSync(join(skillsDir, 'init', 'SKILL.md'), 'utf8');
+  for (const [name, text] of [['protocol', protocol], ['transfer', transfer], ['init', init]]) {
+    assert.match(text, /finalization intent/i, `${name} must name the helper-owned intent`);
+    assert.match(text, /prepared receipt/i, `${name} must distinguish the prepared receipt`);
+    assert.match(text, /finalize/i, `${name} must direct finalization through the helper`);
+    assert.doesNotMatch(text, /node <engine-root>\/scripts\/inception-state\.mjs update[^\n]*finalization/i,
+      `${name} must not instruct the model to write the intent`);
+  }
+  assert.match(protocol, /deterministic helper[^.]*not native model compliance/i);
+});
+
 test('init and new-surface stay marker-free; loop-engineer owns workflow lifecycle headers', () => {
   for (const name of ['init', 'new-surface', 'loop-engineer']) {
     const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
@@ -2566,4 +2616,16 @@ test('v2 prompts override four-field legacy examples without changing manual or 
   const schema = JSON.parse(readFileSync(join(skillsDir, 'implement/reviewer-response-v2.schema.json'), 'utf8'));
   assert.deepEqual(schema.required, ['status', 'artifact', 'signals']);
   assert.equal(schema.additionalProperties, false);
+});
+
+test('docs/workflow.md says the greenfield path precedes the hub and spec means the brainstorm artifact', () => {
+  const workflow = readFileSync(join(root, 'docs', 'workflow.md'), 'utf8');
+  const flat = workflow.replace(/\s+/g, ' ');
+  assert.match(flat, /pre-hub path with no gear of its own/i,
+    'workflow.md must state inception is a pre-hub path with no gear of its own');
+  assert.match(flat, /\[`inception`\]\(inception\.md\)/, 'workflow.md must link inception.md');
+  assert.match(flat, /spec.{0,60}means the artifact `brainstorm` writes/i,
+    'workflow.md must disambiguate "spec" as the brainstorm artifact');
+  assert.match(flat, /inception's own project write-up is a different document/i);
+  assert.match(flat, /not a sixth skill/i, 'workflow.md must deny inception is a sixth chain skill');
 });

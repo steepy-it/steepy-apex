@@ -38,6 +38,7 @@ import {
   writeWorkPath,
 } from './work-paths.mjs';
 import { writeAllSync } from './write-all.mjs';
+import { rawPathEntersLocalArea, readStableDocument } from './stable-paths.mjs';
 import {
   WORKFLOW_EVENT_SCHEMA_VERSION,
   classifyCommitReconciliation,
@@ -200,42 +201,27 @@ function derivedPaths(goalPath) {
   });
 }
 
+// A stable path is a canonical `.apex` Markdown path outside every local area.
 function safeStablePath(value, label) {
   if (typeof value !== 'string' || value.length === 0 || value.trim() !== value
     || value.startsWith('/') || value.includes('\\')
     || value.split('/').some((part) => part === '' || part === '.' || part === '..')
     || /[\r\n\0]/u.test(value)
-    || !value.startsWith('.apex/') || value.startsWith('.apex/work/') || !value.endsWith('.md')) {
+    || !value.startsWith('.apex/') || rawPathEntersLocalArea('', value) || !value.endsWith('.md')) {
     fail('INVALID_ROUTING', `${label} must be a stable confined .apex Markdown path`);
   }
   return value;
 }
 
+// Routing and standards bytes come only through the shared stable reader:
+// hub mount binding, physical identity, local-area exclusion, and single-link
+// admission before any body read.
 function readStableRoutingFile(repoRoot, path, label) {
   safeStablePath(path, label);
-  const absolute = resolve(repoRoot, path);
-  const root = realpathSync(resolve(repoRoot));
-  let fd;
   try {
-    const entry = lstatSync(absolute, { bigint: true });
-    if (!entry.isFile() || entry.isSymbolicLink()) {
-      fail('INVALID_ROUTING', `${label} is not a physical regular file: ${path}`);
-    }
-    const physical = realpathSync(absolute);
-    if (!physical.startsWith(`${root}${sep}`)) {
-      fail('INVALID_ROUTING', `${label} escapes the target repository: ${path}`);
-    }
-    fd = openSync(absolute, FS_CONSTANTS.O_RDONLY | FS_CONSTANTS.O_NOFOLLOW);
-    const opened = fstatSync(fd, { bigint: true });
-    if (!opened.isFile() || opened.dev !== entry.dev || opened.ino !== entry.ino) {
-      fail('INVALID_ROUTING', `${label} identity changed while opening: ${path}`);
-    }
-    return readFileSync(fd, 'utf8');
+    return readStableDocument(repoRoot, path, label);
   } catch (error) {
-    if (error instanceof LoopControllerError) throw error;
-    fail('INVALID_ROUTING', `${label} cannot be read: ${path}`);
-  } finally {
-    if (fd !== undefined) closeSync(fd);
+    fail('INVALID_ROUTING', error.code === 'STABLE_READ' ? error.message : `${label} cannot be read: ${path}`);
   }
 }
 
@@ -253,6 +239,9 @@ function standardLinks(corePath, coreText) {
   for (const line of coreText.split('\n')) {
     const match = /^\|[^\r\n]*\[[^\]]+\]\(([^)]+\.md)\)[^\r\n]*\|\s*$/u.exec(line);
     if (match === null) continue;
+    // Checked raw, before join() can erase an entered-and-left local area.
+    const area = rawPathEntersLocalArea(dirname(corePath), match[1]);
+    if (area) fail('INVALID_ROUTING', `modular standard link enters excluded ${area.path}`);
     const linked = join(dirname(corePath), match[1]);
     safeStablePath(linked, 'modular standard link');
     if (!links.includes(linked)) links.push(linked);

@@ -30,7 +30,9 @@ a store listing. See the [distribution checklist](../RELEASE.md#public-distribut
 /plugin install steepy-apex@steepy-apex
 ```
 
-Then restart Claude Code (or reload plugins) and run `/steepy-apex:init`.
+Then restart Claude Code (or reload plugins) and run `/steepy-apex:inception` for a
+brand-new application with no code yet, or `/steepy-apex:init` directly against an
+existing codebase.
 
 ### Codex
 
@@ -48,7 +50,7 @@ codex plugin marketplace add steepy-it/steepy-apex
 codex plugin add steepy-apex@steepy-apex
 ```
 
-The checkout is itself a marketplace root (`.agents/plugins/marketplace.json` + `.codex-plugin/plugin.json` ship in the repo). Skills are invoked with `$<skill>` or picked automatically; run the `init` skill first.
+The checkout is itself a marketplace root (`.agents/plugins/marketplace.json` + `.codex-plugin/plugin.json` ship in the repo). Skills are invoked with `$<skill>` or picked automatically; run the `inception` skill first for a brand-new application with no code yet, otherwise run `init` directly.
 
 ### OpenCode
 
@@ -68,7 +70,7 @@ The entry module resolves `skills/` and its shared adapter modules relative to t
 
 **From npm** — future release; the package is not published yet.
 
-The adapter registers the canonical `skills/` tree and nine `steepy-apex-<skill>` commands; skills are also invoked by the agent through the native skill tool. Skills read templates from the checkout, which OpenCode treats as an external directory: interactive sessions get a one-time permission prompt, while non-interactive `opencode run` needs it pre-granted in `opencode.json` (`"permission": { "external_directory": { "/path/to/steepy-apex/**": "allow" } }`).
+The adapter registers the canonical `skills/` tree and ten `steepy-apex-<skill>` commands (including the pre-hub `inception` skill); skills are also invoked by the agent through the native skill tool. Skills read templates from the checkout, which OpenCode treats as an external directory: interactive sessions get a one-time permission prompt, while non-interactive `opencode run` needs it pre-granted in `opencode.json` (`"permission": { "external_directory": { "/path/to/steepy-apex/**": "allow" } }`).
 
 ### Pi
 
@@ -104,7 +106,7 @@ dsh plugin --profile <name> add git+https://github.com/steepy-it/steepy-apex.git
 
 **From npm** — future release; the package is not published yet.
 
-The adapter registers nine `steepy-<skill>` commands, a model-invocable `steepy_skill` tool, and a marker-guarded bootstrap section in the system prompt. A command's output is rendered to the human and never enters model history, so it can only name the tool call to make — ask the model to call `steepy_skill` directly, or run a `steepy-<skill>` command to see the exact call.
+The adapter registers ten `steepy-<skill>` commands (including the pre-hub `inception` skill), a model-invocable `steepy_skill` tool, and a marker-guarded bootstrap section in the system prompt. A command's output is rendered to the human and never enters model history, so it can only name the tool call to make — ask the model to call `steepy_skill` directly, or run a `steepy-<skill>` command to see the exact call.
 
 ### Requirements
 
@@ -113,16 +115,23 @@ The adapter registers nine `steepy-<skill>` commands, a model-invocable `steepy_
 
 ## First run and troubleshooting
 
-Open the repository you want to govern, then run `init`, `discovery` (for an existing
-codebase), and `check` using your harness's syntax:
+Two starting points, both hub-free until they finish:
 
-| Harness | Initialize | Discover | Check |
-|---|---|---|---|
-| Claude Code | `/steepy-apex:init` | `/steepy-apex:discovery` | `/steepy-apex:check` |
-| Codex | `$init` | `$discovery` | `$check` |
-| OpenCode | `/steepy-apex-init` | `/steepy-apex-discovery` | `/steepy-apex-check` |
-| Pi | `/skill:init` | `/skill:discovery` | `/skill:check` |
-| DeepSeek Harness | Ask the model to call `steepy_skill` with `skill: "init"` | Use `skill: "discovery"` | Use `skill: "check"` |
+- **Greenfield** — a new application with no code yet, or only starting materials.
+  Run `inception` first. It needs no `.apex` hub to start; it takes the project from
+  starting materials to an approved, verified bootstrap, then hands off to `init`.
+- **Existing codebase** — code already exists but there is no hub yet. Run `init`
+  directly, then `discovery` to fill hub docs from the real code.
+
+Then run `check` using your harness's syntax:
+
+| Harness | Inception (greenfield) | Initialize | Discover (existing code) | Check |
+|---|---|---|---|---|
+| Claude Code | `/steepy-apex:inception` | `/steepy-apex:init` | `/steepy-apex:discovery` | `/steepy-apex:check` |
+| Codex | `$inception` | `$init` | `$discovery` | `$check` |
+| OpenCode | `/steepy-apex-inception` | `/steepy-apex-init` | `/steepy-apex-discovery` | `/steepy-apex-check` |
+| Pi | `/skill:inception` | `/skill:init` | `/skill:discovery` | `/skill:check` |
+| DeepSeek Harness | Ask the model to call `steepy_skill` with `skill: "inception"` | Use `skill: "init"` | Use `skill: "discovery"` | Use `skill: "check"` |
 
 In Codex, select the skill belonging to **steepy-apex** if another plugin uses the
 same name. Restart the harness after installation if skills are not visible.

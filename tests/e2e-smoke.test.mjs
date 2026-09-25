@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,8 +55,8 @@ test('a hub built from templates + one surface passes the linter green', () => {
   );
   assert.match(
     indexText,
-    /Work artifacts:[\s\S]*specs and plans live under `\.apex\/work\/`[\s\S]*Promote durable decisions into stable docs/i,
-    'root index must tell generated hubs that specs/plans are local work artifacts'
+    /Work artifacts:[\s\S]*specs[\s\S]*live under `\.apex\/work\/`[\s\S]*`\.apex\/inception\/`[\s\S]*Promote durable decisions into stable docs/i,
+    'root index must tell generated hubs that specs/plans/inception materials are local work artifacts'
   );
   assert.equal(readFileSync(join(hub, '.apex', 'work', '.gitignore'), 'utf8'), '*\n!.gitignore\n');
   // The hub carries a format-version stamp so a future format break can gate/migrate.
@@ -68,4 +68,50 @@ test('a hub built from templates + one surface passes the linter green', () => {
   assert.match(claudeMd, /^@AGENTS\.md$/m);
   assert.match(readFileSync(join(hub, 'AGENTS.md'), 'utf8'), /project-bootstrap/);
   assert.match(readFileSync(join(hub, '.agents', 'skills', 'project-bootstrap', 'SKILL.md'), 'utf8'), /`\.apex\/_INDEX\.md`/);
+});
+
+// The two durable project templates the inception entry of init creates when a
+// promotion needs them: rendered verbatim and linked from the index they lint
+// green; left unlinked they are orphans. The hub is template-built, not a
+// transfer result: tests/inception-integration.test.mjs owns the transfer.
+test('project-context and project-architecture templates compose into a green hub only when the index links them', () => {
+  for (const linked of [true, false]) {
+    const hub = mkdtempSync(join(tmpdir(), 'steepy-e2e-project-docs-'));
+    try {
+      mkdirSync(join(hub, 'apps', 'web'), { recursive: true });
+      for (const f of ['conventions.md', 'glossary.md', 'testing-and-checklist.md']) {
+        mkdirSync(join(hub, '.apex'), { recursive: true });
+        writeFileSync(join(hub, '.apex', f), `# ${f}\n`);
+      }
+      const { row } = scaffold({ name: 'web', surfacePath: 'apps/web', agent: 'web-agent', hubRoot: hub, templatesDir: templates, testCmd: 'vitest' });
+      const map = '- [Testing & Checklist](testing-and-checklist.md)\n';
+      const projectLinks = '- [Project Context](project-context.md)\n- [Project Architecture](project-architecture.md)\n';
+      const index = renderTemplate(readFileSync(join(templates, '_INDEX.md'), 'utf8'), { projectName: 'project', routingRows: row, gitPolicyDirective: '' });
+      assert.ok(index.includes(map), 'the index template keeps its knowledge-base map');
+      writeFileSync(join(hub, '.apex', '_INDEX.md'), linked ? index.replace(map, `${map}${projectLinks}`) : index);
+      for (const doc of ['project-context.md', 'project-architecture.md']) {
+        writeFileSync(join(hub, '.apex', doc), readFileSync(join(templates, doc), 'utf8'));
+      }
+      const model = {
+        projectName: 'project', description: '', devCommands: ['vitest run'], resolutions: {},
+        surfaces: [{ name: 'web', path: 'apps/web', agent: 'web-agent', testCmd: 'vitest' }],
+      };
+      applyProjectScaffold({ hubRoot: hub, plan: planProjectScaffold({ hubRoot: hub, model, templatesDir: templates }) });
+
+      const violations = collectViolations(hub);
+      const errors = violations.filter((v) => v.level === 'error').map((v) => v.msg);
+      if (linked) {
+        assert.deepEqual(errors, [], JSON.stringify(errors, null, 2));
+        assert.deepEqual(violations.filter((v) => /project-(context|architecture)\.md/.test(v.msg)), [],
+          'the templates carry no warning either');
+      } else {
+        assert.deepEqual(errors.sort(), [
+          'anti-orphan: .apex/project-architecture.md is not linked from .apex/_INDEX.md',
+          'anti-orphan: .apex/project-context.md is not linked from .apex/_INDEX.md',
+        ]);
+      }
+    } finally {
+      rmSync(hub, { recursive: true, force: true });
+    }
+  }
 });

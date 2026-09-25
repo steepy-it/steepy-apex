@@ -52,9 +52,10 @@ Use a fresh checkout and install the local marketplace:
 ```
 
 For direct development loading, use `claude --plugin-dir .` and `/reload-plugins`.
-Confirm all nine commands:
+Confirm all ten commands:
 
 ```text
+/steepy-apex:inception
 /steepy-apex:init
 /steepy-apex:new-surface
 /steepy-apex:check
@@ -68,11 +69,14 @@ Confirm all nine commands:
 
 In an empty temporary repository with a working test command:
 
-1. Run `/steepy-apex:init`, complete the interview, then `/steepy-apex:check`.
-2. Confirm `.apex/_INDEX.md` and the chosen root instructions exist.
-3. Confirm `.apex/work/.gitignore`, `.apex/work/specs/`, and `.apex/work/plans/`
+1. For a brand-new application with no code yet, run `/steepy-apex:inception` first;
+   it works before any hub exists and hands off to `init` once its bootstrap is
+   approved and verified. For an existing codebase, skip straight to step 2.
+2. Run `/steepy-apex:init`, complete the interview, then `/steepy-apex:check`.
+3. Confirm `.apex/_INDEX.md` and the chosen root instructions exist.
+4. Confirm `.apex/work/.gitignore`, `.apex/work/specs/`, and `.apex/work/plans/`
    remain local gitignored workflow state. Stable specs/plans indexes are not generated.
-4. Confirm the hub check passes and the Stop hook stays quiet on a coherent hub.
+5. Confirm the hub check passes and the Stop hook stays quiet on a coherent hub.
 
 After publication, repeat using `/plugin marketplace add steepy-it/steepy-apex`,
 then reinstall/reload. Repeat the smoke test in each supported harness.
@@ -109,6 +113,27 @@ scripts/bump-version.mjs <type>` updates `package.json`, `.claude-plugin/plugin.
 and `.codex-plugin/plugin.json` in three-way lockstep at completion, using one shared target.
 A `## vX.Y.Z (YYYY-MM-DD)` section is added to `CHANGELOG.md`. Bump and
 changelog land as one commit on the branch before the PR opens.
+
+**Upgrade note for existing hubs (first release after 1.0.4).** Carry it into that release's
+`CHANGELOG.md` section. The canonical bootstrap gained an `## Inception boundary` section while
+its generated provenance stayed `v1`. An untouched v1.0.0-v1.0.4 bootstrap stays valid:
+`validate-hub` exits 0 with one warning (silent under `--quiet` and in the Stop hook), and
+`/steepy-apex:init` repair or `/steepy-apex:new-surface` rewrites it to the current rendering with
+no conflict question. A bootstrap changed by even one byte or line ending remains a `customized`
+conflict with `replace` or `abort`. Separately, `validate-hub` and the workflow controllers now
+refuse a stable hub, root-instruction, or provider file with more than one hard link
+(`stable-read: <path> is hard-linked`); replace such a link with an ordinary copy.
+
+**Inception init recovery across versions.** Current `finalize` writes a descriptor
+finalization intent for the exact complete-receipt digest before replacing the prepared
+receipt, then verifies that receipt and records complete state. After interruption,
+rerun `finalize` with the same handoff and a freshly checked passing hub gate; a pending
+intent resumes only through this command. The pending intent is a new intermediate
+descriptor form that an older plugin engine rejects. Update collaborators before they
+resume that run. Ordinary legacy descriptors without the intent keep their original
+canonical form and remain usable when the receipt is still prepared or init is already
+complete. A legacy complete receipt beside a prepared descriptor without intent is
+ambiguous and refused without rewriting either file; retain both for manual review.
 
 **Interrupted bumps.** The writer provides recoverable per-file atomicity, not a
 multi-file atomic transaction. It holds the existing repository scaffold lease for cooperating

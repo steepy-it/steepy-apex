@@ -128,6 +128,22 @@ test('v1 generated templates render complete provenance and native thin adapters
     /phase role maps|lifecycle transitions|envelope grammar|harness-specific invocation syntax|shared protocol reference/i,
   );
   assert.doesNotMatch(rendered['project-bootstrap-skill.md'], /CLAUDE\.md|\/steepy-apex:/);
+  assert.match(
+    rendered['project-bootstrap-skill.md'],
+    /Do not ordinarily enumerate, search, or read under `\.apex\/inception\/\*\*`/,
+  );
+  assert.match(
+    rendered['project-bootstrap-skill.md'],
+    /exact input paths.*current step.*user explicitly authorizes|user explicitly authorizes.*exact input paths/is,
+  );
+  assert.doesNotMatch(
+    rendered['project-bootstrap-skill.md'],
+    /inception-handoff|inception-approval|inception-checkpoint|inception-promotion|inception-receipt/i,
+  );
+  assert.match(
+    rendered['project-bootstrap-skill.md'],
+    /inception boundary has no pathless recovery of its own/i,
+  );
 
   assert.match(
     rendered['claude-bootstrap-stub.md'],
@@ -243,4 +259,70 @@ test('final v1 layout excludes retired template sources and consumer reads', () 
   assert.match(standard, /project-bootstrap-skill\.md/);
   assert.match(standard, /surface-agent-(?:claude|codex|opencode)/);
   assert.doesNotMatch(standard, /\b(?:dual layout|expand phase|legacy|consumer|migration)\b/i);
+  assert.match(standard, /inception-project\.md/);
+  assert.match(standard, /inception-verification\.md/);
+  assert.match(standard, /project-context\.md/);
+  assert.match(standard, /project-architecture\.md/);
+});
+
+test('the hub index template excludes both local areas from the DAG and keeps promoted content self-sufficient', () => {
+  const index = template('_INDEX.md');
+  assert.match(
+    index,
+    /excluding local `?\.apex\/work\/\*\*`? and `?\.apex\/inception\/\*\*`? artifacts/,
+  );
+  assert.match(index, /`?\.apex\/inception\/`?/);
+  assert.match(index, /self-sufficient/i);
+});
+
+const skeletonTemplates = {
+  'inception-project.md': [
+    /^# Project — Inception Record/m,
+    /## Materials, facts, and simulations/,
+    /## Constraints/,
+    /## Alternatives and reasons/,
+    /## Components, data, and contracts/,
+    /## Official research/,
+    /## Reused assets and preserved behaviors/,
+    /## Representative path/,
+    /## Evidence and chosen deploy/,
+  ],
+  'inception-verification.md': [
+    /^# Verification — Inception Record/m,
+    /`configured`/,
+    /`executed`/,
+    /`succeeded`/,
+    /`not-executed`/,
+    /`failed`/,
+    /## Local CI/,
+    /## Remote success/,
+    /## Deploy/,
+  ],
+  'project-context.md': [
+    /^# Project Context/m,
+    /## Intent/,
+    /## Design, prototype, and behaviors/,
+    /## Bootstrap boundaries/,
+    /## Future flows/,
+    /## Open questions/,
+    /READY/,
+  ],
+  'project-architecture.md': [
+    /^# Project Architecture/m,
+    /## Cross-cutting decisions/,
+    /## Reasons/,
+    /## Version policy/,
+    /manifest.*lockfile|lockfile.*manifest/is,
+  ],
+};
+
+test('the inception and project skeletons are proportioned fill-in structures, not a fixed catalog', () => {
+  for (const [name, patterns] of Object.entries(skeletonTemplates)) {
+    const text = template(name);
+    assert.doesNotMatch(text, /\{\{\w+\}\}/, `${name} must not carry a code-rendered placeholder`);
+    assert.doesNotMatch(text, /steepy:generated:/, `${name} must not claim generated provenance`);
+    for (const pattern of patterns) {
+      assert.match(text, pattern, `${name} must match ${pattern}`);
+    }
+  }
 });

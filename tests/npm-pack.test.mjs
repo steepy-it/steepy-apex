@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -50,6 +50,17 @@ after(() => {
   rmSync(cacheDir, { recursive: true, force: true });
 });
 
+// Every module specifier a source can load: static `import`/`export … from`,
+// bare side-effect imports, and dynamic `import(…)` (a non-literal dynamic
+// argument is reported as such so it can never pass a boundary check).
+function moduleSpecifiers(source) {
+  return [
+    ...source.matchAll(/^(?:import|export)\s[^'";]*?\sfrom\s+['"]([^'"]+)['"]/gmu),
+    ...source.matchAll(/^\s*import\s*['"]([^'"]+)['"]/gmu),
+    ...source.matchAll(/\bimport\s*\(\s*(?:['"]([^'"]+)['"]\s*\))?/gu),
+  ].map((match) => match[1] ?? '<non-literal dynamic import>');
+}
+
 function assertPacked(required, label) {
   for (const path of required) {
     assert.ok(paths.includes(path), `${label ? `${label}: ` : ''}tarball must include ${path}`);
@@ -85,7 +96,7 @@ test('npm tarball includes the dsh cordis bundle patch manifest', () => {
   assertPacked(['cordis.patch.yml']);
 });
 
-test('npm tarball includes all nine SKILL.md files', () => {
+test('npm tarball includes all ten SKILL.md files', () => {
   const skillNames = [
     'init',
     'check',
@@ -96,8 +107,19 @@ test('npm tarball includes all nine SKILL.md files', () => {
     'implement',
     'review',
     'loop-engineer',
+    'inception',
   ];
-  assertPacked(skillNames.map((name) => `skills/${name}/SKILL.md`), 'nine SKILL.md files');
+  assertPacked(skillNames.map((name) => `skills/${name}/SKILL.md`), 'ten SKILL.md files');
+});
+
+test('npm tarball includes every inception support file', () => {
+  assertPacked([
+    'skills/inception/protocol.md',
+    'skills/inception/reconnaissance.md',
+    'skills/inception/architecture.md',
+    'skills/inception/bootstrap.md',
+    'skills/inception/init-handoff.md',
+  ], 'inception support files');
 });
 
 test('npm tarball includes the six subagent prompt templates', () => {
@@ -127,6 +149,37 @@ test('npm tarball includes the engine scripts', () => {
   ], 'engine scripts');
 });
 
+test('npm tarball includes the inception helpers, which import only Node built-ins and packaged siblings', () => {
+  const helpers = ['scripts/inception-paths.mjs', 'scripts/inception-state.mjs', 'scripts/inception-handoff.mjs'];
+  assertPacked(helpers, 'inception helpers');
+  for (const helper of helpers) {
+    const specifiers = moduleSpecifiers(readFileSync(join(root, helper), 'utf8'));
+    assert.ok(specifiers.length > 0, `${helper} must declare its imports`);
+    for (const specifier of specifiers) {
+      assert.ok(
+        specifier.startsWith('node:') || specifier.startsWith('./'),
+        `${helper} must stay dependency-free, got import '${specifier}'`,
+      );
+      if (specifier.startsWith('./')) assertPacked([`scripts/${specifier.slice(2)}`], `${helper} sibling`);
+    }
+  }
+});
+
+test('npm tarball includes the stable-paths reader, which imports only Node built-ins and sanitize', () => {
+  // The linter and later scaffold readers share this module, so it must not
+  // import either of them back (no validate-hub -> project-scaffold cycle).
+  const helper = 'scripts/stable-paths.mjs';
+  assertPacked([helper, 'scripts/sanitize.mjs'], 'stable-paths reader');
+  const specifiers = moduleSpecifiers(readFileSync(join(root, helper), 'utf8'));
+  assert.ok(specifiers.includes('./sanitize.mjs'), `${helper} must reuse sanitize.mjs mount binding`);
+  for (const specifier of specifiers) {
+    assert.ok(
+      specifier.startsWith('node:') || specifier === './sanitize.mjs',
+      `${helper} may import only Node built-ins and sanitize.mjs, got '${specifier}'`,
+    );
+  }
+});
+
 test('npm tarball includes receipt instructions and both reviewer transport schemas', () => {
   assertPacked([
     'skills/implement/task-results-protocol.md',
@@ -145,11 +198,21 @@ test('npm tarball includes the portable scaffold runtime, v1 sources, and canoni
     'templates/AGENTS.md',
     'templates/claude-import.md',
     'templates/project-bootstrap-skill.md',
+    'templates/prior/v1.0/project-bootstrap-skill.md',
     'templates/claude-bootstrap-stub.md',
     'templates/surface-agent-claude.md',
     'templates/surface-agent-codex.toml',
     'templates/surface-agent-opencode.md',
   ], 'portable scaffold payload');
+});
+
+test('npm tarball includes the inception and project skeleton templates', () => {
+  assertPacked([
+    'templates/inception-project.md',
+    'templates/inception-verification.md',
+    'templates/project-context.md',
+    'templates/project-architecture.md',
+  ], 'inception and project skeleton templates');
 });
 
 test('npm pack dry-run leaves no repository tarball behind', () => {

@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { createInitialInceptionState, serializeInceptionState } from '../scripts/inception-state.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -145,4 +147,126 @@ test('a case alias into reserved work emits a Stop-hook block without consuming 
   assert.equal(payload.decision, 'block');
   assert.match(payload.reason, /enters excluded \.apex\/work|stable docs must not link into \.apex\/work/i);
   assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, /STOP_WORK_BYTE_SENTINEL/u);
+});
+
+const RUN = '0b6f1b8e-3c1a-4e2b-9f3d-5a7c9e1b2d4f';
+const HOOK_SENTINEL = 'STOP_HOOK_LOCAL_BODY_SENTINEL';
+
+function put(repo, path, text) {
+  mkdirSync(dirname(join(repo, path)), { recursive: true });
+  writeFileSync(join(repo, path), text);
+}
+
+// A guarded pre-init descriptor with a local run document the hook never reads.
+function inceptionRepo(suffix, overrides = {}) {
+  const repo = mkdtempSync(join(tmpdir(), `steepy-stop-prehub-${suffix}-`));
+  put(repo, '.apex/inception/.gitignore', '*\n');
+  put(repo, `.apex/inception/${RUN}/proposal.md`, `# ${HOOK_SENTINEL}\n`);
+  put(repo, '.apex/inception/state.json', serializeInceptionState({ ...createInitialInceptionState(RUN), ...overrides }));
+  return repo;
+}
+
+test('a recognized pre-hub inception keeps the Stop hook silent', () => {
+  const repo = inceptionRepo('valid');
+  try {
+    put(repo, 'AGENTS.md', '# User notes\n');
+    const r = run([repo], '{}', 2_000);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, '');
+    assert.equal(r.stderr, '');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('init in progress without an index, and a partial hub beside a pre-init descriptor, block the turn', () => {
+  const approval = { path: `.apex/inception/${RUN}/proposal.md`, sha256: 'a'.repeat(64) };
+  for (const [label, arrange, reason] of [
+    ['init in progress', () => inceptionRepo('init', {
+      phase: 'init', approval, init: { status: 'in-progress', handoff: null, receipt: null },
+    }), /inception: init is in-progress/u],
+    ['partial hub', () => {
+      const repo = inceptionRepo('partial');
+      put(repo, '.apex/conventions.md', '# Conventions\n');
+      return repo;
+    }, /incompatible with hub artifact \.apex\/conventions\.md/u],
+    ['unknown state', () => {
+      const repo = inceptionRepo('unknown');
+      put(repo, '.apex/inception/state.json', `${JSON.stringify({ ...createInitialInceptionState(RUN), schemaVersion: 7 }, null, 2)}\n`);
+      return repo;
+    }, /pre-hub state not recognized \(invalid\)/u],
+  ]) {
+    // Each fixture is created inside its own iteration so `finally` always
+    // removes the repository it made, even if an earlier case fails.
+    const repo = arrange();
+    try {
+      const blocked = run([repo], '{}', 2_000);
+      assert.equal(blocked.status, 0, `${label}: ${blocked.stderr}`);
+      const payload = JSON.parse(blocked.stdout);
+      assert.equal(payload.decision, 'block', label);
+      assert.match(payload.reason, /missing _INDEX\.md/u, label);
+      assert.match(payload.reason, reason, label);
+      assert.doesNotMatch(`${blocked.stdout}\n${blocked.stderr}`, new RegExp(HOOK_SENTINEL, 'u'), label);
+
+      const looping = run([repo], '{"stop_hook_active": true}', 2_000);
+      assert.equal(looping.status, 0, label);
+      assert.equal(looping.stdout, '', label);
+      assert.match(looping.stderr, reason, label);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
+test('an unfinished start and an activated hub without its index block the turn; neither is a pre-hub', () => {
+  const approval = { path: `.apex/inception/${RUN}/proposal.md`, sha256: 'a'.repeat(64) };
+  const complete = {
+    phase: 'complete', status: 'complete', approval,
+    init: { status: 'complete', handoff: { path: `.apex/inception/${RUN}/init-handoff.json`, sha256: 'b'.repeat(64) },
+      receipt: { path: `.apex/inception/${RUN}/init-receipt.json`, sha256: 'c'.repeat(64) } },
+  };
+  for (const [label, arrange, reason] of [
+    ['start stopped before its descriptor', () => {
+      const repo = inceptionRepo('unfinished');
+      rmSync(join(repo, '.apex', 'inception', 'state.json'));
+      return repo;
+    }, /pre-hub state not recognized \(incomplete\)/u],
+    ['activated hub whose index was removed', () => {
+      const repo = inceptionRepo('activated', complete);
+      put(repo, 'AGENTS.md', '# User notes\n');
+      put(repo, '.apex/standards/app.md', '# app — Technical Standard\n');
+      return repo;
+    }, /inception: init is complete; an activated hub requires \.apex\/_INDEX\.md/u],
+  ]) {
+    const repo = arrange();
+    try {
+      const blocked = run([repo], '{}', 2_000);
+      assert.equal(blocked.status, 0, `${label}: ${blocked.stderr}`);
+      const payload = JSON.parse(blocked.stdout);
+      assert.equal(payload.decision, 'block', label);
+      assert.match(payload.reason, /missing _INDEX\.md/u, label);
+      assert.match(payload.reason, reason, label);
+      assert.doesNotMatch(`${blocked.stdout}\n${blocked.stderr}`, new RegExp(HOOK_SENTINEL, 'u'), label);
+      if (label.startsWith('activated')) {
+        put(repo, '.apex/_INDEX.md', '# Index\n- [App](standards/app.md)\n');
+        const restored = run([repo], '{}', 2_000);
+        assert.deepEqual([restored.status, restored.stdout], [0, ''], `${label}: the restored hub is silent again`);
+      }
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
+test('an operational hub with malformed local inception state stays silent', () => {
+  const repo = inceptionRepo('hub');
+  try {
+    put(repo, '.apex/inception/state.json', '{');
+    put(repo, '.apex/_INDEX.md', '# Index\n');
+    const r = run([repo], '{}', 2_000);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, '');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });

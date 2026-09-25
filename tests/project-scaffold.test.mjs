@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import {
+import fs, {
   lstatSync,
   chmodSync,
   cpSync,
@@ -10,15 +10,19 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
+  rmSync,
   statSync,
   readdirSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
+import { LOCAL_AREA_NAMES } from '../scripts/sanitize.mjs';
 import { fileURLToPath } from 'node:url';
 import {
   applyProjectScaffold,
@@ -701,6 +705,21 @@ test('project-specific bootstrap provenance remains customized when canonical by
   }
 });
 
+test('the rendered project-bootstrap artifact carries the inception boundary alongside the work-artifact boundary', () => {
+  const normalized = normalizeProjectModel(model());
+  const rendered = renderProjectArtifact('project-bootstrap', normalized, templatesDir);
+  assert.match(rendered, /## Work-artifact boundary/);
+  assert.match(rendered, /## Inception boundary/);
+  assert.match(rendered, /Do not ordinarily enumerate, search, or read under `\.apex\/inception\/\*\*`/);
+  assert.match(rendered, /inception boundary has no pathless recovery of its own/i);
+  assert.doesNotMatch(rendered, /inception-handoff|inception-approval|inception-checkpoint|inception-promotion|inception-receipt/i);
+  // The new section must not disturb the existing work-artifact boundary's exact text.
+  assert.match(
+    rendered,
+    /accepted handoff\. A pathless workflow invocation may perform only bounded workflow-header recovery discovery\./,
+  );
+});
+
 test('incomplete bootstrap content is refused without automatic migration', () => {
   const hubRoot = tempHub();
   const normalized = normalizeProjectModel(model());
@@ -813,6 +832,73 @@ test('plan validator rejects shape, ordering, placeholders, provenance, adapter 
     content: plan.operations[4].content
       .replace('`web` surface at `apps/web`', '`api` surface at `apps/api`'),
   })), /triad/i);
+});
+
+test('plan validator admits a stale prior state only as a generated update of a registered prior rendering', () => {
+  const hubRoot = tempHub();
+  try {
+    const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+    const indexOf = (artifactId) => plan.operations.findIndex((operation) => operation.artifactId === artifactId);
+    const stale = { kind: 'replace-generated', priorState: 'stale', priorDigest: 'a'.repeat(64) };
+    const mutate = (artifactId, changes) => ({
+      ...plan,
+      operations: plan.operations.map((operation, index) => (
+        index === indexOf(artifactId) ? { ...operation, ...changes } : operation
+      )),
+    });
+
+    const accepted = mutate('project-bootstrap', stale);
+    assert.equal(validateProjectScaffoldPlan(accepted), accepted);
+    for (const artifactId of ['claude-bootstrap-stub', 'web-agent-claude', 'web-agent-codex', 'web-agent-opencode']) {
+      assert.throws(() => validateProjectScaffoldPlan(mutate(artifactId, stale)), /stale/i, artifactId);
+    }
+    for (const artifactId of ['project-instructions', 'claude-import']) {
+      assert.throws(
+        () => validateProjectScaffoldPlan(mutate(artifactId, { ...stale, kind: 'replace-managed' })),
+        /stale/i,
+        artifactId,
+      );
+    }
+    assert.throws(
+      () => validateProjectScaffoldPlan(mutate('project-bootstrap', { ...stale, kind: 'create' })),
+      /incoherent/i,
+    );
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
+  }
+});
+
+test('prior bootstrap renderings are digest-pinned: a changed prior template is refused, never matched', () => {
+  const hubRoot = tempHub();
+  const engine = tempHub();
+  try {
+    const normalized = normalizeProjectModel(model());
+    const path = '.agents/skills/portable-demo-bootstrap/SKILL.md';
+    const current = renderProjectArtifact('project-bootstrap', normalized);
+    const stale = current.split('\n## Inception boundary\n')[0];
+    assert.match(stale, /interprets a handoff\.\n$/u);
+    const tamperedTemplates = join(engine, 'templates');
+    cpSync(templatesDir, tamperedTemplates, { recursive: true });
+    const prior = join(tamperedTemplates, 'prior', 'v1.0', 'project-bootstrap-skill.md');
+    assert.equal(existsSync(prior), true, 'the engine ships the pinned prior bootstrap template');
+    writeFileSync(prior, `${readFileSync(prior, 'utf8')}\n`);
+
+    put(hubRoot, path, stale);
+    const before = snapshot(hubRoot);
+    assert.equal(
+      planProjectScaffold({ hubRoot, model: model(), templatesDir }).operations
+        .find((operation) => operation.path === path)?.priorState,
+      'stale',
+    );
+    assert.throws(
+      () => planProjectScaffold({ hubRoot, model: model(), templatesDir: tamperedTemplates }),
+      /prior canonical template .*pinned digest/i,
+    );
+    assert.deepEqual(snapshot(hubRoot), before);
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
+    rmSync(engine, { recursive: true, force: true });
+  }
 });
 
 test('Codex plan validation rejects every decoded top-level model key but permits model text inside instructions', () => {
@@ -1390,5 +1476,105 @@ test('conflicts have closed provenance, coherent choices, canonical order, uniqu
     assert.throws(() => previewProjectScaffold(plan), undefined, `${name}: preview`);
     assert.throws(() => applyProjectScaffold({ hubRoot, plan }), undefined, `${name}: apply`);
     assert.deepEqual(snapshot(hubRoot), before, `${name}: zero write`);
+  }
+});
+
+function recordFsAccess(fn) {
+  const names = ['openSync', 'readFileSync', 'readdirSync', 'opendirSync'];
+  const originals = Object.fromEntries(names.map((name) => [name, fs[name]]));
+  const accesses = [];
+  try {
+    for (const name of names) {
+      fs[name] = function recorded(...args) {
+        accesses.push({ name, path: String(args[0]) });
+        return originals[name].apply(this, args);
+      };
+    }
+    syncBuiltinESMExports();
+    let result;
+    let error;
+    try { result = fn(); } catch (caught) { error = caught; }
+    return { result, error, accesses };
+  } finally {
+    Object.assign(fs, originals);
+    syncBuiltinESMExports();
+  }
+}
+
+function accessesUnder(accesses, directories) {
+  return accesses.filter(({ path }) => directories.some((directory) => {
+    const candidate = path.toLowerCase();
+    const prefix = directory.toLowerCase();
+    return candidate === prefix || candidate.startsWith(`${prefix}${sep}`);
+  }));
+}
+
+test('planner provenance enumeration skips both local areas by name and physical identity, through mounts and linked areas', () => {
+  for (const area of LOCAL_AREA_NAMES) {
+    const hubRoot = tempHub();
+    const outside = tempHub();
+    try {
+      put(hubRoot, `.apex/${area}/decoy.md`, `<!-- steepy:generated:${area}-sentinel:v1 -->\n`);
+      symlinkSync('.apex', join(hubRoot, '.claude'), 'dir');
+      const aliased = recordFsAccess(() => planProjectScaffold({ hubRoot, model: model(), templatesDir }));
+      assert.equal(JSON.stringify(aliased.result.conflicts).includes(`${area}-sentinel`), false, area);
+      assert.ok(aliased.result.operations.some(({ path }) => path === '.claude/agents/web-agent.md'), area);
+      assert.deepEqual(accessesUnder(aliased.accesses, [
+        join(hubRoot, '.apex', area), join(realpathSync.native(hubRoot), '.apex', area),
+      ]), [], area);
+
+      rmSync(join(hubRoot, '.apex', area), { recursive: true });
+      put(outside, 'area-target/x.toml', `# steepy:generated:${area}-linked-sentinel:v1\n`);
+      symlinkSync(join(outside, 'area-target'), join(hubRoot, '.apex', area), 'dir');
+      symlinkSync(outside, join(hubRoot, '.codex'), 'dir');
+      const linked = recordFsAccess(() => planProjectScaffold({ hubRoot, model: model(), templatesDir }));
+      assert.match(linked.error?.message ?? '', new RegExp(`\\.codex/area-target aliases excluded \\.apex/${area}`, 'u'),
+        `${area}: a provider directory aliased by a linked area is refused, never silently dropped`);
+      assert.deepEqual(accessesUnder(linked.accesses, [
+        join(outside, 'area-target'), join(realpathSync.native(outside), 'area-target'),
+      ]), [], area);
+    } finally {
+      rmSync(hubRoot, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  }
+});
+
+test('a root instruction mount into inception is a planner symlink conflict whose target is never read', () => {
+  const hubRoot = tempHub();
+  try {
+    const run = '0b6f1b8e-3c1a-4e2b-9f3d-5a7c9e1b2d4f';
+    put(hubRoot, `.apex/inception/${run}/agents.md`, '# INCEPTION_MOUNT_BODY_SENTINEL\n');
+    symlinkSync(`.apex/inception/${run}/agents.md`, join(hubRoot, 'AGENTS.md'));
+    const { result, accesses } = recordFsAccess(() => planProjectScaffold({ hubRoot, model: model(), templatesDir }));
+    assert.ok(result.conflicts.some(({ path, reason }) => path === 'AGENTS.md' && reason === 'symlink'),
+      JSON.stringify(result.conflicts));
+    assert.deepEqual(accessesUnder(accesses, [
+      join(hubRoot, '.apex', 'inception'), join(realpathSync.native(hubRoot), '.apex', 'inception'),
+    ]), []);
+    assert.doesNotMatch(JSON.stringify(result), /INCEPTION_MOUNT_BODY_SENTINEL/u);
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
+  }
+});
+
+test('I1: a provider directory aliased by a linked local area is refused before any canonical read', () => {
+  for (const area of LOCAL_AREA_NAMES) {
+    const hubRoot = tempHub();
+    try {
+      const canonical = renderProjectArtifact('web-agent-claude', normalizeProjectModel(model()));
+      put(hubRoot, '.claude/agents/web-agent.md', canonical);
+      put(hubRoot, '.claude/agents/nested/orphan.md', `<!-- steepy:generated:${area}-aliased-orphan:v1 -->\n`);
+      mkdirSync(join(hubRoot, '.apex'), { recursive: true });
+      symlinkSync('../.claude/agents', join(hubRoot, '.apex', area), 'dir');
+      const { result, error, accesses } = recordFsAccess(() => planProjectScaffold({ hubRoot, model: model(), templatesDir }));
+      assert.equal(result, undefined, area);
+      assert.match(error?.message ?? '', new RegExp(`\\.claude/agents aliases excluded \\.apex/${area}`, 'u'), area);
+      assert.deepEqual(accessesUnder(accesses, [
+        join(hubRoot, '.claude', 'agents'), join(realpathSync.native(hubRoot), '.claude', 'agents'),
+      ]), [], `${area}: nothing inside the aliased provider directory is read first`);
+    } finally {
+      rmSync(hubRoot, { recursive: true, force: true });
+    }
   }
 });

@@ -5,7 +5,7 @@
 // and runnable anywhere: engine scripts resolve through the literal skill-relative
 // path a harness would compute (`skills/<name>/../../scripts/<x>.mjs`, unnormalized),
 // nothing depends on `CLAUDE_*` env or `~/.claude`/`$HOME` (criterion 9's scripted
-// half), and all nine SKILL.md are open-subset discoverable with the canonical
+// half), and all ten SKILL.md are open-subset discoverable with the canonical
 // Engine-root block. The live halves (real harness install, discovery listing, chain
 // drive) land in RELEASE.md's evidence matrix (T11), human-executed.
 //
@@ -40,7 +40,8 @@ const root = join(here, '..');
 const skillsDir = join(root, 'skills');
 const goodHubDir = join(root, 'tests', 'fixtures', 'good-hub');
 
-// The nine skills a harness discovers and chains (brief's enumeration order).
+// The ten skills a harness discovers: the four standalone hub-aware skills, the
+// five chain skills, and the pre-hub `inception` skill.
 const SKILL_NAMES = [
   'init',
   'check',
@@ -51,10 +52,20 @@ const SKILL_NAMES = [
   'implement',
   'review',
   'loop-engineer',
+  'inception',
+];
+
+// The pre-hub skill's co-located support files: one protocol plus one file per phase group.
+const INCEPTION_SUPPORT_FILES = [
+  'protocol.md',
+  'reconnaissance.md',
+  'architecture.md',
+  'bootstrap.md',
+  'init-handoff.md',
 ];
 
 // The canonical Engine-root block sentence, pinned verbatim from skills/check/SKILL.md
-// (identical, single-line, across all nine — verified below by test, not assumed here).
+// (identical, single-line, across all ten — verified below by test, not assumed here).
 const ENGINE_ROOT_CANONICAL = 'scripts live two levels up, at `<engine-root>/scripts/`.';
 
 // Builds the literal `skills/<name>/../../scripts/<file>` string a harness would
@@ -181,16 +192,16 @@ test('new-surface scaffolds into the fixture through the literal skill-relative 
   }
 });
 
-// --- Case 2: nine-skill open-subset discovery parse -------------------------------
+// --- Case 2: ten-skill open-subset discovery parse --------------------------------
 
-test('all nine skills/<name>/SKILL.md declare open-subset name + description frontmatter and carry the canonical Engine-root block', () => {
+test('all ten skills/<name>/SKILL.md declare open-subset name + description frontmatter and carry the canonical Engine-root block', () => {
   assert.deepEqual(
     [...SKILL_NAMES].sort(),
     readdirSync(skillsDir, { withFileTypes: true })
       .filter((e) => e.isDirectory())
       .map((e) => e.name)
       .sort(),
-    'SKILL_NAMES must track skills/* exactly (a tenth skill or a removed one must fail this suite)'
+    'SKILL_NAMES must track skills/* exactly (an eleventh skill or a removed one must fail this suite)'
   );
 
   const offenders = [];
@@ -221,9 +232,9 @@ test('all nine skills/<name>/SKILL.md declare open-subset name + description fro
   );
 });
 
-// --- Case 3: engine-root resolution invariant for all nine skills -----------------
+// --- Case 3: engine-root resolution invariant for all ten skills ------------------
 
-test('engine-root resolution invariant: skills/<name>/../../scripts/validate-hub.mjs resolves to an existing file for all nine skills', () => {
+test('engine-root resolution invariant: skills/<name>/../../scripts/validate-hub.mjs resolves to an existing file for all ten skills', () => {
   const offenders = [];
   for (const name of SKILL_NAMES) {
     const resolved = join(skillsDir, name, '..', '..', 'scripts', 'validate-hub.mjs');
@@ -236,6 +247,18 @@ test('engine-root resolution invariant: skills/<name>/../../scripts/validate-hub
     [],
     `every skill must resolve its engine root two levels up to scripts/; violations:\n` + offenders.join('\n')
   );
+});
+
+test('the pre-hub inception skill resolves every support file and engine helper through its own base directory', () => {
+  const skillText = readFileSync(join(skillsDir, 'inception', 'SKILL.md'), 'utf8');
+  for (const file of INCEPTION_SUPPORT_FILES) {
+    assert.ok(skillText.includes(`\`${file}\``), `inception SKILL.md must name its support file ${file}`);
+    assert.ok(existsSync(join(skillsDir, 'inception', file)), `${file} must be co-located with the inception SKILL.md`);
+  }
+  for (const helper of ['inception-state.mjs', 'inception-handoff.mjs']) {
+    const literal = skillRelative('inception', helper);
+    assert.ok(existsSync(literal), `the literal skill-relative path must resolve: ${literal}`);
+  }
 });
 
 test('portable root and bootstrap sources are model-generic, while the routing index stays harness-neutral', () => {
