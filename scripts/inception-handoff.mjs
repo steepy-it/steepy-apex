@@ -532,6 +532,28 @@ function readRepositoryFile(repository, path, { maxBytes, collect = false }) {
   }
 }
 
+function locateRepositoryFile(repository, path) {
+  repository.diagnostics.length = 0;
+  const location = repository.reader.locateFile(path);
+  if (location.state !== 'present' && !(location.state === 'missing' && location.ancestor)) {
+    const detail = repository.diagnostics.map(({ msg }) => msg.replace(/^stable-read: /u, '')).join('; ');
+    fail('INCEPTION_HANDOFF_UNSAFE', `'${path}' cannot be located safely: ${detail || `is ${location.state}`}`);
+  }
+  return location;
+}
+
+function sameFileDestination(left, right) {
+  if (left.physicalPath === right.physicalPath) return true;
+  if (left.state === 'present' && right.state === 'present') {
+    return left.dev === right.dev && left.ino === right.ino;
+  }
+  // The absent suffix follows the transfer's existing case-folded lexical
+  // policy, anchored to a verified directory identity rather than a basename.
+  return left.state === 'missing' && right.state === 'missing'
+    && left.ancestor.dev === right.ancestor.dev && left.ancestor.ino === right.ancestor.ino
+    && left.suffix.toLowerCase() === right.suffix.toLowerCase();
+}
+
 // Observes an explicit inventory of relevant repository paths (manifests,
 // lockfiles, command files, representative code): exact-byte digests, null
 // for a relevant path that is absent, plus branch/HEAD when Git exists. It
@@ -687,13 +709,28 @@ function verifyTransfer(root, { handoff, paths = [], env } = {}) {
   const confirmedInputs = validateConfirmedInputs(parseStrictJson(confirmedBytes, 'confirmed inputs'));
   const promotionBytes = readInput(root, required.promotion, runId);
   const promotion = validatePromotionTable(parseStrictJson(promotionBytes, 'promotion'), { runId });
-  const inventory = new Set(recorded.files.map(({ path }) => path.toLowerCase()));
+  const inventoryPaths = [...new Set([...recorded.files.map(({ path }) => path),
+    ...paths.map((path, index) => codePath(path, `paths[${index}]`))])];
+  const inventory = new Set(inventoryPaths.map((path) => path.toLowerCase()));
   for (const decision of promotion.decisions) {
     if (decision.outcome === 'promote' && inventory.has(decision.destination.toLowerCase())) {
       binding(`promotion decision '${decision.id}' writes '${decision.destination}', a checkpoint inventory path; init's own write would diverge the checkpoint`);
     }
   }
   validatePromotionCoverage(confirmedInputs, promotion);
+
+  // Mount spellings can differ lexically while naming the same present file
+  // or prospective destination. Bind both inventories through one reader,
+  // before checkpoint body reads or the first local prepare write.
+  const repository = bindRepository(root);
+  const locations = inventoryPaths.map((path) => locateRepositoryFile(repository, path));
+  for (const decision of promotion.decisions) {
+    if (decision.outcome !== 'promote') continue;
+    const destination = locateRepositoryFile(repository, decision.destination);
+    if (locations.some((location) => sameFileDestination(location, destination))) {
+      binding(`promotion decision '${decision.id}' writes '${decision.destination}', a physical checkpoint inventory path; init's own write would diverge the checkpoint`);
+    }
+  }
 
   const inputs = [
     { role: 'approval', path: required.approval, sha256: sha256Hex(approvalBytes) },
@@ -704,7 +741,7 @@ function verifyTransfer(root, { handoff, paths = [], env } = {}) {
   ];
   const observed = observeCodeCheckpoint(root, {
     runId,
-    paths: [...recorded.files.map(({ path }) => path), ...paths],
+    paths: inventoryPaths,
     env,
   });
   const checkpoint = compareCodeCheckpoints(recorded, observed);
@@ -870,7 +907,13 @@ function readBoundReceipt(root, target, report, descriptor) {
   if (descriptor.init.status === 'complete' && existing.receipt.status !== 'complete') {
     fail('INCEPTION_HANDOFF_RECEIPT', 'init is complete but the receipt is not complete; it is never rewritten');
   }
-  if (existing.receipt.status === 'in-progress' && existing.sha256 !== descriptor.init.receipt.sha256) {
+  const complete = existing.receipt.status === 'complete';
+  const expected = descriptor.init.status === 'complete' || !complete
+    ? descriptor.init.receipt : descriptor.init.finalization;
+  if (expected === undefined) {
+    fail('INCEPTION_HANDOFF_RECEIPT', 'ambiguous complete receipt without a finalization intent; it is never re-baselined');
+  }
+  if (existing.sha256 !== expected.sha256) {
     fail('INCEPTION_HANDOFF_RECEIPT', 'the bound receipt bytes changed since init started; it is never re-baselined');
   }
   return existing;
@@ -942,6 +985,9 @@ export function prepareInitReceipt(root, { handoff, receipt, paths = [], env } =
     fail('INCEPTION_HANDOFF_DIVERGED', 'the current code diverges from the verified checkpoint; reconcile it before promotion');
   }
   if (descriptor.init.status === 'complete') fail('INCEPTION_HANDOFF_RECEIPT', 'init is already complete; finalize verifies it');
+  if (descriptor.init.finalization !== undefined) {
+    fail('INCEPTION_HANDOFF_RECEIPT', 'a finalization intent is pending; resume with finalize before any promotion');
+  }
   const target = resolveReceipt(receipt, descriptor, report);
   const started = descriptor.init.status === 'in-progress';
   const existing = started ? readBoundReceipt(root, target, report, descriptor) : readReceipt(root, target, report.runId);
@@ -978,7 +1024,22 @@ export function prepareInitReceipt(root, { handoff, receipt, paths = [], env } =
   });
 }
 
-function verifyCompletion(root, report, next) {
+function verifyFinalizationIntent(root, report, next, previous, reference) {
+  if (previous.init.status !== 'in-progress' || !sameReference(next.init.finalization, reference)
+    || !sameReference(next.init.handoff, report.handoff)) {
+    fail('INCEPTION_HANDOFF_RECEIPT', 'finalization intent must bind the verified complete receipt');
+  }
+  const prepared = readBoundReceipt(root, previous.init.receipt.path, report, previous);
+  if (prepared.receipt.status !== 'in-progress') {
+    fail('INCEPTION_HANDOFF_RECEIPT', 'a finalization intent requires the bound prepared receipt');
+  }
+  assertReceiptBinding(prepared.receipt, report);
+}
+
+function verifyCompletion(root, report, next, previous) {
+  if (!sameReference(previous.init.finalization, next.init.receipt)) {
+    fail('INCEPTION_HANDOFF_RECEIPT', 'init completion must consume its verified finalization intent');
+  }
   if (!sameReference(next.init.handoff, report.handoff)) {
     fail('INCEPTION_HANDOFF_RECEIPT', 'init completion must keep the verified handoff');
   }
@@ -991,7 +1052,8 @@ function verifyCompletion(root, report, next) {
 
 // After the init skill promoted every decision and the hub gate passed:
 // requires unchanged code, bound inputs, and every promoted text present,
-// then completes the receipt and records init complete. An exact repetition
+// then binds the complete bytes in an intent, publishes them, and consumes
+// that intent to record init complete. An exact repetition
 // is a no-op; stable bytes that diverge from a complete receipt are refused.
 export function finalizeInitReceipt(root, { handoff, receipt, gate, paths = [], env } = {}) {
   if (gate !== 'pass' && gate !== 'fail') fail('INCEPTION_HANDOFF_ARGUMENT', 'gate must be pass or fail');
@@ -1017,26 +1079,34 @@ export function finalizeInitReceipt(root, { handoff, receipt, gate, paths = [], 
   }
   const text = serializeInitReceipt(receiptFor(report, 'complete',
     destinations.map(({ path, previous, observed }) => ({ path, previous, observed }))));
-  let receiptChanged = false;
-  if (existing.receipt.status === 'complete') {
-    if (text !== existing.text) {
-      fail('INCEPTION_HANDOFF_DIVERGED', 'stable bytes diverge from the complete receipt; reconcile the human change before finalizing again');
-    }
-  } else {
-    writeInceptionFile(root, target, text, { expectedSha256: existing.sha256, runId: report.runId });
-    receiptChanged = true;
-  }
   const reference = { path: target, sha256: sha256Hex(Buffer.from(text, 'utf8')) };
+  if (existing.receipt.status === 'complete' && text !== existing.text) {
+    fail('INCEPTION_HANDOFF_DIVERGED', 'stable bytes diverge from the complete receipt; reconcile the human change before finalizing again');
+  }
+  if (descriptor.init.finalization !== undefined && !sameReference(descriptor.init.finalization, reference)) {
+    fail('INCEPTION_HANDOFF_RECEIPT', 'the reconstructed receipt does not match the finalization intent; nothing is rewritten');
+  }
+
+  let stateSha256 = report.state.sha256;
+  let receiptChanged = false;
   let stateChanged = false;
-  if (descriptor.init.status === 'complete') {
-    if (!sameReference(descriptor.init.receipt, reference)) {
-      fail('INCEPTION_HANDOFF_RECEIPT', 'the inception state records a different receipt');
+  if (descriptor.init.status !== 'complete') {
+    if (descriptor.init.finalization === undefined) {
+      const intended = updateInceptionState(root, {
+        expectedSha256: stateSha256,
+        changes: { init: { ...descriptor.init, finalization: reference } },
+        verifyFinalizationIntent: (next, previous) => verifyFinalizationIntent(root, report, next, previous, reference),
+      });
+      stateSha256 = intended.sha256;
     }
-  } else {
+    if (existing.receipt.status !== 'complete') {
+      writeInceptionFile(root, target, text, { expectedSha256: existing.sha256, runId: report.runId });
+      receiptChanged = true;
+    }
     updateInceptionState(root, {
-      expectedSha256: report.state.sha256,
+      expectedSha256: stateSha256,
       changes: { init: { status: 'complete', handoff: report.handoff, receipt: reference } },
-      verifyInitCompletion: (next) => verifyCompletion(root, report, next),
+      verifyInitCompletion: (next, previous) => verifyCompletion(root, report, next, previous),
     });
     stateChanged = true;
   }

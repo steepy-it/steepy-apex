@@ -33,6 +33,8 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  renameSync,
+  symlinkSync,
   unlinkSync,
   utimesSync,
   writeFileSync,
@@ -335,16 +337,44 @@ function assertAccesses(sandbox, label, accesses, allowLocal) {
   }
 }
 
-function runCli(sandbox, script, args, { allowLocal = [], input = '', cwd = sandbox.repo } = {}) {
+function runCli(sandbox, script, args, { allowLocal = [], input = '', cwd = sandbox.repo, interruptAfter } = {}) {
   sandbox.logs += 1;
   const log = join(sandbox.outside, `access-${sandbox.logs}.json`);
-  const result = spawnSync(process.execPath, ['--import', RECORDER_URL, join(SCRIPTS, script), ...args], {
+  const imports = ['--import', RECORDER_URL];
+  let hook;
+  if (interruptAfter !== undefined) {
+    hook = join(sandbox.outside, `interrupt-${sandbox.logs}.mjs`);
+    writeFileSync(hook, `
+      import fs from 'node:fs';
+      import { syncBuiltinESMExports } from 'node:module';
+      const rename = fs.renameSync, sync = fs.fsyncSync;
+      const targets = ${JSON.stringify([join(sandbox.repo, STATE), join(sandbox.repo, RECEIPT)])};
+      let pending = false, durable = 0;
+      fs.renameSync = function(from, to) {
+        const result = rename(from, to);
+        if (targets.includes(String(to))) pending = true;
+        return result;
+      };
+      fs.fsyncSync = function(fd) {
+        const result = sync(fd);
+        if (pending && fs.fstatSync(fd).isDirectory()) {
+          pending = false;
+          if (++durable === ${interruptAfter}) process.exit(86);
+        }
+        return result;
+      };
+      syncBuiltinESMExports();
+    `);
+    imports.push('--import', hook);
+  }
+  const result = spawnSync(process.execPath, [...imports, join(SCRIPTS, script), ...args], {
     cwd,
     env: { ...sandbox.env, STEEPY_TEST_ACCESS_LOG: log },
     input,
     encoding: 'utf8',
     timeout: 60_000,
   });
+  if (hook) rmSync(hook);
   assert.equal(result.error, undefined, `${script}: ${result.error?.message}`);
   const accesses = JSON.parse(readFileSync(log, 'utf8'));
   rmSync(log);
@@ -593,18 +623,20 @@ function runInitEntry(sandbox, { stopAfter, answer = answerStarterOnly, withGit 
   const transfer = [...TRANSFER, handoff];
   const report = audited(sandbox, 'verify', transfer, () => verifyInceptionHandoff(repo, { handoff, env }));
   assert.equal(report.status, 'verified');
+  if (inspected.descriptor.init.finalization) {
+    assert.equal(linterState(repo), 'hub');
+    const finalized = audited(sandbox, 'resume finalize', [...transfer, RECEIPT], () => finalizeInitReceipt(repo, {
+      handoff, gate: 'pass', env,
+    }));
+    close();
+    return { outcome: 'complete', trace: ['finalize', 'close'], finalized };
+  }
 
   let prepared = null;
   before('prepare');
-  try {
-    prepared = audited(sandbox, 'prepare', [...transfer, RECEIPT], () => prepareInitReceipt(repo, {
-      handoff, receipt: inspected.state === 'init-in-progress' ? undefined : RECEIPT, env,
-    }));
-  } catch (error) {
-    // Resume after a crash between finalize's receipt write and its state
-    // write: the receipt is complete, so the entry continues to finalize.
-    if (!/receipt is already complete/u.test(error.message)) throw error;
-  }
+  prepared = audited(sandbox, 'prepare', [...transfer, RECEIPT], () => prepareInitReceipt(repo, {
+    handoff, receipt: inspected.state === 'init-in-progress' ? undefined : RECEIPT, env,
+  }));
   if (stop('prepare')) return { outcome: 'stopped', trace, prepared };
 
   let resolutions = {};
@@ -1146,26 +1178,41 @@ test('resume from every interruption point converges to the uninterrupted bytes 
   });
   assert.deepEqual(Object.keys(LINTER_AFTER), INIT_STEPS.slice(0, -1), 'every durable step has an expected linter state');
 
-  // A crash between a helper's receipt write and its descriptor write is the
-  // step's result with the descriptor bytes from before the step.
   const points = [
     { label: 'before init', stopAfter: null, linter: 'pre-hub' },
     ...Object.entries(LINTER_AFTER).map(([step, linter]) => ({ label: `after ${step}`, stopAfter: step, linter })),
-    { label: 'prepare wrote its receipt, not the state', stopAfter: 'prepare', crash: 'prepare', linter: 'pre-hub' },
-    { label: 'finalize wrote its receipt, not the state', stopAfter: 'finalize', crash: 'finalize', linter: 'hub' },
+    { label: 'prepare durable receipt', crash: 'prepare', interruptAfter: 1, linter: 'pre-hub' },
+    { label: 'prepare durable state', crash: 'prepare', interruptAfter: 2, linter: 'invalid' },
+    ...[1, 2, 3].map((interruptAfter) => ({ label: `finalize durable write ${interruptAfter}`,
+      crash: 'finalize', stopAfter: 'write .apex/work/.gitignore', interruptAfter, linter: 'hub' })),
   ];
-  for (const { label, stopAfter, crash, linter } of points) {
+  for (const { label, stopAfter, crash, interruptAfter, linter } of points) {
     readyCase('resume', (sandbox) => {
-      if (stopAfter !== null) {
-        let saved = null;
-        const interrupted = runInitEntry(sandbox, {
-          stopAfter,
-          before: (step) => {
-            if (step === crash) saved = readFileSync(join(sandbox.repo, STATE));
-          },
-        });
+      if (stopAfter) {
+        const interrupted = runInitEntry(sandbox, { stopAfter });
         assert.equal(interrupted.outcome, 'stopped', label);
-        if (crash) writeFileSync(join(sandbox.repo, STATE), saved);
+      }
+      if (crash) {
+        const args = crash === 'prepare' ? ['--receipt', RECEIPT] : ['--gate', 'pass'];
+        const result = runCli(sandbox, 'inception-handoff.mjs', [crash, '--root', sandbox.repo,
+          '--handoff', HANDOFF, ...args], { allowLocal: [...TRANSFER, RECEIPT], interruptAfter });
+        assert.equal(result.status, 86, `${label}: ${result.stderr}`);
+        assert.equal(result.stdout, '', 'the child exits at the durable boundary before a success response');
+        if (crash === 'finalize') {
+          const state = inspectInceptionState(sandbox.repo).descriptor;
+          const receipt = JSON.parse(readFileSync(join(sandbox.repo, RECEIPT), 'utf8'));
+          assert.equal(state.init.status, interruptAfter < 3 ? 'in-progress' : 'complete');
+          assert.equal(receipt.status, interruptAfter === 1 ? 'in-progress' : 'complete');
+          assert.equal(Object.hasOwn(state.init, 'finalization'), interruptAfter < 3);
+          if (interruptAfter === 2) assert.deepEqual(state.init.finalization, bind(sandbox, RECEIPT));
+          if (interruptAfter < 3) {
+            const before = treeSnapshot(sandbox.repo);
+            const refused = prepareCli(sandbox);
+            assert.equal(refused.status, 1);
+            assert.match(refused.stderr, /finalization.*finalize/u);
+            assert.deepEqual(treeSnapshot(sandbox.repo), before);
+          }
+        }
       }
       assert.equal(linterState(sandbox.repo), linter, label);
 
@@ -1177,6 +1224,12 @@ test('resume from every interruption point converges to the uninterrupted bytes 
         assert.deepEqual(resumed.preview, [], `${label}: the planner has nothing left to do`);
       }
       const final = treeSnapshot(sandbox.repo);
+      if (crash) {
+        const repeated = inceptionHandoff(sandbox, ['finalize', '--handoff', HANDOFF, '--gate', 'pass'], [...TRANSFER, RECEIPT]);
+        assert.equal(repeated.status, 0, repeated.stderr);
+        assert.deepEqual(JSON.parse(repeated.stdout).changed, { state: false, receipt: false });
+        assert.deepEqual(treeSnapshot(sandbox.repo), final, `${label}: second completion preserves exact bytes, modes and mtimes`);
+      }
       assert.deepEqual(bytesOnly(final), reference, `${label}: resume converges to the uninterrupted bytes`);
       const finalByName = new Map(final.map((entry) => [entry[0], entry]));
       for (const entry of interruptedSnapshot.filter(([, kind]) => kind === 'file')) {
@@ -1324,3 +1377,61 @@ test('ordinary init, repair, and new-surface keep no-ops and data beside both lo
     assert.deepEqual(local(), localBefore, 'neither local area changed');
   });
 }));
+
+
+for (const interruptAfter of [1, 2]) {
+  for (const changePrevious of [false, true]) {
+    test(`pending finalization refuses forged destination and receipt at durable write ${interruptAfter}, previous changed ${changePrevious}`, () => withReadyRuns('forged-intent', (readyCase) => {
+      readyCase('forged-intent', (sandbox) => {
+        runInitEntry(sandbox, { stopAfter: 'write .apex/work/.gitignore' });
+        const stopped = runCli(sandbox, 'inception-handoff.mjs', ['finalize', '--root', sandbox.repo,
+          '--handoff', HANDOFF, '--gate', 'pass'], { allowLocal: [...TRANSFER, RECEIPT], interruptAfter });
+        assert.equal(stopped.status, 86, stopped.stderr);
+        const state = inspectInceptionState(sandbox.repo).descriptor;
+        assert.ok(state.init.finalization, 'the digest is committed before receipt publication');
+        const value = JSON.parse(readFileSync(join(sandbox.repo, RECEIPT), 'utf8'));
+        const destination = value.writes[0].path;
+        appendFileSync(join(sandbox.repo, destination), '\nFORGED ADDITION\n');
+        if (interruptAfter === 2) value.writes[0].observed = bind(sandbox, destination).sha256;
+        if (changePrevious) value.writes[0].previous = sha('forged previous');
+        if (interruptAfter === 2 || changePrevious) put(sandbox.repo, RECEIPT, json(value));
+        ageTree(sandbox.repo);
+        const before = treeSnapshot(sandbox.repo);
+        const refused = inceptionHandoff(sandbox, ['finalize', '--handoff', HANDOFF, '--gate', 'pass'], [...TRANSFER, RECEIPT]);
+        assert.equal(refused.status, 1, refused.stderr);
+        assert.match(refused.stderr, /bound receipt bytes changed|finalization intent/u);
+        assert.deepEqual(treeSnapshot(sandbox.repo), before, 'refusal preserves all bytes, modes and mtimes');
+      });
+    }));
+  }
+}
+
+
+for (const absolute of [false, true]) for (const present of [false, true]) {
+  test(`mounted checkpoint collision refuses prepare with zero writes or unlisted reads (${absolute ? 'absolute' : 'relative'}, ${present ? 'present' : 'absent'})`, () => withSandbox('mount-overlap', (sandbox) => {
+    buildReadyRun(sandbox, { withGit: false });
+    const { repo, env } = sandbox;
+    const hub = join(repo, 'hub');
+    renameSync(join(repo, '.apex'), hub);
+    symlinkSync(absolute ? hub : 'hub', join(repo, '.apex'), 'dir');
+    if (present) put(repo, 'hub/standards/app.md', '# Existing user standard\n');
+    const checkpoint = runFile('mounted-checkpoint.json');
+    writeCodeCheckpoint(repo, { runId: RUN, output: checkpoint, paths: [...CODE_PATHS, 'hub/standards/app.md'], env });
+    updateInceptionState(repo, { expectedSha256: descriptorSha(sandbox), changes: { checkpoint: bind(sandbox, checkpoint) } });
+    const handoff = handoffValue();
+    handoff.required.verification = [checkpoint, VERIFICATION];
+    put(repo, HANDOFF, json(handoff));
+    ageTree(hub);
+    const before = treeSnapshot(hub);
+    const allowed = new Set([...TRANSFER.filter((path) => path !== CHECKPOINT), checkpoint]
+      .map((path) => realpathSync.native(join(repo, path))));
+    const { error, accesses } = recordAccess(() => prepareInitReceipt(repo, { handoff: HANDOFF, receipt: RECEIPT, env }));
+    assert.equal(error?.code, 'INCEPTION_HANDOFF_BINDING');
+    assert.match(error.message, /checkpoint inventory/u);
+    assert.deepEqual(accesses.filter(([kind]) => kind === 'write' || kind === 'list'), [], 'no write or enumeration attempts');
+    assert.deepEqual(accesses.filter(([kind, path]) => kind === 'read' && !allowed.has(path)), [],
+      'only the explicitly bound transfer inputs are read; no checkpoint, promotion, or unnamed local body is opened');
+    assert.deepEqual(treeSnapshot(hub), before, 'all local and stable bytes, modes, and mtimes survive refusal');
+    assert.equal(existsSync(join(repo, RECEIPT)), false);
+  }));
+}

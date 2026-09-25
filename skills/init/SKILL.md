@@ -253,6 +253,13 @@ paths it names; the `inception` skill owns every other file of its run.
    node <engine-root>/scripts/inception-handoff.mjs prepare --root <repo-root> --handoff <handoff-path> --receipt .apex/inception/<run-id>/init-receipt.json
    ```
 
+   If `prepare` reports a pending finalization intent, run `finalize` as described in Step 6
+   before any promotion. Recheck the gate, use the same handoff and bound receipt, and pass
+   `--gate pass`; do not repeat planner or hub writes. An interrupted prepared receipt without intent
+   follows the normal resume below. A complete receipt with a prepared descriptor and no intent is
+   ambiguous and must be refused: preserve the receipt and descriptor, with no cleanup or re-baselining.
+   The intent is written and consumed only by the handoff helper, never by a model-authored state update.
+
    On resume, omit `--receipt`: the descriptor binds the receipt. A destination reported `changed`
    differs from its prepared bytes and still misses promoted text. It can hold this entry's own partial
    write or a human edit: compare it with what this entry writes, keep this entry's own bytes, and ask
@@ -295,8 +302,11 @@ paths it names; the `inception` skill owns every other file of its run.
    node <engine-root>/scripts/inception-handoff.mjs finalize --root <repo-root> --handoff <handoff-path> --gate pass
    ```
 
-   It checks unchanged code and every promoted text, completes the receipt, and records init
-   complete. On a refusal, fix the cause and run it again; never record completion by hand. Report
+   It checks unchanged code and every promoted text, records a finalization intent in the descriptor,
+   publishes the complete receipt at the bound path, then verifies it and records init complete.
+   Interrupted finalization resumes from the exact intent and receipt; an already complete transfer
+   is a no-op. On a refusal, fix the cause when the helper identifies a repairable input and run it
+   again; never record completion by hand or reconstruct an ambiguous old receipt. Report
    each decision's receipt outcome, then return to the `inception` skill to close the run.
 
 The ordinary path keeps its temporary record and deletes it at the end. The inception entry keeps the

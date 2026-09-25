@@ -10,6 +10,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  renameSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
@@ -722,7 +723,7 @@ function snapshot(root, paths) {
   return paths.map((path) => {
     if (!existsSync(join(root, path))) return [path, null];
     const stat = lstatSync(join(root, path), { bigint: true });
-    return [path, readFileSync(join(root, path)).toString('base64'), stat.mtimeNs, stat.ino];
+    return [path, readFileSync(join(root, path)).toString('base64'), stat.mtimeNs, stat.ino, stat.mode];
   });
 }
 
@@ -788,12 +789,15 @@ test('the receipt schema closes run, inputs, decision outcomes, write checkpoint
 
 test('prepare records init in-progress before any hub write and a create-only receipt of previous destination bytes', () => withTemp('prepare', (root) => {
   seedRun(root);
+  const boundInputs = inspectInceptionState(root).descriptor;
   put(root, '.apex/glossary.md', GLOSSARY);
   const inputs = verify(root).inputs;
   const result = prepare(root);
 
   const inspected = inspectInceptionState(root);
   assert.equal(inspected.state, 'init-in-progress');
+  assert.deepEqual(inspected.descriptor.approval, boundInputs.approval);
+  assert.deepEqual(inspected.descriptor.checkpoint, boundInputs.checkpoint);
   assert.deepEqual(inspected.descriptor.init, {
     status: 'in-progress',
     handoff: { path: HANDOFF, sha256: digestOf(root, HANDOFF) },
@@ -916,6 +920,7 @@ test('a crash between the receipt write and the state write resumes onto the sam
 
 test('finalize requires a passing gate, realized promotions, and unchanged code, then records init complete exactly once', () => withTemp('finalize', (root) => {
   seedRun(root);
+  const boundInputs = inspectInceptionState(root).descriptor;
   put(root, '.apex/glossary.md', GLOSSARY);
   prepare(root);
   const preparedReceipt = readFileSync(join(root, RECEIPT));
@@ -947,6 +952,8 @@ test('finalize requires a passing gate, realized promotions, and unchanged code,
   assert.deepEqual(done.changed, { state: true, receipt: true });
   const inspected = inspectInceptionState(root);
   assert.equal(inspected.state, 'init-complete');
+  assert.deepEqual(inspected.descriptor.approval, boundInputs.approval);
+  assert.deepEqual(inspected.descriptor.checkpoint, boundInputs.checkpoint);
   assert.deepEqual(inspected.descriptor.init.receipt, { path: RECEIPT, sha256: digestOf(root, RECEIPT) });
   assert.equal(inspected.descriptor.phase, 'init', 'finalize records init completion only');
 
@@ -969,21 +976,39 @@ test('finalize requires a passing gate, realized promotions, and unchanged code,
   assert.deepEqual(snapshot(root, watched), before, 'a completed state never rewrites a reverted receipt');
 }));
 
-test('an interrupted finalization resumes without rewriting its receipt', () => withTemp('finalize-resume', (root) => {
-  seedRun(root);
-  prepare(root);
-  promote(root);
-  const inProgress = readFileSync(join(root, STATE));
-  finalize(root);
-  writeFileSync(join(root, STATE), inProgress);
-  utimesSync(join(root, RECEIPT), new Date('2020-01-01T00:00:00Z'), new Date('2020-01-01T00:00:00Z'));
-  const kept = snapshot(root, [RECEIPT]);
-  assertCode(() => prepare(root), 'INCEPTION_HANDOFF_RECEIPT', /already complete/);
-  const resumed = finalize(root);
-  assert.deepEqual(resumed.changed, { state: true, receipt: false });
-  assert.deepEqual(snapshot(root, [RECEIPT]), kept);
-  assert.equal(inspectInceptionState(root).state, 'init-complete');
-}));
+for (const tamper of ['none', 'observed', 'observed-and-previous']) {
+  test(`legacy complete receipt without intent is refused without rewriting (${tamper})`, () => withTemp('legacy-ambiguous', (root) => {
+    seedRun(root); prepare(root); promote(root);
+    const prepared = readFileSync(join(root, STATE));
+    finalize(root);
+    writeFileSync(join(root, STATE), prepared);
+    if (tamper !== 'none') {
+      const value = JSON.parse(readFileSync(join(root, RECEIPT), 'utf8'));
+      put(root, '.apex/glossary.md', `${GLOSSARY}${TERM_TEXT}FORGED ADDITION\n`);
+      value.writes[0].observed = digestOf(root, '.apex/glossary.md');
+      if (tamper === 'observed-and-previous') value.writes[0].previous = sha('forged previous');
+      put(root, RECEIPT, json(value));
+    }
+    const before = snapshot(root, [STATE, RECEIPT, '.apex/glossary.md']);
+    assertCode(() => finalize(root), 'INCEPTION_HANDOFF_RECEIPT', /ambiguous|without.*intent/);
+    assertCode(() => prepare(root), 'INCEPTION_HANDOFF_RECEIPT', /ambiguous|without.*intent/);
+    assert.deepEqual(snapshot(root, [STATE, RECEIPT, '.apex/glossary.md']), before);
+  }));
+}
+
+for (const changePrevious of [false, true]) {
+  test(`a complete receipt and destination changed together are refused (previous changed: ${changePrevious})`, () => withTemp('receipt-forged', (root) => {
+    seedRun(root); prepare(root); promote(root); finalize(root);
+    const value = JSON.parse(readFileSync(join(root, RECEIPT), 'utf8'));
+    put(root, '.apex/glossary.md', `${GLOSSARY}${TERM_TEXT}FORGED ADDITION\n`);
+    value.writes[0].observed = digestOf(root, '.apex/glossary.md');
+    if (changePrevious) value.writes[0].previous = sha('forged previous');
+    put(root, RECEIPT, json(value));
+    const before = snapshot(root, [STATE, RECEIPT, '.apex/glossary.md']);
+    assertCode(() => finalize(root), 'INCEPTION_HANDOFF_RECEIPT', /bound receipt bytes changed/);
+    assert.deepEqual(snapshot(root, [STATE, RECEIPT, '.apex/glossary.md']), before);
+  }));
+}
 
 test('prepare and finalize refuse divergent code, foreign receipts, changed inputs, and unsafe destinations without writing', () => {
   withTemp('prepare-diverged', (root) => {
@@ -1162,4 +1187,64 @@ test('CLI produces the checkpoint, verification report, projection, and receipts
   const secret = runCli(root, ['verify', '--root', root, '--handoff', HANDOFF]);
   assert.equal(secret.status, 1);
   assert.doesNotMatch(secret.stderr, /sk-live-secret|apiToken/);
+}));
+
+
+for (const absolute of [false, true]) for (const present of [false, true]) {
+  test(`prepare refuses ${present ? 'existing' : 'absent'} checkpoint aliases through an ${absolute ? 'absolute' : 'relative'} hub mount`, () => withTemp('physical-overlap', (root) => {
+    seedRun(root);
+    renameSync(join(root, '.apex'), join(root, 'hub'));
+    symlinkSync(absolute ? join(root, 'hub') : 'hub', join(root, '.apex'), 'dir');
+    if (present) put(root, 'hub/standards/web.md', '# Existing web\n');
+    put(root, run('checkpoint.json'), serializeCodeCheckpoint(observeCodeCheckpoint(root, {
+      runId: RUN, paths: [...CODE_PATHS, 'hub/standards/web.md'], env: gitEnv(root),
+    })));
+    writeState(root);
+    const tracked = [STATE, run('checkpoint.json'), run('promotion.json'), ...(present ? ['hub/standards/web.md'] : [])];
+    const before = snapshot(root, tracked);
+    for (const operation of [() => verify(root), () => prepareInitReceipt(root, {
+      handoff: HANDOFF, receipt: run('receipt.json'), env: gitEnv(root),
+    })]) assertCode(operation, 'INCEPTION_HANDOFF_BINDING', /checkpoint inventory/);
+    assert.deepEqual(snapshot(root, tracked), before);
+    assert.equal(existsSync(join(root, run('receipt.json'))), false);
+  }));
+}
+
+test('extra caller paths belong to the effective checkpoint inventory for lexical and physical conflicts', () => withTemp('extra-overlap', (root) => {
+  seedRun(root);
+  renameSync(join(root, '.apex'), join(root, 'hub'));
+  symlinkSync('hub', join(root, '.apex'), 'dir');
+  for (const path of ['.apex/standards/web.md', 'hub/standards/web.md']) {
+    assertCode(() => prepareInitReceipt(root, { handoff: HANDOFF, receipt: run('receipt.json'), paths: [path], env: gitEnv(root) }),
+      'INCEPTION_HANDOFF_BINDING', /checkpoint inventory/);
+  }
+  assert.equal(existsSync(join(root, run('receipt.json'))), false);
+}));
+
+test('physically distinct checkpoint and promotion files may share a basename', () => withTemp('distinct-basename', (root) => {
+  seedRun(root);
+  put(root, 'src/web.md', '# Code documentation\n');
+  put(root, '.apex/standards/web.md', '# Existing standard\n');
+  put(root, run('checkpoint.json'), serializeCodeCheckpoint(observeCodeCheckpoint(root, {
+    runId: RUN, paths: [...CODE_PATHS, 'src/web.md'], env: gitEnv(root),
+  })));
+  writeState(root);
+  assert.equal(prepareInitReceipt(root, { handoff: HANDOFF, receipt: run('receipt.json'), env: gitEnv(root) }).status, 'in-progress');
+}));
+
+test('case aliases of mounted checkpoint parents conflict where the filesystem supports them', (t) => withTemp('case-overlap', (root) => {
+  seedRun(root);
+  renameSync(join(root, '.apex'), join(root, 'hub'));
+  symlinkSync('hub', join(root, '.apex'), 'dir');
+  mkdirSync(join(root, 'hub/standards'));
+  if (!existsSync(join(root, 'HUB/STANDARDS'))) return t.skip('filesystem distinguishes case');
+  for (const present of [false, true]) {
+    if (present) put(root, 'hub/standards/Web.md', '# Existing\n');
+    const path = 'HUB/STANDARDS/Web.md';
+    put(root, run('checkpoint.json'), serializeCodeCheckpoint(observeCodeCheckpoint(root, { runId: RUN, paths: [path], env: gitEnv(root) })));
+    writeState(root);
+    assertCode(() => prepareInitReceipt(root, { handoff: HANDOFF, receipt: run('receipt.json'), env: gitEnv(root) }),
+      'INCEPTION_HANDOFF_BINDING', /checkpoint inventory/);
+    assert.equal(existsSync(join(root, run('receipt.json'))), false);
+  }
 }));

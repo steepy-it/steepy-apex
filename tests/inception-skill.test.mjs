@@ -319,6 +319,33 @@ test('inception: protocol.md documents the local area, binding rules, and the he
   assert.ok(boundary.length >= 4, 'the boundary is a helper-versus-model table');
 });
 
+test('inception: protocol explains frozen init bindings and helper-owned finalization recovery', () => {
+  const descriptor = flat(section(read('protocol.md'), '## Descriptor', '## Digests'));
+  assert.match(descriptor, /once init starts[^.]*approval and checkpoint references[^.]*path and digest[^.]*immutable/i);
+  assert.match(descriptor, /optional `init\.finalization`[^.]*exactly `\{ path, sha256 \}`[^.]*`init\.status: in-progress`/i);
+  assert.match(descriptor, /same path as `init\.receipt`[^.]*expected digest of the complete receipt/i);
+  assert.match(descriptor, /legacy descriptor[^.]*without `finalization`[^.]*same canonical bytes/i);
+  assert.match(descriptor, /`inception-state\.mjs update`[^.]*cannot record the intent or init completion/i);
+
+  const receipt = flat(section(read('protocol.md'), '### Init receipt', '## Helper checks and your judgement'));
+  assert.match(receipt, /three durable writes[^]*\(1\) state with the finalization intent[^]*\(2\) complete receipt bytes[^]*\(3\) complete descriptor/i);
+  assert.match(receipt, /In progress without intent \| Exact prepared receipt \| Normal `finalize`/i);
+  assert.match(receipt, /In progress with intent \| Exact prepared receipt \| `finalize` reconstructs[^.]*intent digest/i);
+  assert.match(receipt, /In progress with intent \| Exact complete receipt \| `finalize` verifies[^.]*descriptor/i);
+  assert.match(receipt, /Complete without intent \| Exact complete receipt \| `finalize` verifies[^.]*no-op/i);
+  assert.match(receipt, /complete receipt with a prepared descriptor and without intent[^:]*ambiguous old prefix/i);
+  assert.match(receipt, /preserve both files[^.]*no cleanup or re-baselining/i);
+  assert.doesNotMatch(receipt, /node <engine-root>\/scripts\/inception-state\.mjs update[^\n]*finalization/i);
+});
+
+test('inception: transfer guidance sends pending finalization to the helper and locks checkpoint aliases', () => {
+  const text = flat(read('init-handoff.md'));
+  assert.match(text, /prepare[^.]*finalization intent[^.]*resume with `finalize`/i);
+  assert.match(text, /checkpoint[^.]*promotion[^.]*physical aliases[^.]*before prepare/i);
+  assert.match(text, /missing destination[^.]*same physical path/i);
+  assert.match(text, /helper[^.]*never[^.]*cleanup or re-baseline/i);
+});
+
 test('inception: the documented digest command prints the SHA-256 the helpers verify', () => {
   const line = read('protocol.md').split('\n').find((candidate) => candidate.startsWith('node -e '));
   assert.ok(line, 'protocol.md must document a portable digest command');

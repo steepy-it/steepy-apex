@@ -268,6 +268,77 @@ test('a started init binds one handoff and one receipt path; completion advances
   assert.equal(validateInceptionState(withInit({ status: 'in-progress', handoff: null, receipt: null })).init.status, 'in-progress');
 });
 
+test('approval and checkpoint references freeze when init starts, while pre-init edits and final closure remain legal', () => {
+  const approval = ref(PROPOSAL, 'approved');
+  const checkpoint = ref(`.apex/inception/${RUN}/checkpoint.json`, 'checked');
+  const handoff = ref(HANDOFF, 'handoff');
+  const receipt = ref(RECEIPT, 'prepared');
+  const before = descriptor({ phase: 'verification', approval, checkpoint });
+  const inProgress = descriptor({ phase: 'init', approval, checkpoint, init: { status: 'in-progress', handoff, receipt } });
+  const complete = descriptor({ ...inProgress, init: { ...inProgress.init, status: 'complete', receipt: ref(RECEIPT, 'final') } });
+  const other = `.apex/inception/${RUN}/other.json`;
+
+  assertInceptionTransition(descriptor({ phase: 'verification', approval }), before);
+  assertInceptionTransition(before, inProgress);
+  assertInceptionTransition(inProgress, complete);
+  assertInceptionTransition(complete, descriptor({ ...complete, phase: 'complete', status: 'complete' }));
+  for (const previous of [inProgress, complete]) {
+    for (const [field, values] of [
+      ['approval', [null, { ...approval, path: other }, { ...approval, sha256: sha('changed') }]],
+      ['checkpoint', [null, { ...checkpoint, path: other }, { ...checkpoint, sha256: sha('changed') }]],
+    ]) {
+      for (const value of values) {
+        assertCode(() => assertInceptionTransition(previous, { ...previous, [field]: value }),
+          field === 'approval' && value === null ? 'INCEPTION_STATE_INVALID' : 'INCEPTION_STATE_TRANSITION',
+          new RegExp(field));
+      }
+    }
+  }
+});
+
+test('API and CLI reject changed approval or checkpoint after init starts without changing any file', () => {
+  for (const status of ['in-progress', 'complete']) {
+    withTemp(`frozen-refs-${status}`, (root) => {
+      const approvalPath = PROPOSAL;
+      const checkpointPath = `.apex/inception/${RUN}/checkpoint.json`;
+      const alternateApproval = `.apex/inception/${RUN}/approval-other.md`;
+      const alternateCheckpoint = `.apex/inception/${RUN}/checkpoint-other.json`;
+      const approval = ref(approvalPath, 'approved\n');
+      const checkpoint = ref(checkpointPath, 'checked\n');
+      const init = { status, handoff: ref(HANDOFF, 'handoff\n'), receipt: ref(RECEIPT, 'receipt\n') };
+      for (const [path, content] of [
+        [approvalPath, 'approved\n'], [checkpointPath, 'checked\n'],
+        [alternateApproval, 'approved\n'], [alternateCheckpoint, 'checked\n'],
+        [HANDOFF, 'handoff\n'], [RECEIPT, 'receipt\n'],
+      ]) put(root, path, content);
+      seedDescriptor(root, descriptor({ phase: 'init', approval, checkpoint, init }));
+      const watched = [STATE, approvalPath, checkpointPath, alternateApproval, alternateCheckpoint, HANDOFF, RECEIPT];
+      const snapshot = () => watched.map((path) => [path, readFileSync(join(root, path))]);
+      const attempts = [
+        ['approval', null], ['approval', { ...approval, path: alternateApproval }],
+        ['approval', { ...approval, sha256: sha('wrong') }],
+        ['checkpoint', null], ['checkpoint', { ...checkpoint, path: alternateCheckpoint }],
+        ['checkpoint', { ...checkpoint, sha256: sha('wrong') }],
+      ];
+      for (const [field, value] of attempts) {
+        const before = snapshot();
+        const changes = { [field]: value };
+        assert.throws(() => updateInceptionState(root, { expectedSha256: stateDigest(root), changes }),
+          (error) => {
+            assert.match(error.message, new RegExp(field));
+            return true;
+          });
+        assert.deepEqual(snapshot(), before, `${status} API ${field} rejection preserves all files`);
+        const cliResult = runCli(['update', '--root', root, '--state', STATE,
+          '--expected-sha256', stateDigest(root), '--set', JSON.stringify(changes)], { env: gitEnv(root) });
+        assert.equal(cliResult.status, 1, `${status} CLI ${field}: ${cliResult.stderr}`);
+        assert.match(cliResult.stderr, new RegExp(field));
+        assert.deepEqual(snapshot(), before, `${status} CLI ${field} rejection preserves all files`);
+      }
+    });
+  }
+});
+
 test('start writes the guard, verifies Git exclusion, then the descriptor; no Git mutation occurs', () => withTemp('start-git', (root) => {
   gitInit(root);
   const head = git(root, 'rev-parse', 'HEAD');
@@ -741,4 +812,73 @@ test('an unreadable descriptor is an invalid pre-hub view, not an exemption', {
   } finally {
     chmodSync(join(root, STATE), 0o600);
   }
+}));
+
+
+test('finalization is an optional closed intent; legacy descriptor bytes stay identical', () => {
+  const legacy = descriptor({ phase: 'init', approval: ref(PROPOSAL, 'a'), init: {
+    status: 'in-progress', handoff: ref(HANDOFF, 'h'), receipt: ref(RECEIPT, 'prepared'),
+  } });
+  assert.equal(serializeInceptionState(legacy), `${JSON.stringify(legacy, null, 2)}\n`);
+  const pending = { ...legacy, init: { ...legacy.init, finalization: ref(RECEIPT, 'complete') } };
+  assert.equal(serializeInceptionState(pending), `${JSON.stringify(pending, null, 2)}\n`);
+  assert.deepEqual(parseInceptionState(serializeInceptionState(pending)), pending);
+  assert.ok(Object.isFrozen(validateInceptionState(pending).init.finalization));
+  for (const finalization of [null, {}, { ...ref(RECEIPT, 'c'), extra: 1 }, ref(HANDOFF, 'c'),
+    { path: RECEIPT, sha256: 'bad' }]) {
+    assertCode(() => validateInceptionState({ ...legacy, init: { ...legacy.init, finalization } }),
+      'INCEPTION_STATE_INVALID', /finalization/);
+  }
+  for (const status of ['not-started', 'complete']) {
+    assertCode(() => validateInceptionState({ ...pending, init: { ...pending.init, status } }),
+      'INCEPTION_STATE_INVALID', /finalization/);
+    const old = { ...legacy, init: { ...legacy.init, status } };
+    assert.equal(serializeInceptionState(old), `${JSON.stringify(old, null, 2)}\n`);
+  }
+});
+
+test('intent creation requires a verifier; API and CLI cannot replace or remove a pending intent', () => withTemp('intent', (root) => {
+  startInceptionRun(root, { runId: RUN });
+  put(root, PROPOSAL, 'a'); put(root, HANDOFF, 'h'); put(root, RECEIPT, 'prepared');
+  const init = { status: 'in-progress', handoff: ref(HANDOFF, 'h'), receipt: ref(RECEIPT, 'prepared') };
+  updateInceptionState(root, { expectedSha256: stateDigest(root), changes: { phase: 'init', approval: ref(PROPOSAL, 'a'), init } });
+  const finalization = ref(RECEIPT, 'complete');
+  const pending = { ...init, finalization };
+  const snap = () => [STATE, RECEIPT, PROPOSAL, HANDOFF].map((path) => {
+    const stat = lstatSync(join(root, path), { bigint: true });
+    return [path, readFileSync(join(root, path)), stat.mode, stat.mtimeNs, stat.ino];
+  });
+  const refuse = (nextInit) => {
+    const before = snap();
+    assertCode(() => updateInceptionState(root, { expectedSha256: stateDigest(root), changes: { init: nextInit } }),
+      'INCEPTION_STATE_TRANSITION', /finalization|verified init receipt/);
+    const cliResult = runCli(['update', '--root', root, '--state', STATE, '--expected-sha256', stateDigest(root),
+      '--set', JSON.stringify({ init: nextInit })], { env: gitEnv(root) });
+    assert.equal(cliResult.status, 1, cliResult.stderr);
+    assert.match(cliResult.stderr, /finalization|verified init receipt/);
+    assert.deepEqual(snap(), before);
+  };
+  refuse(pending);
+  let seen;
+  updateInceptionState(root, { expectedSha256: stateDigest(root), changes: { init: pending },
+    verifyFinalizationIntent(next, previous) { seen = [next.init, previous.init]; } });
+  assert.deepEqual(seen, [pending, init]);
+  const before = snap();
+  assert.equal(updateInceptionState(root, { expectedSha256: stateDigest(root), changes: {} }).changed, false);
+  assert.deepEqual(snap(), before);
+  refuse({ ...pending, finalization: ref(RECEIPT, 'other') });
+  refuse(init);
+  assertCode(() => updateInceptionState(root, { expectedSha256: stateDigest(root),
+    changes: { init: { ...pending, finalization: ref(RECEIPT, 'other') } }, verifyFinalizationIntent() {} }),
+  'INCEPTION_STATE_TRANSITION', /finalization/);
+  const completed = { ...init, status: 'complete', receipt: finalization };
+  put(root, RECEIPT, 'complete');
+  refuse(completed);
+  assertCode(() => updateInceptionState(root, { expectedSha256: stateDigest(root),
+    changes: { init: { ...completed, receipt: ref(RECEIPT, 'other') } }, verifyInitCompletion() {} }),
+  'INCEPTION_STATE_TRANSITION', /finalization/);
+  updateInceptionState(root, { expectedSha256: stateDigest(root), changes: { init: completed },
+    verifyInitCompletion(next, previous) { assert.deepEqual(previous.init.finalization, next.init.receipt); } });
+  assert.equal(Object.hasOwn(inspectInceptionState(root).descriptor.init, 'finalization'), false);
+  updateInceptionState(root, { expectedSha256: stateDigest(root), changes: { phase: 'complete', status: 'complete' } });
 }));

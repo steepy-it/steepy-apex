@@ -786,3 +786,68 @@ test('a stored case alias of a literal local-area entry is still that entry', (t
     assert.equal(reader.isLocalAreaEntry('.apex/InCePtIoN'), true);
   });
 });
+
+
+test('exact file localization is metadata-only and binds present files and prospective mounted destinations', () => {
+  for (const absolute of [false, true]) withTemp(`locate-${absolute}`, (base) => {
+    const repo = repoWithHub(base, { 'hub/standards/web.md': '# Web\n' });
+    symlinkSync(absolute ? join(repo, 'hub') : 'hub', join(repo, '.apex'), 'dir');
+    const reader = createStableReader(repo);
+    const before = treeSnapshot(base);
+    const { result, accesses } = recordFsAccess(() => [
+      reader.locateFile('.apex/standards/web.md'), reader.locateFile('hub/standards/web.md'),
+      reader.locateFile('.apex/standards/new/deep.md'), reader.locateFile('hub/standards/new/deep.md'),
+    ]);
+    const [mounted, direct, absentMounted, absentDirect] = result;
+    assert.equal(mounted.state, 'present');
+    assert.equal(mounted.physicalPath, realpathSync.native(join(repo, 'hub/standards/web.md')));
+    assert.equal(mounted.dev, direct.dev);
+    assert.equal(mounted.ino, direct.ino);
+    assert.equal(absentMounted.state, 'missing');
+    assert.deepEqual(absentMounted, absentDirect);
+    assert.equal(absentMounted.suffix, join('new', 'deep.md'));
+    assert.equal(absentMounted.ancestor.physicalPath, realpathSync.native(join(repo, 'hub/standards')));
+    assert.equal(absentMounted.ancestor.ino, lstatSync(join(repo, 'hub/standards'), { bigint: true }).ino);
+    assert.equal(absentMounted.physicalPath, join(realpathSync.native(repo), 'hub/standards/new/deep.md'));
+    assert.deepEqual(accesses, []);
+    assert.deepEqual(treeSnapshot(base), before);
+  });
+});
+
+test('exact file localization validates the entire lexical path before returning absence', () => withTemp('locate-lexical', (base) => {
+  const repo = repoWithHub(base, {});
+  const reader = createStableReader(repo);
+  const { accesses } = recordFsAccess(() => {
+    for (const path of ['missing/../file.md', 'missing/../../file.md', 'missing//file.md', 'missing/./file.md',
+      'missing/file.md/', '.apex/work/file.md', '.apex/inception/file.md', 'missing/../.apex/inception/file.md']) {
+      assert.equal(reader.locateFile(path).state, 'unsafe', path);
+    }
+    assert.equal(reader.locateFile('.apex/standards/web.md').state, 'missing');
+    assert.equal(createStableReader(join(base, 'absent-root')).locateFile('missing/../file.md').state, 'unsafe',
+      'an absent repository must not bypass complete lexical validation');
+    assert.deepEqual(reader.inspect('missing/../file.md'), { state: 'missing', label: 'missing/../file.md' },
+      'existing inspect results retain their contract');
+  });
+  assert.deepEqual(accesses, []);
+}));
+
+test('exact file localization retains physical local-area, link, mount, and root admission without opening files', () => withTemp('locate-unsafe', (base) => {
+  const repo = repoWithHub(base, { 'shared/local.md': '# Private\n', '.apex/work/draft.md': '# Work\n',
+    '.apex/standards/web.md': '# Web\n' });
+  symlinkSync(join(repo, 'shared'), join(repo, '.apex/inception'), 'dir');
+  symlinkSync('standards', join(repo, '.apex/alias'), 'dir');
+  linkSync(join(repo, '.apex/work/draft.md'), join(repo, 'hardlink.md'));
+  symlinkSync('absent-provider', join(repo, '.claude'), 'dir');
+  symlinkSync(repo, join(base, 'root-alias'), 'dir');
+  const before = treeSnapshot(base);
+  const { accesses } = recordFsAccess(() => {
+    const reader = createStableReader(repo);
+    for (const path of ['shared/local.md', 'shared/missing.md', 'hardlink.md', '.apex/alias/new.md',
+      '.claude/agents/new.md', '.apex/standards/web.md/new.md', '.apex/standards']) {
+      assert.equal(reader.locateFile(path).state, 'unsafe', path);
+    }
+    assert.equal(createStableReader(join(base, 'root-alias')).locateFile('new.md').state, 'unsafe');
+  });
+  assert.deepEqual(accesses, []);
+  assert.deepEqual(treeSnapshot(base), before);
+}));
