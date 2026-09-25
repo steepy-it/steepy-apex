@@ -267,13 +267,17 @@ export function validateInceptionHandoff(value) {
   const { required } = value;
   if (required.state !== INCEPTION_STATE_PATH) invalid(`required state must be exactly ${INCEPTION_STATE_PATH}`);
   const single = (role) => runFile(required[role], runId, `required ${role}`);
+  const list = (role) => required[role].map((path, index) => runFile(path, runId, `required ${role}[${index}]`));
   const approval = single('approval');
   assertList(required.project, 'required project');
-  const project = required.project.map((path, index) => runFile(path, runId, `required project[${index}]`));
-  const verification = single('verification');
+  const project = list('project');
+  if (!Array.isArray(required.verification) || required.verification.length < 2) {
+    invalid('required verification must list the code checkpoint and at least one verification-results document');
+  }
+  const verification = list('verification');
   const confirmedInputs = single('confirmed-inputs');
   const promotion = single('promotion');
-  assertUniquePaths([approval, ...project, verification, confirmedInputs, promotion], 'handoff required');
+  assertUniquePaths([approval, ...project, ...verification, confirmedInputs, promotion], 'handoff required');
   return deepFreeze({
     runId,
     required: {
@@ -365,14 +369,11 @@ function validateVocabulary(value) {
     invalid('confirmed inputs domainVocabulary.hasSpecializedVocabulary must be a boolean');
   }
   assertList(value.entries, 'confirmed inputs domainVocabulary.entries', { nonEmpty: false });
-  const terms = new Set();
   value.entries.forEach((entry, index) => {
     const label = `confirmed inputs domainVocabulary.entries[${index}]`;
     assertObject(entry, ENTRY_KEYS, label);
-    if (!isSingleLine(entry.term)) invalid(`${label}.term must be a non-empty single line`);
-    if (!isSingleLine(entry.definition)) invalid(`${label}.definition must be a non-empty single line`);
-    if (terms.has(entry.term)) invalid(`${label}.term is named more than once`);
-    terms.add(entry.term);
+    if (!isText(entry.term)) invalid(`${label}.term must be non-empty text`);
+    if (!isText(entry.definition)) invalid(`${label}.definition must be non-empty text`);
   });
   if (value.hasSpecializedVocabulary && value.entries.length === 0) {
     invalid('confirmed inputs domainVocabulary.entries must be non-empty when hasSpecializedVocabulary is true');
@@ -389,8 +390,8 @@ export function validateConfirmedInputs(value) {
   assertObject(value, CONFIRMED_INPUT_KEYS, 'confirmed inputs');
   validateVocabulary(value.domainVocabulary);
   const policy = value.gitPolicyDirective;
-  if (typeof policy !== 'string' || (policy !== '' && !(isSingleLine(policy) && GIT_POLICY.test(policy)))) {
-    invalid('confirmed inputs gitPolicyDirective must be empty or one line starting with "4. **Git policy:** "');
+  if (typeof policy !== 'string' || (policy !== '' && !(isText(policy) && GIT_POLICY.test(policy)))) {
+    invalid('confirmed inputs gitPolicyDirective must be empty or text starting with "4. **Git policy:** "');
   }
   projectionOf(value, {});
   return deepFreeze(structuredClone(value));
@@ -620,7 +621,7 @@ function verifyTransfer(root, { handoff, paths = [], env } = {}) {
   const envelope = validateInceptionHandoff(parseStrictJson(handoffBytes, 'handoff'));
   if (envelope.runId !== runId) binding('the handoff run-id must be the run that holds the handoff');
   const { required } = envelope;
-  assertUniquePaths([handoff, required.approval, ...required.project, required.verification,
+  assertUniquePaths([handoff, required.approval, ...required.project, ...required.verification,
     required['confirmed-inputs'], required.promotion], 'handoff and its inputs');
   if (!['init', 'complete'].includes(descriptor.phase)) {
     binding(`the inception phase is ${descriptor.phase}; the init transfer requires phase init`);
@@ -644,8 +645,21 @@ function verifyTransfer(root, { handoff, paths = [], env } = {}) {
     return { role: 'project', path, sha256: digest };
   });
 
-  const checkpointBytes = boundInput(root, runId, descriptor.checkpoint, required.verification, 'verification', 'checkpoint');
-  const recorded = parseStrictJson(checkpointBytes, 'verification');
+  if (descriptor.checkpoint === null) binding('the inception state records no checkpoint reference for the verification input');
+  if (!required.verification.includes(descriptor.checkpoint.path)) {
+    binding('required verification must include the checkpoint recorded in the inception state');
+  }
+  // The checkpoint is bound to the descriptor and parsed; every other
+  // verification entry is an opaque results document judged by the skill.
+  const verification = required.verification.map((path) => ({
+    role: 'verification',
+    path,
+    bytes: path === descriptor.checkpoint.path
+      ? boundInput(root, runId, descriptor.checkpoint, path, 'verification', 'checkpoint')
+      : readInput(root, path, runId),
+  }));
+  const checkpointBytes = verification.find(({ path }) => path === descriptor.checkpoint.path).bytes;
+  const recorded = parseStrictJson(checkpointBytes, 'verification checkpoint');
   validateCodeCheckpoint(recorded, { runId });
   if (serializeCodeCheckpoint(recorded) !== checkpointBytes.toString('utf8')) {
     invalid('verification checkpoint bytes are not canonical');
@@ -654,11 +668,17 @@ function verifyTransfer(root, { handoff, paths = [], env } = {}) {
   const confirmedInputs = validateConfirmedInputs(parseStrictJson(confirmedBytes, 'confirmed inputs'));
   const promotionBytes = readInput(root, required.promotion, runId);
   const promotion = validatePromotionTable(parseStrictJson(promotionBytes, 'promotion'), { runId });
+  const inventory = new Set(recorded.files.map(({ path }) => path.toLowerCase()));
+  for (const decision of promotion.decisions) {
+    if (decision.outcome === 'promote' && inventory.has(decision.destination.toLowerCase())) {
+      binding(`promotion decision '${decision.id}' writes '${decision.destination}', a checkpoint inventory path; init's own write would diverge the checkpoint`);
+    }
+  }
 
   const inputs = [
     { role: 'approval', path: required.approval, sha256: sha256Hex(approvalBytes) },
     ...project,
-    { role: 'verification', path: required.verification, sha256: sha256Hex(checkpointBytes) },
+    ...verification.map(({ role, path, bytes }) => ({ role, path, sha256: sha256Hex(bytes) })),
     { role: 'confirmed-inputs', path: required['confirmed-inputs'], sha256: sha256Hex(confirmedBytes) },
     { role: 'promotion', path: required.promotion, sha256: sha256Hex(promotionBytes) },
   ];
@@ -719,9 +739,10 @@ export function validateInitReceipt(value, options) {
   });
   const roles = inputs.map(({ role }) => role);
   const projects = roles.filter((role) => role === 'project');
-  if (projects.length === 0
-    || roles.join('\0') !== ['approval', ...projects, 'verification', 'confirmed-inputs', 'promotion'].join('\0')) {
-    invalid('receipt inputs must list approval, every project document, verification, confirmed-inputs, and promotion in that order');
+  const verifications = roles.filter((role) => role === 'verification');
+  if (projects.length === 0 || verifications.length < 2
+    || roles.join('\0') !== ['approval', ...projects, ...verifications, 'confirmed-inputs', 'promotion'].join('\0')) {
+    invalid('receipt inputs must list approval, every project document, every verification entry (checkpoint and results), confirmed-inputs, and promotion in that order');
   }
   assertUniquePaths([handoff.path, ...inputs.map(({ path }) => path)], 'receipt handoff and inputs');
 
@@ -805,6 +826,36 @@ function receiptTarget(path, report) {
   return path;
 }
 
+// A started init owns exactly the receipt its descriptor binds: resume finds
+// it there, and any other receipt path is refused so no second receipt can
+// re-baseline previous bytes. Only a not-started init takes a new path.
+function resolveReceipt(requested, descriptor, report) {
+  const bound = descriptor.init.receipt;
+  if (descriptor.init.status !== 'not-started') {
+    if (bound === null) {
+      fail('INCEPTION_HANDOFF_RECEIPT', `init is ${descriptor.init.status} without a bound receipt; it cannot be resumed without re-baselining`);
+    }
+    if (requested !== undefined && requested !== bound.path) {
+      fail('INCEPTION_HANDOFF_RECEIPT', `init is bound to receipt '${bound.path}'; any other receipt path is refused`);
+    }
+    return receiptTarget(bound.path, report);
+  }
+  if (requested === undefined) fail('INCEPTION_HANDOFF_ARGUMENT', 'a receipt path is required to start init');
+  return receiptTarget(requested, report);
+}
+
+function readBoundReceipt(root, target, report, descriptor) {
+  const existing = readReceipt(root, target, report.runId);
+  if (existing === null) fail('INCEPTION_HANDOFF_RECEIPT', 'the bound receipt is missing; it is never re-baselined');
+  if (descriptor.init.status === 'complete' && existing.receipt.status !== 'complete') {
+    fail('INCEPTION_HANDOFF_RECEIPT', 'init is complete but the receipt is not complete; it is never rewritten');
+  }
+  if (existing.receipt.status === 'in-progress' && existing.sha256 !== descriptor.init.receipt.sha256) {
+    fail('INCEPTION_HANDOFF_RECEIPT', 'the bound receipt bytes changed since init started; it is never re-baselined');
+  }
+  return existing;
+}
+
 function promotedContents(report, destination) {
   return report.promotion.decisions
     .filter((decision) => decision.outcome === 'promote' && decision.destination === destination)
@@ -860,52 +911,49 @@ function publicDestinations(destinations) {
   return destinations.map(({ path, previous, observed, state }) => ({ path, previous, observed, state }));
 }
 
-// Before the first hub write: records init in-progress for this exact handoff
-// and a create-only receipt holding each destination's previous bytes. On
-// resume it keeps the prepared receipt and reports each destination.
+// Before the first hub write: writes a create-only receipt holding each
+// destination's previous bytes (a local write), then records init in-progress
+// binding this exact handoff and that receipt. A resume uses the bound
+// receipt, keeps its previous bytes, and reports each destination; after a
+// crash between the two writes it binds the same receipt instead of a new one.
 export function prepareInitReceipt(root, { handoff, receipt, paths = [], env } = {}) {
   const { report, descriptor } = verifyTransfer(root, { handoff, paths, env });
-  const target = receiptTarget(receipt, report);
   if (report.checkpoint.diverged) {
     fail('INCEPTION_HANDOFF_DIVERGED', 'the current code diverges from the verified checkpoint; reconcile it before promotion');
   }
   if (descriptor.init.status === 'complete') fail('INCEPTION_HANDOFF_RECEIPT', 'init is already complete; finalize verifies it');
-  const existing = readReceipt(root, target, report.runId);
-  let writes;
-  if (existing !== null) {
-    if (existing.receipt.status === 'complete') {
-      fail('INCEPTION_HANDOFF_RECEIPT', 'the receipt is already complete; finalize records init completion');
-    }
-    assertReceiptBinding(existing.receipt, report);
-    writes = existing.receipt.writes;
-  } else {
+  const target = resolveReceipt(receipt, descriptor, report);
+  const started = descriptor.init.status === 'in-progress';
+  const existing = started ? readBoundReceipt(root, target, report, descriptor) : readReceipt(root, target, report.runId);
+  if (existing?.receipt.status === 'complete') {
+    fail('INCEPTION_HANDOFF_RECEIPT', 'the receipt is already complete; finalize records init completion');
+  }
+  if (existing !== null) assertReceiptBinding(existing.receipt, report);
+
+  let reference = existing === null ? null : { path: target, sha256: existing.sha256 };
+  let writes = existing?.receipt.writes;
+  if (existing === null) {
     const destinations = [...new Set(report.promotion.decisions
       .filter(({ outcome }) => outcome === 'promote').map(({ destination }) => destination))].sort();
     writes = observeDestinations(root, report, destinations.map((path) => ({ path, previous: null })))
       .map(({ path, observed }) => ({ path, previous: observed, observed: null }));
-  }
-
-  let stateChanged = false;
-  if (descriptor.init.status === 'not-started') {
-    updateInceptionState(root, {
-      expectedSha256: report.state.sha256,
-      changes: { init: { status: 'in-progress', handoff: report.handoff, receipt: null } },
-    });
-    stateChanged = true;
-  }
-  let reference = existing === null ? null : { path: target, sha256: existing.sha256 };
-  if (reference === null) {
     const written = writeInceptionFile(root, target, serializeInitReceipt(receiptFor(report, 'in-progress', writes)), {
       expectedSha256: null,
       runId: report.runId,
     });
     reference = { path: target, sha256: written.sha256 };
   }
+  if (!started) {
+    updateInceptionState(root, {
+      expectedSha256: report.state.sha256,
+      changes: { init: { status: 'in-progress', handoff: report.handoff, receipt: reference } },
+    });
+  }
   return deepFreeze({
     status: 'in-progress',
     runId: report.runId,
     receipt: reference,
-    changed: { state: stateChanged, receipt: existing === null },
+    changed: { state: !started, receipt: existing === null },
     destinations: publicDestinations(observeDestinations(root, report, writes)),
   });
 }
@@ -929,22 +977,15 @@ export function finalizeInitReceipt(root, { handoff, receipt, gate, paths = [], 
   if (gate !== 'pass' && gate !== 'fail') fail('INCEPTION_HANDOFF_ARGUMENT', 'gate must be pass or fail');
   if (gate !== 'pass') fail('INCEPTION_HANDOFF_GATE', 'the hub gate did not pass; init is not finalized');
   const { report, descriptor } = verifyTransfer(root, { handoff, paths, env });
-  const target = receiptTarget(receipt, report);
   if (report.checkpoint.diverged) {
     fail('INCEPTION_HANDOFF_DIVERGED', 'the current code diverges from the verified checkpoint; finalization is refused');
   }
   if (descriptor.init.status === 'not-started') {
     fail('INCEPTION_HANDOFF_RECEIPT', 'init was never started for this handoff; run prepare first');
   }
-  const existing = readReceipt(root, target, report.runId);
-  if (existing === null) fail('INCEPTION_HANDOFF_RECEIPT', 'no receipt exists at the receipt path; run prepare first');
+  const target = resolveReceipt(receipt, descriptor, report);
+  const existing = readBoundReceipt(root, target, report, descriptor);
   assertReceiptBinding(existing.receipt, report);
-  if (descriptor.init.status === 'complete' && descriptor.init.receipt?.path !== target) {
-    fail('INCEPTION_HANDOFF_RECEIPT', 'the inception state records a different receipt');
-  }
-  if (descriptor.init.status === 'complete' && existing.receipt.status !== 'complete') {
-    fail('INCEPTION_HANDOFF_RECEIPT', 'init is complete but the receipt is not complete; it is never rewritten');
-  }
 
   const destinations = observeDestinations(root, report, existing.receipt.writes);
   for (const decision of report.promotion.decisions) {
@@ -1013,15 +1054,16 @@ const USAGE = [
   '  verify     --handoff <run-file> [--path <repo-path>]...',
   '  project    --handoff <run-file> [--resolution <id=choice>]...',
   '  checkpoint --run-id <uuid> --output <run-file> --path <repo-path>...',
-  '  prepare    --handoff <run-file> --receipt <run-file> [--path <repo-path>]...',
-  '  finalize   --handoff <run-file> --receipt <run-file> --gate <pass|fail> [--path <repo-path>]...',
+  '  prepare    --handoff <run-file> [--receipt <run-file>] [--path <repo-path>]...',
+  '  finalize   --handoff <run-file> --gate <pass|fail> [--receipt <run-file>] [--path <repo-path>]...',
+  '  (--receipt names a new receipt when init starts; a started init uses the receipt its state binds)',
 ].join('\n');
 const COMMANDS = {
   verify: { required: ['handoff'], optional: ['path'] },
   project: { required: ['handoff'], optional: ['resolution'] },
   checkpoint: { required: ['run-id', 'output', 'path'], optional: [] },
-  prepare: { required: ['handoff', 'receipt'], optional: ['path'] },
-  finalize: { required: ['handoff', 'receipt', 'gate'], optional: ['path'] },
+  prepare: { required: ['handoff'], optional: ['receipt', 'path'] },
+  finalize: { required: ['handoff', 'gate'], optional: ['receipt', 'path'] },
 };
 const OPTIONS = ['handoff', 'receipt', 'output', 'run-id', 'gate', 'path', 'resolution'];
 

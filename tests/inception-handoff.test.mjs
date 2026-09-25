@@ -97,7 +97,7 @@ function handoffValue(overrides = {}) {
       state: STATE,
       approval: run('approval.json'),
       project: [run('architecture.md'), run('decisions/stack.md')],
-      verification: run('checkpoint.json'),
+      verification: [run('checkpoint.json'), run('verification/report.md')],
       'confirmed-inputs': run('confirmed-inputs.json'),
       promotion: run('promotion.json'),
     },
@@ -174,12 +174,13 @@ test('the inception handoff envelope is closed: identifier, version, next, run, 
       state: STATE,
       approval: run('approval.json'),
       project: [run('architecture.md'), run('decisions/stack.md')],
-      verification: run('checkpoint.json'),
+      verification: [run('checkpoint.json'), run('verification/report.md')],
       'confirmed-inputs': run('confirmed-inputs.json'),
       promotion: run('promotion.json'),
     },
   });
   assert.ok(Object.isFrozen(valid.required.project));
+  assert.ok(Object.isFrozen(valid.required.verification));
 
   const secret = /sk-live-secret|apiToken|research/;
   const invalid = [
@@ -204,6 +205,12 @@ test('the inception handoff envelope is closed: identifier, version, next, run, 
     ['project case duplicate', withRequired({ project: [run('architecture.md'), run('Architecture.md')] }), /more than once/],
     ['role reuse', withRequired({ promotion: run('approval.json') }), /more than once/],
     ['project reuses a role', withRequired({ project: [run('architecture.md'), run('checkpoint.json')] }), /more than once/],
+    ['verification single path', withRequired({ verification: run('checkpoint.json') }), /verification/],
+    ['verification without results', withRequired({ verification: [run('checkpoint.json')] }), /verification/],
+    ['verification glob', withRequired({ verification: [run('checkpoint.json'), run('verification/*.md')] }), /verification/],
+    ['verification directory', withRequired({ verification: [run('checkpoint.json'), `.apex/inception/${RUN}`] }), /verification/],
+    ['verification duplicate', withRequired({ verification: [run('checkpoint.json'), run('Checkpoint.json')] }), /more than once/],
+    ['verification reuses project', withRequired({ verification: [run('checkpoint.json'), run('architecture.md')] }), /more than once/],
   ];
   for (const [label, value, pattern] of invalid) {
     assert.throws(() => validateInceptionHandoff(value), (error) => {
@@ -316,6 +323,17 @@ test('confirmed inputs keep all six authoritative fields and project exactly fiv
     gitPolicyDirective: '',
   })).gitPolicyDirective, '');
 
+  // No rule is stricter than the init skill's record: multi-line texts and
+  // repeated terms that init would accept survive verbatim.
+  const initAccepted = confirmedInputs({
+    domainVocabulary: {
+      hasSpecializedVocabulary: true,
+      entries: [{ term: 'Tenant', definition: 'A workspace.\nIsolated per customer.' }, { term: 'Tenant', definition: 'Also a billing unit.' }],
+    },
+    gitPolicyDirective: '4. **Git policy:** Ask before any `git` command.\nNever force-push.',
+  });
+  assert.deepEqual(validateConfirmedInputs(initAccepted), initAccepted);
+
   const { gitPolicyDirective: _, ...fiveKeys } = confirmedInputs();
   for (const [label, value, pattern] of [
     ['missing field', fiveKeys, /incomplete/],
@@ -326,11 +344,11 @@ test('confirmed inputs keep all six authoritative fields and project exactly fiv
     ['vocabulary contradiction', confirmedInputs({ domainVocabulary: { hasSpecializedVocabulary: false, entries: [{ term: 'A', definition: 'B' }] } }), /entries/],
     ['vocabulary without entries', confirmedInputs({ domainVocabulary: { hasSpecializedVocabulary: true, entries: [] } }), /entries/],
     ['vocabulary not boolean', confirmedInputs({ domainVocabulary: { hasSpecializedVocabulary: 'yes', entries: [] } }), /hasSpecializedVocabulary/],
-    ['duplicate term', confirmedInputs({ domainVocabulary: { hasSpecializedVocabulary: true, entries: [{ term: 'Secret-Term', definition: 'B' }, { term: 'Secret-Term', definition: 'C' }] } }), /more than once/],
     ['entry extra key', confirmedInputs({ domainVocabulary: { hasSpecializedVocabulary: true, entries: [{ term: 'A', definition: 'B', note: 'x' }] } }), /unsupported field/],
-    ['multi-line definition', confirmedInputs({ domainVocabulary: { hasSpecializedVocabulary: true, entries: [{ term: 'A', definition: 'B\nC' }] } }), /definition/],
+    ['control character in a definition', confirmedInputs({ domainVocabulary: { hasSpecializedVocabulary: true, entries: [{ term: 'Secret-Term', definition: 'B\u0000C' }] } }), /definition/],
+    ['blank term', confirmedInputs({ domainVocabulary: { hasSpecializedVocabulary: true, entries: [{ term: ' ', definition: 'B' }] } }), /term/],
     ['git policy without directive prefix', confirmedInputs({ gitPolicyDirective: 'Ask first.' }), /gitPolicyDirective/],
-    ['multi-line git policy', confirmedInputs({ gitPolicyDirective: '4. **Git policy:** a\nb' }), /gitPolicyDirective/],
+    ['git policy prefix without text', confirmedInputs({ gitPolicyDirective: '4. **Git policy:** ' }), /gitPolicyDirective/],
   ]) {
     assertCode(() => validateConfirmedInputs(value), 'INCEPTION_HANDOFF_INVALID', pattern, /Secret-Term/);
   }
@@ -478,6 +496,7 @@ test('checkpoint comparison reports changed, added, and removed paths and a move
 const HANDOFF = run('handoff.json');
 const PROJECT_DOCS = [[run('architecture.md'), '# Architecture\n'], [run('decisions/stack.md'), '# Stack\n']];
 const CODE_PATHS = ['package-lock.json', 'package.json', 'src/index.js'];
+const VERIFICATION_REPORT = run('verification/report.md');
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 
 function approvalRecord(project = PROJECT_DOCS.map(([path, text]) => ({ path, sha256: sha(text) }))) {
@@ -503,6 +522,7 @@ function seedRun(root) {
   for (const [path, text] of PROJECT_DOCS) put(root, path, text);
   put(root, run('approval.json'), json(approvalRecord()));
   put(root, run('checkpoint.json'), serializeCodeCheckpoint(observeCodeCheckpoint(root, { runId: RUN, paths: CODE_PATHS, env: gitEnv(root) })));
+  put(root, VERIFICATION_REPORT, '# Verification\n\n- npm test: pass\n');
   put(root, run('confirmed-inputs.json'), json(confirmedInputs()));
   put(root, run('promotion.json'), json(promotionTable()));
   put(root, HANDOFF, json(handoffValue()));
@@ -518,6 +538,7 @@ test('a valid handoff verifies every exact input, binds approval and checkpoint,
     { role: 'approval', path: run('approval.json'), sha256: file(run('approval.json')) },
     ...PROJECT_DOCS.map(([path, text]) => ({ role: 'project', path, sha256: sha(text) })),
     { role: 'verification', path: run('checkpoint.json'), sha256: file(run('checkpoint.json')) },
+    { role: 'verification', path: VERIFICATION_REPORT, sha256: file(VERIFICATION_REPORT) },
     { role: 'confirmed-inputs', path: run('confirmed-inputs.json'), sha256: file(run('confirmed-inputs.json')) },
     { role: 'promotion', path: run('promotion.json'), sha256: file(run('promotion.json')) },
   ];
@@ -586,8 +607,15 @@ test('the handoff is refused when its inputs, run, approval, or checkpoint do no
     }, 'INCEPTION_HANDOFF_BINDING', /approval/],
     ['verification is not the recorded checkpoint', (root) => {
       put(root, run('checkpoint-2.json'), readFileSync(join(root, run('checkpoint.json'))));
-      put(root, HANDOFF, json(withRequired({ verification: run('checkpoint-2.json') })));
+      put(root, HANDOFF, json(withRequired({ verification: [run('checkpoint-2.json'), VERIFICATION_REPORT] })));
     }, 'INCEPTION_HANDOFF_BINDING', /verification/],
+    ['missing verification report', (root) => rmSync(join(root, VERIFICATION_REPORT)), 'INCEPTION_MISSING', /report\.md/],
+    ['promotion destination in the checkpoint inventory', (root) => put(root, run('promotion.json'), json(promotionTable([
+      ...promotionTable().decisions, { id: 'manifest-001', outcome: 'promote', destination: 'package.json', content: '"private": true' },
+    ]))), 'INCEPTION_HANDOFF_BINDING', /checkpoint inventory/],
+    ['case alias of a checkpoint path as destination', (root) => put(root, run('promotion.json'), json(promotionTable([
+      ...promotionTable().decisions, { id: 'manifest-001', outcome: 'promote', destination: 'Package.json', content: '"private": true' },
+    ]))), 'INCEPTION_HANDOFF_BINDING', /checkpoint inventory/],
     ['no recorded checkpoint', (root) => writeState(root, { checkpoint: null }), 'INCEPTION_HANDOFF_BINDING', /checkpoint/],
     ['checkpoint of another run', (root) => {
       const recorded = JSON.parse(readFileSync(join(root, run('checkpoint.json')), 'utf8'));
@@ -669,6 +697,7 @@ function receiptValue(overrides = {}) {
       { role: 'approval', path: run('approval.json'), sha256: sha('approval') },
       { role: 'project', path: run('architecture.md'), sha256: sha('architecture') },
       { role: 'verification', path: run('checkpoint.json'), sha256: sha('checkpoint') },
+      { role: 'verification', path: run('verification/report.md'), sha256: sha('report') },
       { role: 'confirmed-inputs', path: run('confirmed-inputs.json'), sha256: sha('inputs') },
       { role: 'promotion', path: run('promotion.json'), sha256: sha('promotion') },
     ],
@@ -709,7 +738,8 @@ test('the receipt schema closes run, inputs, decision outcomes, write checkpoint
       writes: [{ path: '.apex/work/specs/x.md', previous: null, observed: null }] }, /local area/],
     ['write without decision', { ...pending, writes: [...pending.writes, { path: '.apex/glossary.md', previous: null, observed: null }] }, /writes/],
     ['decision without write', { ...pending, writes: [] }, /writes/],
-    ['missing promotion input', { ...pending, inputs: pending.inputs.slice(0, 4) }, /inputs/],
+    ['missing promotion input', { ...pending, inputs: pending.inputs.slice(0, 5) }, /inputs/],
+    ['single verification input', { ...pending, inputs: pending.inputs.filter(({ path }) => !path.endsWith('report.md')) }, /inputs/],
     ['unknown input role', { ...pending, inputs: [...pending.inputs, { role: 'state', path: STATE, sha256: sha('s') }] }, /role/],
     ['extra field', { ...pending, approvedBy: 'me' }, /unsupported field/],
   ]) {
@@ -726,8 +756,10 @@ test('prepare records init in-progress before any hub write and a create-only re
   const inspected = inspectInceptionState(root);
   assert.equal(inspected.state, 'init-in-progress');
   assert.deepEqual(inspected.descriptor.init, {
-    status: 'in-progress', handoff: { path: HANDOFF, sha256: digestOf(root, HANDOFF) }, receipt: null,
-  });
+    status: 'in-progress',
+    handoff: { path: HANDOFF, sha256: digestOf(root, HANDOFF) },
+    receipt: { path: RECEIPT, sha256: digestOf(root, RECEIPT) },
+  }, 'the started init binds the receipt identity in the descriptor');
   assert.equal(readFileSync(join(root, RECEIPT), 'utf8'), json({
     'inception-receipt': 'steepy-apex/v1',
     'run-id': RUN,
@@ -762,14 +794,82 @@ test('prepare records init in-progress before any hub write and a create-only re
   put(root, '.apex/glossary.md', `${GLOSSARY}A human edit.\n`);
   utimesSync(join(root, RECEIPT), new Date('2020-01-01T00:00:00Z'), new Date('2020-01-01T00:00:00Z'));
   const kept = snapshot(root, [STATE, RECEIPT]);
-  const resumed = prepare(root);
+  const resumed = prepare(root, { receipt: undefined });
   assert.deepEqual(snapshot(root, [STATE, RECEIPT]), kept, 'resume rewrites neither the state nor the receipt');
+  assert.equal(resumed.receipt.path, RECEIPT, 'resume finds the receipt from the descriptor alone');
   assert.deepEqual(resumed.changed, { state: false, receipt: false });
   assert.deepEqual(resumed.destinations.map(({ path, state }) => [path, state]), [
     ['.apex/glossary.md', 'changed'],
     ['.apex/standards/web.md', 'realized'],
   ]);
 }));
+
+test('a started init is bound to one receipt: other receipt paths are refused and resume never re-baselines', () => withTemp('receipt-bound', (root) => {
+  seedRun(root);
+  put(root, '.apex/glossary.md', GLOSSARY);
+  prepare(root);
+  put(root, '.apex/glossary.md', `${GLOSSARY}A human edit.\n`);
+  const other = run('receipt-b.json');
+  const watched = [STATE, RECEIPT, other, '.apex/glossary.md', '.apex/standards/web.md'];
+  let before = snapshot(root, watched);
+  assertCode(() => prepare(root, { receipt: other }), 'INCEPTION_HANDOFF_RECEIPT', /bound to receipt/);
+  promote(root);
+  before = snapshot(root, watched);
+  assertCode(() => finalize(root, { receipt: other }), 'INCEPTION_HANDOFF_RECEIPT', /bound to receipt/);
+  assert.deepEqual(snapshot(root, watched), before, 'a second receipt is never started or finalized');
+
+  put(root, '.apex/glossary.md', `${GLOSSARY}A human edit.\n`);
+  const resumed = prepare(root, { receipt: undefined });
+  assert.deepEqual(resumed.destinations.find(({ path }) => path === '.apex/glossary.md'),
+    { path: '.apex/glossary.md', previous: sha(GLOSSARY), observed: digestOf(root, '.apex/glossary.md'), state: 'changed' },
+    'the human edit stays visible against the original previous bytes');
+  promote(root);
+  const done = finalize(root, { receipt: undefined });
+  assert.equal(done.receipt.path, RECEIPT);
+  assert.equal(JSON.parse(readFileSync(join(root, RECEIPT), 'utf8')).writes[0].previous, sha(GLOSSARY));
+  assert.deepEqual(inspectInceptionState(root).descriptor.init.receipt, { path: RECEIPT, sha256: digestOf(root, RECEIPT) });
+  assert.equal(existsSync(join(root, other)), false);
+}));
+
+test('a crash between the receipt write and the state write resumes onto the same receipt and its original previous bytes', () => {
+  withTemp('receipt-crash', (root) => {
+    seedRun(root);
+    put(root, '.apex/glossary.md', GLOSSARY);
+    const notStarted = readFileSync(join(root, STATE));
+    prepare(root);
+    const receipt = readFileSync(join(root, RECEIPT));
+    writeFileSync(join(root, STATE), notStarted);
+    put(root, '.apex/glossary.md', `${GLOSSARY}A human edit.\n`);
+    const resumed = prepare(root);
+    assert.deepEqual(resumed.changed, { state: true, receipt: false });
+    assert.deepEqual(readFileSync(join(root, RECEIPT)), receipt, 'the prepared previous digests are kept');
+    assert.deepEqual(inspectInceptionState(root).descriptor.init.receipt, { path: RECEIPT, sha256: sha(receipt) });
+    assert.equal(resumed.destinations[0].state, 'changed');
+  });
+
+  withTemp('receipt-lost', (root) => {
+    seedRun(root);
+    prepare(root);
+    rmSync(join(root, RECEIPT));
+    promote(root);
+    const watched = [STATE, RECEIPT];
+    const before = snapshot(root, watched);
+    assertCode(() => prepare(root), 'INCEPTION_HANDOFF_RECEIPT', /bound receipt is missing/);
+    assertCode(() => finalize(root), 'INCEPTION_HANDOFF_RECEIPT', /bound receipt is missing/);
+    assert.deepEqual(snapshot(root, watched), before, 'a lost bound receipt is never re-baselined');
+  });
+
+  withTemp('receipt-tampered', (root) => {
+    seedRun(root);
+    prepare(root);
+    const value = JSON.parse(readFileSync(join(root, RECEIPT), 'utf8'));
+    value.writes[0].previous = sha('forged');
+    writeFileSync(join(root, RECEIPT), json(value));
+    promote(root);
+    assertCode(() => prepare(root), 'INCEPTION_HANDOFF_RECEIPT', /bound receipt bytes changed/);
+    assertCode(() => finalize(root), 'INCEPTION_HANDOFF_RECEIPT', /bound receipt bytes changed/);
+  });
+});
 
 test('finalize requires a passing gate, realized promotions, and unchanged code, then records init complete exactly once', () => withTemp('finalize', (root) => {
   seedRun(root);
@@ -871,6 +971,16 @@ test('prepare and finalize refuse divergent code, foreign receipts, changed inpu
     assert.deepEqual(snapshot(root, [STATE, RECEIPT]), kept);
   });
 
+  withTemp('verification-report-changed', (root) => {
+    seedRun(root);
+    prepare(root);
+    promote(root);
+    put(root, VERIFICATION_REPORT, '# Verification\n\n- npm test: fail\n');
+    const kept = snapshot(root, [STATE, RECEIPT]);
+    assertCode(() => finalize(root), 'INCEPTION_HANDOFF_RECEIPT', /other transfer inputs/);
+    assert.deepEqual(snapshot(root, [STATE, RECEIPT]), kept);
+  });
+
   withTemp('prepare-unsafe-destination', (root) => {
     seedRun(root);
     put(root, '.apex/work/specs/draft.md', 'LOCAL_WORK_SENTINEL\n');
@@ -906,7 +1016,7 @@ test('CLI usage errors exit 2 without output or writes', () => withTemp('cli-usa
     ['project', '--root', root, '--handoff', HANDOFF, '--resolution', 'a=keep', '--resolution', 'a=replace'],
     ['checkpoint', '--root', root, '--run-id', RUN, '--output', run('checkpoint-2.json')],
     ['checkpoint', '--root', root, '--run-id', RUN, '--path', 'package.json'],
-    ['prepare', '--root', root, '--handoff', HANDOFF],
+    ['prepare', '--root', root, '--handoff', HANDOFF, '--gate', 'pass'],
     ['finalize', '--root', root, '--handoff', HANDOFF, '--receipt', RECEIPT],
     ['finalize', '--root', root, '--handoff', HANDOFF, '--receipt', RECEIPT, '--gate', 'pass', '--resolution', 'a=b'],
   ]) {
@@ -967,6 +1077,9 @@ test('CLI produces the checkpoint, verification report, projection, and receipts
   assert.match(refused.stderr, /reconcile/);
   put(root, 'src/index.js', 'export const ok = true;\n');
 
+  const unnamed = runCli(root, ['prepare', '--root', root, '--handoff', HANDOFF]);
+  assert.equal(unnamed.status, 1);
+  assert.match(unnamed.stderr, /receipt path is required to start init/);
   const prepared = runCli(root, ['prepare', '--root', root, '--handoff', HANDOFF, '--receipt', RECEIPT]);
   assert.equal(prepared.status, 0, prepared.stderr);
   assert.equal(JSON.parse(prepared.stdout).status, 'in-progress');
@@ -977,7 +1090,7 @@ test('CLI produces the checkpoint, verification report, projection, and receipts
   const finalized = runCli(root, ['finalize', '--root', root, '--handoff', HANDOFF, '--receipt', RECEIPT, '--gate', 'pass']);
   assert.equal(finalized.status, 0, finalized.stderr);
   assert.deepEqual(JSON.parse(finalized.stdout).changed, { state: true, receipt: true });
-  const repeated = runCli(root, ['finalize', '--root', root, '--handoff', HANDOFF, '--receipt', RECEIPT, '--gate', 'pass']);
+  const repeated = runCli(root, ['finalize', '--root', root, '--handoff', HANDOFF, '--gate', 'pass']);
   assert.equal(repeated.status, 0, repeated.stderr);
   assert.deepEqual(JSON.parse(repeated.stdout).changed, { state: false, receipt: false });
   assert.equal(inspectInceptionState(root).state, 'init-complete');

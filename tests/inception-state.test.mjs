@@ -218,9 +218,8 @@ test('incompatible combinations are rejected and legal ones accepted', () => {
 test('transitions keep the run identity and init status monotone', () => {
   const approval = ref(PROPOSAL, 'proposal');
   const handoff = ref(HANDOFF, 'handoff');
-  const receipt = ref(RECEIPT, 'receipt');
-  const inProgress = descriptor({ phase: 'init', approval, init: { status: 'in-progress', handoff, receipt: null } });
-  const complete = descriptor({ phase: 'init', approval, init: { status: 'complete', handoff, receipt } });
+  const inProgress = descriptor({ phase: 'init', approval, init: { status: 'in-progress', handoff, receipt: ref(RECEIPT, 'prepared') } });
+  const complete = descriptor({ phase: 'init', approval, init: { status: 'complete', handoff, receipt: ref(RECEIPT, 'receipt') } });
   assertInceptionTransition(descriptor(), descriptor({ phase: 'architecture' }));
   assertInceptionTransition(descriptor({ phase: 'bootstrap', approval }), descriptor({ phase: 'architecture' }));
   assertInceptionTransition(descriptor({ phase: 'init', approval }), inProgress);
@@ -233,25 +232,38 @@ test('transitions keep the run identity and init status monotone', () => {
     'INCEPTION_STATE_TRANSITION', /runId/);
 });
 
-test('the init transfer binds one handoff from its start and one receipt at completion', () => {
+test('a started init binds one handoff and one receipt path; completion advances only the receipt digest', () => {
   const approval = ref(PROPOSAL, 'proposal');
   const handoff = ref(HANDOFF, 'handoff');
-  const receipt = ref(RECEIPT, 'receipt');
+  const prepared = ref(RECEIPT, 'prepared');
+  const completed = ref(RECEIPT, 'completed');
+  const otherPath = ref(`.apex/inception/${RUN}/receipt-b.json`, 'prepared');
   const ready = descriptor({ phase: 'init', approval });
   const withInit = (init) => descriptor({ phase: 'init', approval, init });
-  const inProgress = withInit({ status: 'in-progress', handoff, receipt: null });
+  const inProgress = withInit({ status: 'in-progress', handoff, receipt: prepared });
+  const complete = withInit({ status: 'complete', handoff, receipt: completed });
 
-  assertCode(() => assertInceptionTransition(ready, withInit({ status: 'in-progress', handoff: null, receipt: null })),
-    'INCEPTION_STATE_TRANSITION', /handoff/);
-  assertCode(() => assertInceptionTransition(ready, withInit({ status: 'complete', handoff: null, receipt })),
-    'INCEPTION_STATE_TRANSITION', /handoff/);
-  assertCode(() => assertInceptionTransition(inProgress, withInit({ status: 'in-progress', handoff: ref(HANDOFF, 'other'), receipt: null })),
-    'INCEPTION_STATE_TRANSITION', /handoff/);
-  assertCode(() => assertInceptionTransition(inProgress, withInit({ status: 'complete', handoff, receipt: null })),
-    'INCEPTION_STATE_TRANSITION', /receipt/);
-  const complete = withInit({ status: 'complete', handoff, receipt });
-  assertCode(() => assertInceptionTransition(complete, withInit({ status: 'complete', handoff, receipt: ref(RECEIPT, 'other') })),
-    'INCEPTION_STATE_TRANSITION', /receipt/);
+  for (const [label, from, to, pattern] of [
+    ['start without handoff', ready, withInit({ status: 'in-progress', handoff: null, receipt: prepared }), /handoff/],
+    ['start without receipt', ready, withInit({ status: 'in-progress', handoff, receipt: null }), /receipt/],
+    ['complete without handoff', ready, withInit({ status: 'complete', handoff: null, receipt: completed }), /handoff/],
+    ['handoff swapped', inProgress, withInit({ status: 'in-progress', handoff: ref(HANDOFF, 'other'), receipt: prepared }), /handoff/],
+    ['receipt unbound', inProgress, withInit({ status: 'in-progress', handoff, receipt: null }), /receipt/],
+    ['receipt path swapped', inProgress, withInit({ status: 'in-progress', handoff, receipt: otherPath }), /receipt/],
+    ['receipt digest moved while in progress', inProgress, withInit({ status: 'in-progress', handoff, receipt: completed }), /receipt/],
+    ['completion to another path', inProgress, withInit({ status: 'complete', handoff, receipt: ref(otherPath.path, 'completed') }), /receipt/],
+    ['completion without receipt', inProgress, withInit({ status: 'complete', handoff, receipt: null }), /receipt/],
+    ['completed receipt digest moved', complete, withInit({ status: 'complete', handoff, receipt: ref(RECEIPT, 'other') }), /receipt/],
+  ]) {
+    assert.throws(() => assertInceptionTransition(from, to), (error) => {
+      assert.equal(error.code, 'INCEPTION_STATE_TRANSITION', `${label}: ${error.message}`);
+      assert.match(error.message, pattern, label);
+      return true;
+    }, label);
+  }
+  assertInceptionTransition(ready, inProgress);
+  assertInceptionTransition(inProgress, withInit({ status: 'in-progress', handoff, receipt: prepared }));
+  assertInceptionTransition(inProgress, complete);
   // Static combinations stay open: descriptors seeded by other tools remain classifiable.
   assert.equal(validateInceptionState(withInit({ status: 'in-progress', handoff: null, receipt: null })).init.status, 'in-progress');
 });
@@ -448,7 +460,10 @@ test('update compares the previous digest, verifies references, applies only exp
   assert.equal(after.ino, before.ino);
 
   put(root, HANDOFF, 'handoff\n');
-  step({ phase: 'init', init: { status: 'in-progress', handoff: ref(HANDOFF, 'handoff\n'), receipt: null } });
+  put(root, RECEIPT, 'prepared\n');
+  assertCode(() => step({ phase: 'init', init: { status: 'in-progress', handoff: ref(HANDOFF, 'handoff\n'), receipt: null } }),
+    'INCEPTION_STATE_TRANSITION', /receipt/);
+  step({ phase: 'init', init: { status: 'in-progress', handoff: ref(HANDOFF, 'handoff\n'), receipt: ref(RECEIPT, 'prepared\n') } });
   assert.equal(inspectInceptionState(root).state, 'init-in-progress');
   assertCode(() => step({ init: { status: 'not-started', handoff: null, receipt: null } }), 'INCEPTION_STATE_TRANSITION', /init/);
   assertCode(() => step({ phase: 'verification' }), 'INCEPTION_STATE_INVALID', /init/);

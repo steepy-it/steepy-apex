@@ -182,8 +182,9 @@ function sameReference(left, right) {
 }
 
 // The static schema stays open so seeded descriptors remain classifiable; the
-// transfer rules apply to transitions: a started init names its handoff and
-// keeps it, and a completed init names its receipt and keeps it.
+// transfer rules apply to transitions: starting init binds its handoff and
+// its receipt identity, both paths stay fixed afterwards, and the receipt
+// digest advances only when init completes.
 export function assertInceptionTransition(previous, next) {
   const before = validateInceptionState(previous);
   const after = validateInceptionState(next);
@@ -196,14 +197,22 @@ export function assertInceptionTransition(previous, next) {
   if (from === 0 && to > 0 && after.init.handoff === null) {
     fail('INCEPTION_STATE_TRANSITION', 'starting init requires the init.handoff reference');
   }
+  if (from === 0 && to > 0 && after.init.receipt === null) {
+    fail('INCEPTION_STATE_TRANSITION', 'starting init requires the init.receipt reference that binds its receipt');
+  }
   if (from > 0 && !sameReference(before.init.handoff, after.init.handoff)) {
     fail('INCEPTION_STATE_TRANSITION', 'init.handoff is immutable once init has started');
   }
+  if (from > 0 && before.init.receipt !== null) {
+    if (after.init.receipt?.path !== before.init.receipt.path) {
+      fail('INCEPTION_STATE_TRANSITION', 'the init.receipt path is immutable once bound');
+    }
+    if (!(from === 1 && to === 2) && after.init.receipt.sha256 !== before.init.receipt.sha256) {
+      fail('INCEPTION_STATE_TRANSITION', 'the init.receipt digest advances only when init completes');
+    }
+  }
   if (from < 2 && to === 2 && after.init.receipt === null) {
     fail('INCEPTION_STATE_TRANSITION', 'completing init requires the init.receipt reference');
-  }
-  if (from === 2 && !sameReference(before.init.receipt, after.init.receipt)) {
-    fail('INCEPTION_STATE_TRANSITION', 'init.receipt is immutable once init is complete');
   }
 }
 
