@@ -6,7 +6,8 @@ through the representative path, and nothing is built beyond the approved scope.
 ## Build it
 
 - Pin commands and tools to the exact versions from the approved research.
-- Create manifests and lockfiles with the official tools. Commit only if the Git policy allows it.
+- Create manifests and lockfiles with the official tools. Commit only if the Git policy allows it,
+  and only before the final code checkpoint.
 - Provide install, build, test, and start commands that work from a clean checkout.
 - Ship example configuration without secrets. Never write a real secret.
 - Add the integrations and migrations the representative path needs, and only those.

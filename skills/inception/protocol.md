@@ -14,8 +14,10 @@ SHA-256 of the exact referenced bytes.
 - `.apex/inception/.gitignore` — exactly `*` plus a newline; `start` writes it first. It is local too.
 - `.apex/inception/state.json` — the one canonical descriptor. Change it only through `start` and
   `update`; never edit it by hand.
-- `.apex/inception/<run-id>/<file>` — the run's files. File names use letters, digits, `.`, `_`, and
-  `-`. Keep every file at most 1 MiB; split larger material into separate exact files.
+- `.apex/inception/<run-id>/<file>` — the run's files. Each path segment under `<run-id>/` starts
+  with a letter or digit, then uses letters, digits, `.`, `_`, and `-`; nested directories are allowed
+  (`research/runtime.md`). Keep every file at most 1 MiB; split larger material into separate exact
+  files.
 
 The area stays outside the hub DAG, `validate-hub`, and every stable reader. No stable document
 links into it. The descriptor is the one known point for classification. Every other read uses an
@@ -214,7 +216,8 @@ first four, plus `resolutions`, into Project model v1.
 ### Promotion table
 
 One row per significant decision. `promote` names a stable destination and the exact text `init`
-writes there. `exclude` gives the reason the decision stays local.
+writes there. `exclude` gives the reason the decision stays local. Promote a choice with its reason;
+the manifest and lockfile hold the resolved version.
 
 ```json
 {
@@ -225,7 +228,7 @@ writes there. `exclude` gives the reason the decision stays local.
       "id": "D1-runtime",
       "outcome": "promote",
       "destination": ".apex/project-architecture.md",
-      "content": "- Runtime: <runtime> <version>, checked against its official release page on <date>. Reason: <reason>."
+      "content": "- Runtime: <runtime>, chosen because <reason>. The manifest and lockfile hold the resolved version."
     },
     {
       "id": "D2-waiting-list",

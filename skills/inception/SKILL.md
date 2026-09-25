@@ -49,8 +49,11 @@ It reads only the descriptor and its ignore guard. Route on the result:
 - `absent`, no `_INDEX.md`, and a mature application (real product code with its own build and
   tests) → do not start; recommend `init`, then `discovery`.
 - `absent` with `_INDEX.md` → the hub is operational; use the ordinary workflows. Do not start.
-- `incomplete` → a start stopped before its descriptor; run Step 1 again. It completes only that start.
-- `pre-hub` → a run exists; resume it (see Resume).
+- `incomplete` without `_INDEX.md` → a start stopped before its descriptor; run Step 1 again. It
+  completes only that start.
+- `pre-hub` without `_INDEX.md` → a run exists; resume it (see Resume).
+- `pre-hub` or `incomplete` with `_INDEX.md` → a leftover run beside an operational hub: report it
+  and ask the user. Never resume it automatically.
 - `init-in-progress` → `init` was interrupted; resume the `init` skill with the handoff the
   descriptor pins (`init.handoff.path`).
 - `init-complete` → the transfer is done. If the descriptor phase is not `complete` yet, close the
@@ -111,11 +114,11 @@ listing its directory.
 1. Run `inspect`. Take the phase, the status, and the references from the descriptor. If the
    descriptor is still the initial one and `.apex/inception/<run-id>/` is missing, run `start` again
    with `--run-id <run-id>`: it completes that exact start and changes nothing else.
-2. Check the approval: each project document must still match its approved digest
+2. If an approval is bound, check it: each project document must still match its approved digest
    (`protocol.md` → "Approval record"). A mismatch is a change after approval: ask for a targeted
    decision and record a new approval before more bootstrap.
-3. Check the code: record a new checkpoint with the same inventory at a new exact path and compare
-   it with the recorded one. Explain every difference before you continue.
+3. If a checkpoint is bound, check the code: record a new checkpoint with the same inventory at a
+   new exact path and compare it with the recorded one. Explain every difference before you continue.
 4. Read the bootstrap log. Done steps stay done. A step with an intent but no observed outcome is
    uncertain: reconcile it by observing its real effect; never repeat it automatically.
 5. Set `status: active` and continue in the recorded phase.

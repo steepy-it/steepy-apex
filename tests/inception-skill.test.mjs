@@ -13,7 +13,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sha256Hex } from '../scripts/inception-paths.mjs';
+import { classifyInceptionPath, sha256Hex } from '../scripts/inception-paths.mjs';
 import {
   INCEPTION_PHASES,
   parseInceptionState,
@@ -33,6 +33,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const skillDir = join(root, 'skills', 'inception');
 const read = (name) => readFileSync(join(skillDir, name), 'utf8');
+const RUN = '0f8e6b8a-3c1d-4e2f-9a7b-5c6d7e8f9a0b';
 const PHASE_FILES = ['reconnaissance.md', 'architecture.md', 'bootstrap.md', 'init-handoff.md'];
 const SUPPORT_FILES = ['protocol.md', ...PHASE_FILES];
 const TEMPLATES = [
@@ -117,6 +118,8 @@ test('inception: Step 0 routes every inspected state, an operational hub, and a 
   assert.match(routes, /`_INDEX\.md` → the hub is operational; use the ordinary workflows/i);
   assert.match(routes, /`invalid` → stop[^.]*reason\. Repair nothing automatically/i);
   assert.match(routes, /more than one route[^.]*present the routes and let the user decide/i);
+  assert.match(routes, /- `pre-hub` without `_INDEX\.md` → a run exists; resume it/i);
+  assert.match(routes, /`pre-hub` or `incomplete` with `_INDEX\.md` → a leftover run beside an operational hub: report it and ask the user\. Never resume it automatically/i);
   assert.ok(text.indexOf('## Step 0') < text.indexOf('inception-state.mjs start'), 'classification precedes start');
   assert.match(flat(section(text, '## Step 1', '## Phases')), /never overwrites a run[^.]*\.[^.]*tracked[^.]*never run `git rm`/i);
 });
@@ -185,6 +188,8 @@ test('inception: stop, resume, and exit are explicit and never rebuild state by 
   assert.match(resume, /only from exact paths/i);
   assert.match(resume, /Never rebuild the run by listing its directory/i);
   assert.match(resume, /project document must still match its approved digest/i);
+  assert.match(resume, /If an approval is bound, check it/i);
+  assert.match(resume, /If a checkpoint is bound, check the code/i);
   assert.match(resume, /new checkpoint with the same inventory at a new exact path/i);
   assert.match(resume, /intent but no observed outcome is uncertain[^.]*reconcile[^.]*never repeat it automatically/i);
   const exit = flat(section(text, '## Exit'));
@@ -220,6 +225,10 @@ test('inception: protocol.md record examples are accepted by the real helpers an
   ]);
   const inventory = new Set(checkpoint.value.files.map(({ path }) => path.toLowerCase()));
   assert.deepEqual(new Set(promotion.decisions.map(({ outcome }) => outcome)), new Set(['promote', 'exclude']));
+  const architecture = promotion.decisions.find(({ destination }) => destination === '.apex/project-architecture.md');
+  assert.ok(architecture, 'the example promotes a cross-cutting choice');
+  assert.match(architecture.content, /manifest and lockfile hold the resolved version/i, 'a promoted choice points at the manifest and lockfile');
+  assert.doesNotMatch(architecture.content, /<version>|checked against/i, 'a promoted choice never repeats the resolved version');
   for (const decision of promotion.decisions.filter(({ outcome }) => outcome === 'promote')) {
     assert.ok(!inventory.has(decision.destination.toLowerCase()), `${decision.id} must not write a checkpoint path`);
   }
@@ -232,6 +241,10 @@ test('inception: protocol.md documents the local area, binding rules, and the he
   assert.match(text, /`\.apex\/inception\/\.gitignore` — exactly `\*` plus a newline; `start` writes it first/);
   assert.match(text, /Change it only through `start` and `update`; never edit it by hand/i);
   assert.match(text, /at most 1 MiB/i);
+  assert.match(text, /Each path segment under `<run-id>\/` starts with a letter or digit, then uses letters, digits, `\.`, `_`, and `-`; nested directories are allowed \(`research\/runtime\.md`\)/);
+  assert.equal(classifyInceptionPath(`.apex/inception/${RUN}/research/runtime.md`, { runId: RUN }).kind, 'run-file');
+  assert.throws(() => classifyInceptionPath(`.apex/inception/${RUN}/.draft.md`, { runId: RUN }), /unsafe characters/);
+  assert.match(text, /Promote a choice with its reason; the manifest and lockfile hold the resolved version/i);
   assert.match(text, /never edited after it is bound[^.]*\. A new decision or observation uses a new exact path/i);
   assert.match(text, /Leave `init` to `prepare` and `finalize`/);
   assert.match(text, /only after the user explicitly approves the whole project/i);
@@ -264,7 +277,6 @@ test('inception: the documented digest command prints the SHA-256 the helpers ve
 // usage error exits 2; any other exit (missing state, refused binding) is a
 // runtime answer for an empty temporary repository, which is expected here.
 const HELPER_LINE = /^\s*node <engine-root>\/scripts\/(inception-(?:state|handoff)\.mjs) (.+)$/;
-const RUN = '0f8e6b8a-3c1d-4e2f-9a7b-5c6d7e8f9a0b';
 const PLACEHOLDERS = {
   '<run-id>': RUN,
   '<n>': '1',
@@ -361,6 +373,7 @@ test('inception: architecture requires reasoned alternatives, sourced versions, 
 test('inception: bootstrap builds the approved path only, checkpoints effects, and reconciles uncertain outcomes', () => {
   const text = flat(read('bootstrap.md'));
   assert.match(text, /Pin commands and tools/i);
+  assert.match(text, /Commit only if the Git policy allows it, and only before the final code checkpoint/i);
   assert.match(text, /manifests and lockfiles/i);
   assert.match(text, /install, build, test, and start commands/i);
   assert.match(text, /example configuration without secrets/i);
@@ -384,6 +397,10 @@ test('inception: init-handoff verifies, names exact init inputs, separates appro
   assert.match(text, /deploy excluded[^.]*not needed to conclude/i);
   assert.match(text, /deploy included → never "succeeded" without evidence/i);
   assert.match(text, /final code checkpoint and bind it/i);
+  assert.match(text, /Finish the commits the Git policy allows before the final code checkpoint/i);
+  assert.match(text, /change no code and make no commit until `init` finalizes/i);
+  assert.match(text, /If `init` reports `diverged` before it starts, loop back: re-run the checks the change affects, record and bind a new checkpoint, then write a new handoff at a new exact path/i);
+  assert.match(text, /Once `init` has started, its handoff is pinned: restore the checkpointed code instead/i);
   assert.match(text, /installed combination → the versions actually resolved[^;]*match the approved research; report a mismatch, never hide it/i);
   for (const file of ['confirmed-inputs.json', 'promotion.json', 'init-handoff.json']) {
     assert.ok(text.includes(file), `the transfer must name ${file}`);

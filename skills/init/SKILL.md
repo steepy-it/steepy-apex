@@ -86,7 +86,8 @@ It reads only the inception descriptor and its ignore guard. Route on the result
 - an exact inception handoff path from the user, or `init-in-progress` → "Inception entry" below.
   `init-in-progress` means an earlier init was interrupted: keep its accepted inputs and resume with
   the handoff the descriptor pins (`init.handoff.path`).
-- `absent` or `init-complete` → the ordinary path: Step 0.
+- `absent` or `init-complete` → the ordinary path: Step 0. `init-complete` wins even when a handoff
+  path is supplied: the transfer is already done.
 - `pre-hub` without a handoff path → an inception run exists that has not handed off yet. Ask whether
   to finish it with the `inception` skill or to run an ordinary init that leaves it unused.
 - `incomplete` or `invalid` → report the reason and ask before continuing. Never repair the inception
@@ -253,8 +254,10 @@ paths it names; the `inception` skill owns every other file of its run.
    ```
 
    On resume, omit `--receipt`: the descriptor binds the receipt. A destination reported `changed`
-   holds human edits: reconcile them with the user; never overwrite them. Do not commit between
-   `prepare` and `finalize`: a moved HEAD diverges the checkpoint.
+   differs from its prepared bytes and still misses promoted text. It can hold this entry's own partial
+   write or a human edit: compare it with what this entry writes, keep this entry's own bytes, and ask
+   the user only about text this entry did not write; never overwrite human text. Do not commit
+   between `prepare` and `finalize`: a moved HEAD diverges the checkpoint.
 4. **Plan and apply.** Derive the planner projection into a temporary file outside the repository:
 
    ```bash

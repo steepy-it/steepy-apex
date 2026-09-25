@@ -17,7 +17,9 @@ structure of `<engine-root>/templates/inception-verification.md`:
 - deploy excluded → say so with its reason; it is not needed to conclude;
 - deploy included → never "succeeded" without evidence.
 
-Then record the final code checkpoint and bind it (`protocol.md` → "Code checkpoint").
+Finish the commits the Git policy allows before the final code checkpoint. Then record the final
+code checkpoint and bind it (`protocol.md` → "Code checkpoint"). From then on, change no code and
+make no commit until `init` finalizes: a changed file or a moved HEAD diverges the checkpoint.
 
 ## Inputs for init
 
@@ -31,6 +33,10 @@ Write these run files (`protocol.md` → "Transfer to init"):
 
 Set phase `init` with `update`. Then invoke the `init` skill with the exact handoff path. `init`
 asks only for missing data, new decisions, and real conflicts.
+
+If `init` reports `diverged` before it starts, loop back: re-run the checks the change affects,
+record and bind a new checkpoint, then write a new handoff at a new exact path. Once `init` has
+started, its handoff is pinned: restore the checkpointed code instead.
 
 ## Promotion matrix
 
