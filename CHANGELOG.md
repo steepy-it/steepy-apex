@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.0.5 (2026-09-29)
+
+- Move the OpenAI tier ladder to GPT-6: `gpt-6-luna` / `gpt-6-sol` / `gpt-6-sol`.
+  `gpt-6-astra` stays off the ladder, as Fable does, and is reached only by a
+  ledgered override.
+- Move the DeepSeek `cheap` tier to `deepseek-flash` (V4.1-Flash); the retired
+  `deepseek-v4-flash` is only routed to it.
+- Keep Anthropic's `haiku` / `sonnet` / `opus` aliases, which now resolve to
+  Haiku 4.5, Sonnet 5.5, and Opus 5.5.
+
 ## v1.0.4 (2026-09-18)
 
 - Let halted Gear-3 implementation runs receive exact additional evidence through
