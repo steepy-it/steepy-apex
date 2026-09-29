@@ -1,5 +1,4 @@
 # OpenAI latest-model guide (fixture snapshot — drifted)
 
-- gpt-5.6-luna — small fast model for mechanical work
-- gpt-5.6-terra — default general-purpose model
-- gpt-5.7-sol — most capable model
+- gpt-6-luna — most efficient model for focused, high-volume tasks
+- gpt-6.1-sol — complex coding and agentic workflows

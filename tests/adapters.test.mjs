@@ -1837,13 +1837,15 @@ describe('headless adapter model-tier routing', () => {
   const prompt = 'complete the current phase';
   const tiers = ['cheap', 'standard', 'most-capable'];
   const claudeModels = ['haiku', 'sonnet', 'opus'];
-  const codexModels = ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol'];
+  const codexModels = ['gpt-6-luna', 'gpt-6-sol', 'gpt-6-sol'];
   // Frontier models per harness: the tier ladder must never resolve one of these
   // for `cheap`, or every mechanical task runs on the most expensive model.
   const frontierModels = {
     claude: ['fable', 'opus', 'claude-fable-5', 'claude-opus-5'],
-    codex: ['gpt-5.6-sol'],
+    codex: ['gpt-6-astra', 'gpt-6-sol'],
   };
+  // openai repeats its top rung (gpt-6-sol on standard and most-capable).
+  const distinctTierModels = { claude: 3, codex: 2 };
 
   it('pins Codex model-tier provenance to the official model guide', () => {
     assert.equal(
@@ -1912,7 +1914,7 @@ describe('headless adapter model-tier routing', () => {
     });
   }
 
-  it('never resolves a frontier model for the cheap tier, and keeps each tier distinct', () => {
+  it('never resolves a frontier model for the cheap tier, and resolves the expected distinct models', () => {
     for (const harness of ['claude', 'codex']) {
       const resolved = tiers.map((tier) => descriptorFor(harness, tier).resolvedModel);
       for (const model of resolved) {
@@ -1923,27 +1925,27 @@ describe('headless adapter model-tier routing', () => {
         `${harness} cheap tier resolved the frontier model '${resolved[0]}' — the ladder is inverted`,
       );
       assert.equal(
-        new Set(resolved).size, tiers.length,
-        `${harness} must resolve a distinct model per tier, got ${resolved.join(', ')}`,
+        new Set(resolved).size, distinctTierModels[harness],
+        `${harness} must resolve ${distinctTierModels[harness]} distinct models, got ${resolved.join(', ')}`,
       );
     }
   });
 
   it('applies a verified injected OpenCode mapping at the model flag before its prompt', () => {
     const descriptor = descriptorFor('opencode', 'standard', {
-      modelMappings: { standard: 'openai/gpt-5.6-terra' },
+      modelMappings: { standard: 'openai/gpt-6-sol' },
     });
-    assert.equal(descriptor.resolvedModel, 'openai/gpt-5.6-terra');
+    assert.equal(descriptor.resolvedModel, 'openai/gpt-6-sol');
     assert.equal(descriptor.modelSelection, 'applied');
     assert.deepEqual(descriptor.args, [
       'run', '--auto', '--format', 'json', '--title', 'phase-controller',
-      '--model', 'openai/gpt-5.6-terra', prompt,
+      '--model', 'openai/gpt-6-sol', prompt,
     ]);
   });
 
   it('degrades a requested OpenCode tier when its injected mapping omits that tier', () => {
     const descriptor = descriptorFor('opencode', 'most-capable', {
-      modelMappings: { standard: 'openai/gpt-5.6-terra' },
+      modelMappings: { standard: 'openai/gpt-6-sol' },
     });
     assert.equal(descriptor.modelSelection, 'degraded');
     assert.equal(descriptor.resolvedModel, undefined);
@@ -1961,13 +1963,13 @@ describe('headless adapter model-tier routing', () => {
   });
 
   it('rejects malformed injected mappings without accepting unexpected, inherited, empty, or unsafe values', () => {
-    const inheritedMapping = Object.create({ cheap: 'openai/gpt-5.6-luna' });
+    const inheritedMapping = Object.create({ cheap: 'openai/gpt-6-luna' });
     for (const modelMappings of [
-      { fast: 'openai/gpt-5.6-luna' },
+      { fast: 'openai/gpt-6-luna' },
       inheritedMapping,
       { cheap: '' },
-      { cheap: 'openai/gpt 5.6-luna' },
-      ['openai/gpt-5.6-luna'],
+      { cheap: 'openai/gpt 6-luna' },
+      ['openai/gpt-6-luna'],
     ]) {
       assert.throws(
         () => descriptorFor('opencode', 'cheap', { modelMappings }),
@@ -1998,9 +2000,9 @@ describe('model-mappings module (adapters/model-mappings.mjs)', () => {
   const providers = ['zai-coding-plan', 'deepseek', 'anthropic', 'openai'];
   const expectedModels = {
     'zai-coding-plan': ['zai-coding-plan/glm-5.3-flash', 'zai-coding-plan/glm-5.3-highspeed', 'zai-coding-plan/glm-5.3'],
-    deepseek: ['deepseek/deepseek-v4-flash', 'deepseek/deepseek-v4-pro', 'deepseek/deepseek-v4-pro'],
+    deepseek: ['deepseek/deepseek-flash', 'deepseek/deepseek-v4-pro', 'deepseek/deepseek-v4-pro'],
     anthropic: ['anthropic/haiku', 'anthropic/sonnet', 'anthropic/opus'],
-    openai: ['openai/gpt-5.6-luna', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-sol'],
+    openai: ['openai/gpt-6-luna', 'openai/gpt-6-sol', 'openai/gpt-6-sol'],
   };
 
   let mm;
@@ -2052,7 +2054,7 @@ describe('model-mappings module (adapters/model-mappings.mjs)', () => {
         const row = mm.PROVIDER_MODEL_MAPPINGS[provider][tier];
         assert.equal(typeof row.source, 'string', `${provider}/${tier}.source must be a string`);
         assert.ok(row.source.length > 0, `${provider}/${tier}.source must be non-empty`);
-        const expectedVerifiedAt = provider === 'zai-coding-plan' ? '2026-08-27' : '2026-08-20';
+        const expectedVerifiedAt = provider === 'zai-coding-plan' ? '2026-08-27' : '2026-09-29';
         assert.equal(row.verifiedAt, expectedVerifiedAt, `${provider}/${tier}.verifiedAt must be the ISO verification date`);
       }
     }
@@ -2070,14 +2072,14 @@ describe('model-mappings module (adapters/model-mappings.mjs)', () => {
     assert.equal(mm.CODEX_MODEL_MAPPING_SOURCE, CODEX_MODEL_MAPPING_SOURCE);
   });
 
-  it('ascends: cheap differs from most-capable everywhere; ids are distinct (deepseek keeps its two)', () => {
+  it('ascends: cheap differs from most-capable everywhere; ids are distinct (deepseek and openai keep their two)', () => {
     for (const provider of providers) {
       const resolved = tiers.map((tier) => mm.tierModelsForProvider(provider)[tier]);
       assert.notEqual(
         resolved[0], resolved[2],
         `${provider} inverts the ladder: cheap === most-capable`,
       );
-      const expectedDistinct = provider === 'deepseek' ? 2 : 3;
+      const expectedDistinct = provider === 'deepseek' || provider === 'openai' ? 2 : 3;
       assert.equal(
         new Set(resolved).size, expectedDistinct,
         `${provider} must resolve ${expectedDistinct} distinct ids, got ${resolved.join(', ')}`,
@@ -2100,15 +2102,15 @@ describe('model-mappings module (adapters/model-mappings.mjs)', () => {
     for (const provider of providers) {
       assert.equal(mm.resolveProviderFromModel(expectedModels[provider][0]), provider);
     }
-    assert.equal(mm.resolveProviderFromModel('openai/gpt-5.6-luna/extra'), 'openai', 'the FIRST slash splits provider from id');
+    assert.equal(mm.resolveProviderFromModel('openai/gpt-6-luna/extra'), 'openai', 'the FIRST slash splits provider from id');
     assert.equal(mm.resolveProviderFromModel('unknown/model'), undefined);
     assert.equal(mm.resolveProviderFromModel('openai'), undefined, 'missing slash');
     assert.equal(mm.resolveProviderFromModel(''), undefined);
-    assert.equal(mm.resolveProviderFromModel('/openai/gpt-5.6-luna'), undefined, 'empty prefix');
+    assert.equal(mm.resolveProviderFromModel('/openai/gpt-6-luna'), undefined, 'empty prefix');
     assert.equal(mm.resolveProviderFromModel(undefined), undefined);
     assert.equal(mm.resolveProviderFromModel(null), undefined);
     assert.equal(mm.resolveProviderFromModel(42), undefined);
-    assert.equal(mm.resolveProviderFromModel({ model: 'openai/gpt-5.6-luna' }), undefined);
+    assert.equal(mm.resolveProviderFromModel({ model: 'openai/gpt-6-luna' }), undefined);
   });
 
   it('tierModelsForProvider returns the frozen concrete tier record or undefined for unknown/prototype keys', () => {
@@ -2131,7 +2133,7 @@ describe('model-mappings module (adapters/model-mappings.mjs)', () => {
       cheap: 'haiku', standard: 'sonnet', 'most-capable': 'opus',
     });
     assert.deepEqual(mm.bareModelMappingsForHarness('codex'), {
-      cheap: 'gpt-5.6-luna', standard: 'gpt-5.6-terra', 'most-capable': 'gpt-5.6-sol',
+      cheap: 'gpt-6-luna', standard: 'gpt-6-sol', 'most-capable': 'gpt-6-sol',
     });
     assert.equal(mm.bareModelMappingsForHarness('opencode'), undefined);
     assert.equal(mm.bareModelMappingsForHarness('pi'), undefined);
