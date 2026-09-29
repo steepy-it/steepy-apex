@@ -98,20 +98,21 @@ test('source verdicts: codex openai guide snapshot confirms the aliased ids', ()
   const verdicts = verdictsFromSource(fixture('codex-openai-source-ok.md'), 'openai');
   assert.equal(verdicts.length, 3);
   assert.ok(verdicts.every((v) => v.verdict === 'OK'), JSON.stringify(verdicts));
-  const sol = verdicts.find((v) => v.tier === 'most-capable');
-  assert.equal(sol.alias, 'gpt-5.6-sol');
-  assert.ok(sol.evidence.includes('gpt-5.6-sol'));
+  const top = verdicts.find((v) => v.tier === 'most-capable');
+  assert.equal(top.alias, 'gpt-6-sol');
+  assert.ok(top.evidence.includes('gpt-6-sol'));
 });
 
-test('source verdicts: drifted openai most-capable alias is STALE with a prefixed proposal', () => {
+test('source verdicts: a drifted repeated openai top rung is STALE on both tiers with a prefixed proposal', () => {
   const verdicts = verdictsFromSource(fixture('codex-openai-source-drift.md'), 'openai');
   const stale = verdicts.filter((v) => v.verdict === 'STALE');
-  assert.equal(stale.length, 1);
-  assert.equal(stale[0].tier, 'most-capable');
-  assert.equal(stale[0].configured, 'openai/gpt-5.6-sol');
-  assert.equal(stale[0].observed, 'gpt-5.7-sol');
-  assert.equal(stale[0].proposedModel, 'openai/gpt-5.7-sol');
-  assert.equal(verdicts.filter((v) => v.verdict === 'OK').length, 2);
+  assert.deepEqual(stale.map((v) => v.tier), ['standard', 'most-capable']);
+  for (const v of stale) {
+    assert.equal(v.configured, 'openai/gpt-6-sol');
+    assert.equal(v.observed, 'gpt-6.1-sol');
+    assert.equal(v.proposedModel, 'openai/gpt-6.1-sol');
+  }
+  assert.equal(verdicts.filter((v) => v.verdict === 'OK').length, 1);
 });
 
 test('source verdicts: a loaded page with no family ids yields UNKNOWN, not STALE', () => {
@@ -168,7 +169,7 @@ test('CLI: provider-absent catalog reports UNKNOWN and still exits 0 (offline de
 test('CLI: codex aliased-id check runs offline via --source-file; drift exits 1', () => {
   const run = runCli(['--harness', 'codex', '--source-file', `openai=${join(fixturesDir, 'codex-openai-source-drift.md')}`]);
   assert.equal(run.status, 1, run.stderr);
-  assert.match(run.stdout, /gpt-5\.7-sol/);
+  assert.match(run.stdout, /gpt-6\.1-sol/);
 });
 
 test('CLI: claude aliased-id check confirms the anthropic snapshot offline (exit 0)', () => {

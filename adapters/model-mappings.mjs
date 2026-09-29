@@ -11,15 +11,15 @@ export const ANTHROPIC_MODEL_MAPPING_SOURCE =
 
 const ZAI_MODEL_MAPPING_SOURCE = 'opencode models live catalog';
 const DEEPSEEK_MODEL_MAPPING_SOURCE =
-  'api-docs.deepseek.com models page (V4-Flash-0731 / V4-Pro-0813)';
-const VERIFIED_AT = '2026-08-20';
+  'api-docs.deepseek.com models page (V4.1-Flash / V4-Pro-0813)';
+const VERIFIED_AT = '2026-09-29';
 
 // The tier ladder is a cost/capability ladder, so each row must ascend:
 // `cheap` is the provider's small fast model, never a frontier one. An
 // inverted row silently sends every mechanical task to the most expensive
 // model available, which is the exact waste tier routing exists to prevent.
-// `deepseek` repeats its top rung on standard/most-capable (two-model
-// catalog — a repeat is allowed, an inversion is not).
+// `deepseek` and `openai` repeat their top rung on standard/most-capable
+// (a repeat is allowed, an inversion is not).
 const tierRows = (source, cheap, standard, mostCapable, verifiedAt = VERIFIED_AT) => Object.freeze({
   cheap: Object.freeze({ model: cheap, source, verifiedAt }),
   standard: Object.freeze({ model: standard, source, verifiedAt }),
@@ -36,17 +36,22 @@ export const PROVIDER_MODEL_MAPPINGS = Object.freeze({
     'zai-coding-plan/glm-5.3-flash', 'zai-coding-plan/glm-5.3-highspeed', 'zai-coding-plan/glm-5.3',
     '2026-08-27',
   ),
+  // deepseek-flash (V4.1-Flash) replaced deepseek-v4-flash, which is retired
+  // and only routed to it; the catalog has no newer Pro than v4-pro.
   deepseek: tierRows(
     DEEPSEEK_MODEL_MAPPING_SOURCE,
-    'deepseek/deepseek-v4-flash', 'deepseek/deepseek-v4-pro', 'deepseek/deepseek-v4-pro',
+    'deepseek/deepseek-flash', 'deepseek/deepseek-v4-pro', 'deepseek/deepseek-v4-pro',
   ),
   anthropic: tierRows(
     ANTHROPIC_MODEL_MAPPING_SOURCE,
     'anthropic/haiku', 'anthropic/sonnet', 'anthropic/opus',
   ),
+  // GPT-6 ladder (human-ratified 2026-09-29): gpt-6-sol tops the ladder and
+  // gpt-6-astra stays off it, as Fable does for anthropic — astra is priced
+  // like Fable ($10/$50, 5x sol), so it is reached only by a ledgered override.
   openai: tierRows(
     CODEX_MODEL_MAPPING_SOURCE,
-    'openai/gpt-5.6-luna', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-sol',
+    'openai/gpt-6-luna', 'openai/gpt-6-sol', 'openai/gpt-6-sol',
   ),
 });
 
@@ -61,7 +66,7 @@ const TIER_MODELS_BY_PROVIDER = Object.freeze(Object.fromEntries(
 ));
 
 // headless harnesses address models without the provider prefix (claude
-// `--model haiku`, codex `--model gpt-5.6-luna`), so their rows are the
+// `--model haiku`, codex `--model gpt-6-luna`), so their rows are the
 // provider tables with the `provider/` prefix stripped.
 const stripProviderPrefix = (model) => model.slice(model.indexOf('/') + 1);
 
