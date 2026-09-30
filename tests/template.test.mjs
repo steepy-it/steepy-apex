@@ -326,3 +326,17 @@ test('the inception and project skeletons are proportioned fill-in structures, n
     }
   }
 });
+
+test('inception-project.md guidance names version policy, decision modes, and version review', () => {
+  const text = template('inception-project.md');
+
+  // Constraints section must name version policy
+  assert.match(text, /## Constraints\n\([\s\S]*?version policy/);
+
+  // Alternatives and reasons section must name decision modes
+  assert.match(text, /## Alternatives and reasons\n\([\s\S]*?(?:asked|grouped default|not applicable)/);
+
+  // Official research section must name version review and table structure
+  assert.match(text, /## Official research\n\([\s\S]*?version review/);
+  assert.match(text, /## Official research\n\([\s\S]*?one table per layer/);
+});
