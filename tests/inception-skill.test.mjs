@@ -503,6 +503,25 @@ test('inception: bootstrap builds the approved path only, checkpoints effects, a
   assert.match(read('architecture.md'), /^## Approval$/m, 'the referenced heading exists');
 });
 
+test('inception: bootstrap dispatches one child per part in dependency order and ends at the second pause', () => {
+  const raw = section(read('bootstrap.md'), '## Parts and children', '## Build it');
+  const text = flat(raw);
+  assert.match(text, /A part is one entry of the project's surface map/i);
+  assert.match(text, /one child per part.*?one at a time, in dependency order: the producer of a contract comes before its consumers/i);
+  assert.match(text, /exact paths to[^.]*approved project documents[^.]*`research\/version-review\.md`[^.]*`\.apex\/inception\/<run-id>\/bootstrap\/<part>\.md`/i);
+  assert.match(text, /Put the "Build it" rules that apply to its part in its brief/i);
+  assert.match(text, /child writes code only under its part's path, and writes its report/i);
+  assert.match(text, /You keep the bootstrap log, the checkpoints, the commits, the descriptor, and the dialogue with the user/i);
+  assert.match(text, /Before each child, append its intent to the log\. After it, append the outcome, run the checks, record and bind a checkpoint, and commit when the Git policy allows/i);
+  assert.match(text, /never writes the descriptor, an approval, a checkpoint, the bootstrap log, a commit, another part's paths, or a file `init` writes/i);
+  assert.match(text, /`BLOCKED` or `NEEDS_CONTEXT` → get the missing fact or ask the user, then dispatch again/i);
+  assert.match(text, /substantial change → a targeted decision and a new approval/i);
+  assert.match(text, /Cross-part fixes and small fixes[^.]*stay with you, inline/i);
+  const whole = read('bootstrap.md');
+  assert.ok(whole.indexOf('## Parts and children') < whole.indexOf('## Build it'), 'parts section comes before Build it');
+  assert.match(flat(whole), /set phase `verification` with `update`\. Then pause \(`SKILL\.md` → "Session boundaries"\): this is the second planned pause\./);
+});
+
 test('inception: init-handoff verifies, names exact init inputs, separates approved/verified/future, and starts no backlog', () => {
   const text = flat(read('init-handoff.md'));
   assert.match(text, /`configured`, `executed`, `succeeded`, `not-executed`, and `failed` distinct/);
