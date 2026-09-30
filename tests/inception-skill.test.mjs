@@ -594,3 +594,51 @@ test('inception: phase exits and run-file rows cover the dialogue and session ch
   assert.match(writer('research/<topic>.md'), /research child/);
   assert.match(writer('bootstrap/<part>.md'), /bootstrap child/);
 });
+
+test('inception: architecture decides nine categories with the user, by fork, grouped default, or skip', () => {
+  const raw = section(read('architecture.md'), '## Architecture', '## Research');
+  const text = flat(raw);
+  const names = ['System shape', 'Contracts between parts', 'Data', 'Identity and access',
+    'Internal architecture of each part', 'Repository and tooling', 'Testing strategy',
+    'Hosting and deploy topology', 'Observability and error handling'];
+  const order = names.map((name, index) => raw.indexOf(`${index + 1}. ${name} — `));
+  assert.ok(order.every((index) => index !== -1), 'every category is a numbered item in this wording');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'categories keep their order');
+  assert.match(text, /category by category, before you write the project documents/i);
+  assert.match(text, /a real fork → one question with two or three alternatives with their trade-offs and a recommendation, plus the versions from the research summaries/i);
+  assert.match(text, /one reasonable answer → it joins one grouped confirmation of defaults, each with its reason; the user corrects only the rows that are wrong/i);
+  assert.match(text, /does not apply → skip it, and write the reason in the project/i);
+  assert.match(text, /system shape before contracts, and contracts before the internal architecture of each part\. Never batch dependent questions/i);
+  assert.match(text, /Write the project documents after the dialogue, not before/i);
+  assert.match(text, /asked, grouped default, or not applicable/i);
+  assert.match(text, /Read a `research\/<topic>\.md` file only for a named missing fact/i);
+});
+
+test('inception: architecture pins after the dialogue and reviews versions one table per layer', () => {
+  const raw = section(read('architecture.md'), '## Research', '## Approval');
+  const text = flat(raw);
+  assert.match(text, /^## Research After the dialogue, pin and verify the chosen combination\./);
+  assert.match(text, /research child.*`research\/version-review\.md`/i);
+  assert.match(text, /`## Version review` section/);
+  assert.match(text, /one table per layer/i);
+  const columns = ['component', 'chosen version', 'latest stable version', 'support status or end of life',
+    'reason when the choice is not the latest or departs from the version policy', 'source and date']
+    .map((name) => text.indexOf(`${name}`, text.indexOf('exactly these six columns')));
+  assert.ok(columns.every((index) => index !== -1), 'all six columns are named');
+  assert.deepEqual([...columns].sort((a, b) => a - b), columns, 'columns keep their order');
+  assert.match(text, /user confirms the table or corrects rows/i);
+  assert.match(text, /real version fork[^.]*single question/i);
+  assert.match(text, /record the confirmed tables in the project's research section/i);
+});
+
+test('inception: approval refuses unasked foundational choices and pauses after binding', () => {
+  const raw = section(read('architecture.md'), '## Approval');
+  const text = flat(raw);
+  assert.match(text, /No foundational choice reaches the approval unless it was asked in the dialogue or confirmed as a grouped default\. If the documents contain one that was not, ask it first\./);
+  assert.ok(text.indexOf('No foundational choice') < text.indexOf('Ask for one explicit approval'),
+    'the rule comes before the approval question');
+  assert.match(text, /List the grouped defaults and every choice you made on your own/);
+  assert.match(text, /5\. Pause \(`SKILL\.md` → "Session boundaries"\)\./);
+  assert.match(text, /one explicit approval of the whole project/i);
+  assert.match(text, /digests of the exact approved bytes/i);
+});
