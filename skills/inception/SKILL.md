@@ -23,7 +23,7 @@ or project bootstrap. Its state lives only in the local area `.apex/inception/`.
 - Talk with the user one question at a time, with numbered options and a recommendation. Use your
   harness's question UI if it has one.
 - The user approves the whole project once, before bootstrap. After that, work on your own inside
-  the approved scope. A substantial change needs a targeted decision and a new approval of the
+  the approved scope, except at the planned pauses (see "Session boundaries"). A substantial change needs a targeted decision and a new approval of the
   changed bytes.
 - Stay stack-agnostic. Propose no preset stack. Back every foundational choice with the official
   sources you consulted.
@@ -33,6 +33,31 @@ or project bootstrap. Its state lives only in the local area `.apex/inception/`.
 - Helpers check formats, paths, digests, and receipts. You own the dialogue, the architecture
   judgement, the reading of evidence, and the promotion decisions. A helper result never proves that
   a human approved or that a rule is right.
+
+## Child agents
+
+- A child gets its exact input paths and one exact output path under `.apex/inception/<run-id>/`.
+  It writes its full result there. It returns only the completion block below, plus a summary of at
+  most 15 lines. Read its output file only for a named missing fact.
+
+```text
+status: <DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED>
+artifact: <repo-relative path>
+changed-paths: <comma-separated repo-relative paths or none>
+signals: <short IDs or none>
+```
+
+- Every dispatch sets `model:` to an abstract tier, and the harness translates it to a concrete
+  model: research → `standard`; an isolated experiment (spike) → `standard`; a bootstrap part →
+  `most-capable`. Never write a concrete model name.
+- Run one child at a time. A research child may run in the background while you continue the
+  dialogue with the user.
+- Never load a reference skill and never look up external documentation yourself; such lookups run
+  inside a child. The user's own materials are not external documentation: open those yourself.
+- A child never writes the descriptor, an approval record, a checkpoint, the bootstrap log, a commit,
+  another part's paths, or a file `init` writes (`protocol.md` → "Code checkpoint").
+- Without a subagent tool, run the work inline and record the degradation in the run file of that
+  phase.
 
 ## Step 0 — Classify the starting point
 
@@ -84,14 +109,44 @@ before you work on the new phase.
 
 | Descriptor phase | Load | Leave when |
 |---|---|---|
-| `reconnaissance` | `reconnaissance.md` | materials, facts vs simulations, constraints, goals, flows, harness, and Git policy are recorded |
-| `architecture` | `architecture.md` | the project documents describe the architecture, the reuse, and the representative path |
-| `research` | `architecture.md` | every foundational choice has an official source, a version, and a date |
+| `reconnaissance` | `reconnaissance.md` | materials, facts vs simulations, constraints, stack preferences, the version policy, goals, flows, harness, and Git policy are recorded |
+| `architecture` | `architecture.md` | every applicable decision category is decided, then the project documents describe the architecture, the reuse, and the representative path |
+| `research` | `architecture.md` | the chosen combination is pinned, every foundational choice has an official source, a version, and a date, and the user confirmed the version review |
 | `approval` | `architecture.md` | the user approved the whole project and the approval is bound |
 | `bootstrap` | `bootstrap.md` | the bootstrap installs, builds, tests, starts, and runs the representative path |
 | `verification` | `init-handoff.md` | the results and the final code checkpoint are recorded |
 | `init` | `init-handoff.md` | `init` reports the transfer complete |
 | `complete` | `init-handoff.md` | the final delivery is reported |
+
+## Session boundaries
+
+The run spans three sessions:
+
+1. reconnaissance → architecture → research → approval;
+2. bootstrap;
+3. verification → init → complete.
+
+There are two planned pauses:
+
+1. **After approval.** The one update that binds the approval sets phase `bootstrap`.
+2. **After bootstrap.** The update sets phase `verification`.
+
+At each pause, do these in order:
+
+1. Complete the descriptor update, so that a resume lands in the new phase.
+2. Wait for every running child to finish. Never pause while a child is running.
+3. Print the resume note: the descriptor path, the phase, and every run file the next phase uses.
+   After approval, that is the approval record, the project documents, and the research files. After
+   bootstrap, add the bootstrap log, the bound checkpoint, and the `bootstrap/<part>.md` reports.
+4. Recommend a new session that invokes the `inception` skill.
+5. End the turn.
+
+The status stays `active`. A planned pause is not a stop (see "Stop conditions"). A new session
+resumes through Step 0 → Resume.
+
+Continue in the same session only when the user explicitly asks. Pause; never refuse.
+
+Why: every later turn carries the whole context. Declaring the cost does not reset it; the pause does.
 
 ## Stop conditions
 

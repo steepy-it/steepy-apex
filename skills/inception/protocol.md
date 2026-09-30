@@ -27,9 +27,11 @@ directory listing never rebuilds a run.
 | Run file | Written by | Holds |
 |---|---|---|
 | `reconnaissance.md` | you | materials, facts, simulations, constraints |
+| `research/<topic>.md` | a research child, at the exact path you give it, or you | candidate research, or the pinned versions and the version review |
 | `project.md` (one or more documents) | you | the project, structured by `<engine-root>/templates/inception-project.md` |
 | `approval.json` | you, after explicit approval | the approval record |
 | `bootstrap-log.md` | you | the intent before each effect, the observed outcome after |
+| `bootstrap/<part>.md` | a bootstrap child, at the exact path you give it | the part's report |
 | `checkpoint-<n>.json` | `inception-handoff.mjs checkpoint` | a code checkpoint |
 | `verification.md` | you | results, structured by `<engine-root>/templates/inception-verification.md` |
 | `confirmed-inputs.json`, `promotion.json`, `init-handoff.json` | you | the transfer inputs |

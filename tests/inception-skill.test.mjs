@@ -522,3 +522,52 @@ test('inception: templates are referenced from the engine root and never copied 
   assert.ok(all.includes('<engine-root>/templates/inception-project.md'));
   assert.ok(all.includes('<engine-root>/templates/inception-verification.md'));
 });
+
+test('inception: session boundaries name the two planned pauses and their ordered steps', () => {
+  const skill = read('SKILL.md');
+  const text = flat(section(skill, '## Session boundaries', '## Stop conditions'));
+  assert.match(text, /after approval\.\*\* [^.]*phase `bootstrap`/i);
+  assert.match(text, /after bootstrap\.\*\* [^.]*phase `verification`/i);
+  const order = ['descriptor update', 'every running child', 'resume note', 'new session', 'end the turn']
+    .map((phrase) => text.toLowerCase().indexOf(phrase));
+  assert.ok(order.every((index) => index !== -1), 'every pause step must be present');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'pause steps must stay in order');
+  assert.match(text, /status stays `active`/i);
+  assert.match(text, /only when the user explicitly asks/i);
+  assert.ok(!section(skill, '## Session boundaries', '## Stop conditions').split('\n').some((line) => line.startsWith('|')),
+    'the session boundaries section must contain no table');
+  assert.match(flat(section(skill, '## Rules for every phase', '## Child agents')),
+    /on your own inside the approved scope, except at the planned pauses/i);
+});
+
+test('inception: child agents get exact paths, a closed completion block, abstract tiers, and limits', () => {
+  const raw = section(read('SKILL.md'), '## Child agents', '## Step 0');
+  const text = flat(raw);
+  assert.match(text, /exact input paths and one exact output path/i);
+  assert.match(text, /writes its full result there/i);
+  assert.match(raw, /status: <DONE\|DONE_WITH_CONCERNS\|NEEDS_CONTEXT\|BLOCKED>\nartifact: <repo-relative path>\nchanged-paths: <comma-separated repo-relative paths or none>\nsignals: <short IDs or none>/);
+  assert.match(text, /at most 15 lines/i);
+  assert.match(text, /named missing fact/i);
+  assert.match(text, /research → `standard`/);
+  assert.match(text, /experiment[^;.]*→ `standard`/i);
+  assert.match(text, /bootstrap part → `most-capable`/);
+  assert.doesNotMatch(text, /\b(haiku|sonnet|opus|gpt-\d|gemini)\b/i);
+  assert.match(text, /one child at a time/i);
+  assert.match(text, /never load a reference skill and never look up external documentation yourself/i);
+  assert.match(text, /without a subagent tool, run the work inline and record the degradation/i);
+  assert.match(text, /never writes the descriptor, an approval record, a checkpoint, the bootstrap log, a commit, another part's paths, or a file `init` writes/i);
+});
+
+test('inception: phase exits and run-file rows cover the dialogue and session changes', () => {
+  const rows = tableRows(section(read('SKILL.md'), '## Phases', '## Stop'));
+  const exit = (phase) => rows.find(([name]) => name === `\`${phase}\``)?.[2] ?? '';
+  assert.match(exit('reconnaissance'), /stack preferences/);
+  assert.match(exit('reconnaissance'), /version policy/);
+  assert.match(exit('architecture'), /every applicable decision category/);
+  assert.match(exit('research'), /pinned/);
+  assert.match(exit('research'), /version review/);
+  const runRows = tableRows(section(read('protocol.md'), '## Local area', '## Descriptor'));
+  const writer = (file) => runRows.find(([name]) => name === `\`${file}\``)?.[1] ?? '';
+  assert.match(writer('research/<topic>.md'), /research child/);
+  assert.match(writer('bootstrap/<part>.md'), /bootstrap child/);
+});
