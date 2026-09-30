@@ -513,7 +513,11 @@ test('inception: bootstrap dispatches one child per part in dependency order and
   assert.match(text, /approved project's confirmed version tables are the version authority\. The child pins those versions; where `research\/version-review\.md` differs, the approved project wins/i);
   assert.match(text, /child writes code only under its part's path, and writes its report/i);
   assert.match(text, /You keep the bootstrap log, the checkpoints, the commits, the descriptor, and the dialogue with the user/i);
-  assert.match(text, /Before each child, append its intent to the log\. After it, append the outcome, run the checks, record and bind a checkpoint, and commit when the Git policy allows/i);
+  assert.match(text, /Before each child, append its intent to the log/i);
+  assert.doesNotMatch(text, /record and bind a checkpoint, and commit/i,
+    'the superseded checkpoint-before-commit instruction must be removed');
+  assert.match(text, /commit[^.]*re-?checks?[^.]*checkpoint[^.]*bind|Effects and checkpoints/i,
+    'per-child checkpoint ordering must follow the shared effect rule or name the same order');
   assert.match(text, /never writes the descriptor, an approval, a checkpoint, the bootstrap log, a commit, another part's paths, or a file `init` writes/i);
   assert.match(text, /`BLOCKED` or `NEEDS_CONTEXT` → get the missing fact or ask the user, then dispatch again/i);
   assert.match(text, /substantial change → a targeted decision and a new approval/i);
@@ -601,6 +605,52 @@ test('inception: child agents get exact paths, a closed completion block, abstra
   assert.match(text, /never writes the descriptor, an approval record, a checkpoint, the bootstrap log, a commit, another part's paths, or a file `init` writes/i);
 });
 
+test('inception: reusable briefs use tiers and dispatch selects a supported native model or registered agent', () => {
+  const text = flat(section(read('SKILL.md'), '## Child agents', '## Step 0'));
+  assert.match(text, /(?:briefs?[^.]*abstract tiers?|abstract tiers?[^.]*briefs?)/i);
+  assert.match(text, /dispatch[^.]*native[^.]*model[^.]*registered[^.]*agent/i);
+  assert.match(text, /(?:never|do not)[^.]*`standard`[^.]*`most-capable`[^.]*native[^.]*identifier/i);
+  assert.doesNotMatch(text, /Every dispatch sets `model:` to an abstract tier/i);
+  assert.doesNotMatch(text, /the harness translates it to a concrete model/i);
+  assert.match(text, /(?:unavailable|cannot)[^.]*selection|selection[^.]*unavailable/i);
+  assert.match(text, /phase[^.]*report[^.]*requested tier[^.]*observable[^.]*applied selection[^.]*reason/i);
+  assert.match(text, /without a subagent tool, run the work inline and record the degradation/i);
+});
+
+test('inception: approval creates the exact bootstrap log before transition and the first pause', () => {
+  const text = flat(section(read('architecture.md'), '## Approval'));
+  assert.match(text, /explicit approval.*?bootstrap-log\.md/i);
+  assert.match(text, /(?:never overwrite|without overwrit|create-only)/i);
+  const log = text.indexOf('bootstrap-log.md');
+  const transition = text.indexOf('set phase `bootstrap`');
+  const pause = text.indexOf('Pause (');
+  assert.ok(log >= 0 && transition > log && pause > transition,
+    'approval must create the log, bind approval and enter bootstrap, then pause');
+  const boundaries = flat(section(read('SKILL.md'), '## Session boundaries', '## Stop conditions'));
+  assert.match(boundaries, /After approval[^.]*bootstrap log|After approval[^.]*bootstrap-log\.md/i);
+});
+
+test('inception: resume reads the log only in effect-bearing phases and blocks unreconciled legacy bootstrap', () => {
+  const resume = flat(section(read('SKILL.md'), '## Resume', '## Exit'));
+  assert.match(resume, /(?:`bootstrap`[^.]*`verification`[^.]*`init`[^.]*`complete`)[^.]*log|log[^.]*`bootstrap`[^.]*`verification`[^.]*`init`[^.]*`complete`/i);
+  const early = resume.match(/[^.]*`reconnaissance`[^.]*`architecture`[^.]*`research`[^.]*`approval`[^.]*/i)?.[0];
+  assert.ok(early, 'resume explicitly covers all four phases before bootstrap');
+  assert.match(early, /(?:no|do not|never|without)[^.]*log|log[^.]*not/i);
+  assert.doesNotMatch(resume, /4\. Read the bootstrap log\. Done steps stay done/i);
+  assert.match(resume, /(?:old|legacy|older)[^.]*`bootstrap`[^.]*no[^.]*log|(?:old|legacy|older)[^.]*log[^.]*missing/i);
+  assert.match(resume, /reconcil[^.]*blocked|blocked[^.]*reconcil/i);
+  assert.match(resume, /(?:exact[^.]*bootstrap-log\.md|bootstrap-log\.md[^.]*exact)/i);
+});
+
+test('inception: each committed effect is rechecked before checkpoint publication and descriptor binding', () => {
+  const bootstrap = flat(section(read('bootstrap.md'), '## Effects and checkpoints', '## Failures and changes'));
+  assert.match(bootstrap, /commit[^.]*re-?checks?[^.]*checkpoint[^.]*bind/i);
+  assert.match(bootstrap, /(?:commit[^.]*intent|intent[^.]*commit)/i);
+  assert.match(bootstrap, /(?:commit[^.]*observed outcome|observed outcome[^.]*commit)/i);
+  assert.match(bootstrap, /(?:commit[^.]*checkpoint[^.]*interrupt|interrupt[^.]*commit[^.]*checkpoint)/i);
+  assert.match(bootstrap, /(?:never|do not)[^.]*repeat[^.]*commit|(?:never|do not)[^.]*second commit/i);
+});
+
 test('inception: phase exits and run-file rows cover the dialogue and session changes', () => {
   const rows = tableRows(section(read('SKILL.md'), '## Phases', '## Stop'));
   const exit = (phase) => rows.find(([name]) => name === `\`${phase}\``)?.[2] ?? '';
@@ -658,7 +708,7 @@ test('inception: approval refuses unasked foundational choices and pauses after 
   assert.ok(text.indexOf('No foundational choice') < text.indexOf('Ask for one explicit approval'),
     'the rule comes before the approval question');
   assert.match(text, /List the grouped defaults and every choice you made on your own/);
-  assert.match(text, /5\. Pause \(`SKILL\.md` → "Session boundaries"\)\./);
+  assert.match(text, /\d+\. Pause \(`SKILL\.md` → "Session boundaries"\)\./);
   assert.match(text, /one explicit approval of the whole project/i);
   assert.match(text, /digests of the exact approved bytes/i);
 });

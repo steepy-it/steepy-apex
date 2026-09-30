@@ -463,6 +463,38 @@ test('the code checkpoint observes exact bytes of an explicit inventory, records
   assertCode(() => observeCodeCheckpoint(root, { runId: RUN, paths: ['.apex/work/specs/x.md'] }), 'INCEPTION_HANDOFF_INVALID', /local area/);
 }));
 
+test('a checkpoint after an authorized commit compares cleanly, but a later same-byte commit still diverges', () => withTemp('committed-checkpoint', (root) => {
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'user.name', 'Synthetic Fixture');
+  git(root, 'config', 'user.email', 'fixture@example.invalid');
+  put(root, 'package.json', '{"name":"synthetic-checkpoint"}\n');
+  git(root, 'add', 'package.json');
+  git(root, 'commit', '-qm', 'SYNTHETIC authorized bootstrap');
+  const observe = () => observeCodeCheckpoint(root, { runId: RUN, paths: ['package.json'], env: gitEnv(root) });
+  const checkpoint = observe();
+  assert.equal(checkpoint.git.head, git(root, 'rev-parse', 'HEAD').trim());
+  assert.deepEqual(compareCodeCheckpoints(checkpoint, observe()), {
+    diverged: false, changed: [], added: [], removed: [],
+    git: { changed: false, recorded: checkpoint.git, observed: checkpoint.git },
+  });
+
+  put(root, 'package.json', '{"name":"synthetic-uncommitted"}\n');
+  const uncommitted = compareCodeCheckpoints(checkpoint, observe());
+  assert.deepEqual(uncommitted.changed, ['package.json']);
+  assert.equal(uncommitted.git.changed, false, 'uncommitted bytes diverge without moving HEAD');
+  assert.equal(uncommitted.diverged, true);
+  put(root, 'package.json', '{"name":"synthetic-checkpoint"}\n');
+
+  git(root, 'commit', '--allow-empty', '-qm', 'SYNTHETIC later commit with identical inventory');
+  const later = observe();
+  assert.deepEqual(later.files, checkpoint.files);
+  assert.notEqual(later.git.head, checkpoint.git.head);
+  assert.deepEqual(compareCodeCheckpoints(checkpoint, later), {
+    diverged: true, changed: [], added: [], removed: [],
+    git: { changed: true, recorded: checkpoint.git, observed: later.git },
+  });
+}));
+
 test('the code checkpoint refuses links, non-files, and hard links instead of hashing aliased bytes', () => withTemp('observe-unsafe', (root) => {
   put(root, 'src/index.js', 'export {};\n');
   symlinkSync('src/index.js', join(root, 'link.js'));

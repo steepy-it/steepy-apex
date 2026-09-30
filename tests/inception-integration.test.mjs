@@ -7,7 +7,7 @@
 // author a document (the project, the approval, the hub documents) a labeled
 // stand-in writes fixed synthetic bytes instead.
 //
-// It proves deterministic composition only. It is not a native bootstrap proof:
+// It proves prose/helper composition only, not native model compliance or a native bootstrap:
 // no harness, model, provider, network, install, build, start, or deploy runs,
 // and no approval here is a human approval. The native protocol and its results
 // live in docs/inception-acceptance.md.
@@ -130,6 +130,7 @@ const GUARD = '.apex/inception/.gitignore';
 const runFile = (name, id = RUN) => `.apex/inception/${id}/${name}`;
 const PROJECT = runFile('project.md');
 const APPROVAL = runFile('approval.json');
+const BOOTSTRAP_LOG = runFile('bootstrap-log.md');
 const CHECKPOINT = runFile('checkpoint-1.json');
 const VERIFICATION = runFile('verification.md');
 const CONFIRMED = runFile('confirmed-inputs.json');
@@ -139,7 +140,7 @@ const RECEIPT = runFile('init-receipt.json');
 const TRANSFER = [GUARD, STATE, HANDOFF, APPROVAL, PROJECT, CHECKPOINT, VERIFICATION, CONFIRMED, PROMOTION];
 const LOCAL_SENTINEL = 'INCEPTION_LOCAL_BODY_SENTINEL';
 // Run files the transfer never names: no helper or CLI may read them.
-const UNNAMED_RUN_FILES = [runFile('reconnaissance.md'), runFile('research/runtime.md'), runFile('bootstrap-log.md')];
+const UNNAMED_RUN_FILES = [runFile('reconnaissance.md'), runFile('research/runtime.md'), BOOTSTRAP_LOG];
 const CODE_PATHS = ['package.json', 'src/app.js', 'test/app.test.js'];
 const STARTER_AGENT = '.claude/agents/app-agent.md';
 const STARTER_CONFLICT = 'v1:app-agent-claude:customized';
@@ -550,25 +551,32 @@ function versionedCopy(sandbox, { withGit = true } = {}) {
 // ---------------------------------------------------------------------------
 // SYNTHETIC stand-in for the inception skill up to the transfer (phases
 // reconnaissance → init), driven through the real in-process helpers.
-function buildReadyRun(sandbox, { withGit = true } = {}) {
+function buildReadyRun(sandbox, { withGit = true, stopAfter } = {}) {
   const { repo, env } = sandbox;
   if (withGit) git(sandbox, ['init', '-q', '-b', 'main']);
   startInceptionRun(repo, { runId: RUN, env });
   put(repo, UNNAMED_RUN_FILES[0], `# Reconnaissance\n\n${LOCAL_SENTINEL}\n`);
   put(repo, UNNAMED_RUN_FILES[1], `# Runtime research\n\n${LOCAL_SENTINEL}\n`);
   put(repo, PROJECT, PROJECT_TEXT);
+  updateInceptionState(repo, { expectedSha256: descriptorSha(sandbox), changes: { phase: 'approval' } });
   put(repo, APPROVAL, json({ 'inception-approval': 'steepy-apex/v1', 'run-id': RUN, project: [bind(sandbox, PROJECT)] }));
+  // SYNTHETIC approval precedes create-only log creation and the transition.
+  writeFileSync(join(repo, BOOTSTRAP_LOG), `# SYNTHETIC approved bootstrap log\n\n${LOCAL_SENTINEL}\n`, { flag: 'wx' });
   updateInceptionState(repo, {
     expectedSha256: descriptorSha(sandbox), changes: { approval: bind(sandbox, APPROVAL), phase: 'bootstrap' },
   });
+  if (stopAfter === 'approval') return;
+  resumeBootstrap(sandbox);
   put(repo, 'package.json', '{"name":"synthetic-clinic","private":true,"scripts":{"test":"node --test"}}\n');
   put(repo, 'src/app.js', 'export const book = (slot) => ({ booked: slot });\n');
   put(repo, 'test/app.test.js', "import { book } from '../src/app.js';\nbook('slot-1');\n");
   put(repo, STARTER_AGENT, '# Starter placeholder agent (SYNTHETIC)\n');
-  put(repo, UNNAMED_RUN_FILES[2], `# Bootstrap log\n\n${LOCAL_SENTINEL}\n`);
   if (withGit) {
+    appendFileSync(join(repo, BOOTSTRAP_LOG), 'Intent: authorized synthetic bootstrap commit\n');
     git(sandbox, ['add', '-A']);
     git(sandbox, ['commit', '-q', '-m', 'SYNTHETIC bootstrap']);
+    if (stopAfter === 'commit') return;
+    appendFileSync(join(repo, BOOTSTRAP_LOG), `Observed: commit ${git(sandbox, ['rev-parse', 'HEAD']).trim()}\n`);
   }
   writeCodeCheckpoint(repo, { runId: RUN, output: CHECKPOINT, paths: CODE_PATHS, env });
   updateInceptionState(repo, {
@@ -579,6 +587,28 @@ function buildReadyRun(sandbox, { withGit = true } = {}) {
   put(repo, PROMOTION, json({ 'inception-promotion': 'steepy-apex/v1', 'run-id': RUN, decisions: DECISIONS }));
   put(repo, HANDOFF, json(handoffValue()));
   updateInceptionState(repo, { expectedSha256: descriptorSha(sandbox), changes: { phase: 'init' } });
+}
+
+// A labeled stand-in for the model's exact-path resume, not a prose interpreter.
+// Transfer readers still receive TRANSFER, which intentionally excludes the log.
+function resumeBootstrap(sandbox) {
+  const allowed = [GUARD, STATE, APPROVAL, PROJECT, BOOTSTRAP_LOG];
+  const observed = recordAccess(() => {
+    const { descriptor } = inspectInceptionState(sandbox.repo);
+    assert.equal(descriptor.phase, 'bootstrap');
+    assert.equal(descriptor.approval.path, APPROVAL);
+    const approvalBytes = readFileSync(join(sandbox.repo, descriptor.approval.path));
+    assert.equal(sha(approvalBytes), descriptor.approval.sha256);
+    const approval = JSON.parse(approvalBytes);
+    assert.deepEqual(approval.project.map(({ path }) => path), [PROJECT]);
+    assert.equal(sha(readFileSync(join(sandbox.repo, PROJECT))), approval.project[0].sha256);
+    return { descriptor, log: readFileSync(join(sandbox.repo, BOOTSTRAP_LOG), 'utf8') };
+  });
+  assert.deepEqual(forbiddenAccesses(sandbox, observed.accesses, allowed), [],
+    'bootstrap resume reads only exact descriptor, approval, project and log paths, with no enumeration');
+  assert.ok(observed.accesses.some(([kind, path]) => kind === 'read' && path === join(sandbox.repo, BOOTSTRAP_LOG)));
+  if (observed.error) throw observed.error;
+  return observed.result;
 }
 
 // A table of cases shares one ready run, built once in its own sandbox and
@@ -682,6 +712,44 @@ function runInitEntry(sandbox, { stopAfter, answer = answerStarterOnly, withGit 
   return { outcome: 'complete', trace, prepared, preview, writes, applied, finalized, closed };
 }
 
+test('first approved pause has a create-only log and resumes exact paths before any bootstrap effect', () => withSandbox('approved-pause', (sandbox) => {
+  buildReadyRun(sandbox, { stopAfter: 'approval' });
+  const paused = inspectInceptionState(sandbox.repo);
+  assert.equal(paused.descriptor.phase, 'bootstrap');
+  assert.equal(paused.descriptor.checkpoint, null);
+  assert.ok(existsSync(join(sandbox.repo, BOOTSTRAP_LOG)));
+  for (const path of CODE_PATHS) assert.equal(existsSync(join(sandbox.repo, path)), false, path);
+  const before = treeSnapshot(sandbox.repo);
+  assert.throws(() => writeFileSync(join(sandbox.repo, BOOTSTRAP_LOG), 'overwrite', { flag: 'wx' }), { code: 'EEXIST' });
+  const resumed = resumeBootstrap(sandbox);
+  assert.equal(resumed.descriptor.phase, 'bootstrap');
+  assert.match(resumed.log, /SYNTHETIC approved bootstrap log/u);
+  assert.deepEqual(treeSnapshot(sandbox.repo), before, 'resume and refused log creation preserve bytes, modes and mtimes');
+}));
+
+test('post-commit pre-checkpoint interruption reconciles the existing effect and never issues a second commit', () => withSandbox('commit-interruption', (sandbox) => {
+  buildReadyRun(sandbox, { stopAfter: 'commit' });
+  const paused = inspectInceptionState(sandbox.repo);
+  assert.equal(paused.descriptor.phase, 'bootstrap');
+  assert.equal(paused.descriptor.checkpoint, null);
+  const head = git(sandbox, ['rev-parse', 'HEAD']).trim();
+  const resumed = resumeBootstrap(sandbox);
+  assert.match(resumed.log, /Intent: authorized synthetic bootstrap commit/u);
+  assert.doesNotMatch(resumed.log, /Observed: commit/u);
+  assert.equal(git(sandbox, ['show', '-s', '--format=%s', head]).trim(), 'SYNTHETIC bootstrap');
+  assert.equal(git(sandbox, ['status', '--porcelain']).trim(), '');
+  appendFileSync(join(sandbox.repo, BOOTSTRAP_LOG), `Observed: commit ${head} reconciled from Git\n`);
+  // The synthetic parent observes and rechecks the committed inventory, then
+  // publishes and binds a checkpoint. No commit command runs on this resume.
+  for (const path of CODE_PATHS) assert.ok(readFileSync(join(sandbox.repo, path)).length > 0);
+  writeCodeCheckpoint(sandbox.repo, { runId: RUN, output: CHECKPOINT, paths: CODE_PATHS, env: sandbox.env });
+  updateInceptionState(sandbox.repo, { expectedSha256: descriptorSha(sandbox),
+    changes: { checkpoint: bind(sandbox, CHECKPOINT), phase: 'verification' } });
+  assert.equal(git(sandbox, ['rev-parse', 'HEAD']).trim(), head);
+  assert.equal(git(sandbox, ['rev-list', '--count', 'HEAD']).trim(), '1');
+  assert.equal(JSON.parse(readFileSync(join(sandbox.repo, CHECKPOINT), 'utf8')).git.head, head);
+}));
+
 // ===========================================================================
 // The vertical path through the public CLIs, the versioned-only copy, and
 // the exact final repetition.
@@ -721,17 +789,23 @@ test('vertical: start, ignored area, pre-hub, approval, transfer, planner, hub, 
   assert.equal(unapproved.status, 1);
   assert.match(unapproved.stderr, /phase bootstrap requires an approval reference/u);
   assert.deepEqual(treeSnapshot(repo), beforeRefusal, 'a refused update writes nothing');
+  writeFileSync(join(repo, BOOTSTRAP_LOG), `# SYNTHETIC approved bootstrap log\n\n${LOCAL_SENTINEL}\n`, { flag: 'wx' });
   const approved = update({ approval: bind(sandbox, APPROVAL), phase: 'bootstrap' }, [GUARD, STATE, APPROVAL]);
   assert.equal(approved.status, 0, approved.stderr);
+  const firstPause = treeSnapshot(repo);
+  assert.equal(resumeBootstrap(sandbox).descriptor.phase, 'bootstrap');
+  assert.deepEqual(treeSnapshot(repo), firstPause, 'resume through exact paths has no bootstrap effect');
+  for (const path of CODE_PATHS) assert.equal(existsSync(join(repo, path)), false, path);
 
   // SYNTHETIC bootstrap with a starter placeholder, committed by the user.
   put(repo, 'package.json', '{"name":"synthetic-clinic","private":true,"scripts":{"test":"node --test"}}\n');
   put(repo, 'src/app.js', 'export const book = (slot) => ({ booked: slot });\n');
   put(repo, 'test/app.test.js', "import { book } from '../src/app.js';\nbook('slot-1');\n");
   put(repo, STARTER_AGENT, '# Starter placeholder agent (SYNTHETIC)\n');
-  put(repo, UNNAMED_RUN_FILES[2], `# Bootstrap log\n\n${LOCAL_SENTINEL}\n`);
+  appendFileSync(join(repo, BOOTSTRAP_LOG), 'Intent: authorized synthetic bootstrap commit\n');
   git(sandbox, ['add', '-A']);
   git(sandbox, ['commit', '-q', '-m', 'SYNTHETIC bootstrap']);
+  appendFileSync(join(repo, BOOTSTRAP_LOG), `Observed: commit ${git(sandbox, ['rev-parse', 'HEAD']).trim()}\n`);
   assert.doesNotMatch(git(sandbox, ['ls-files']), /\.apex/u, 'no inception file is ever versioned');
 
   const checkpoint = inceptionHandoff(sandbox, ['checkpoint', '--run-id', RUN, '--output', CHECKPOINT,
