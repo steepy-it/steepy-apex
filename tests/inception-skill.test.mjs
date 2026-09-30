@@ -438,8 +438,31 @@ test('inception: reconnaissance combines starting materials, separates facts fro
   for (const topic of ['quality', 'constraints', 'goals', 'flows', 'harness capabilities', 'Git policy']) {
     assert.match(text, new RegExp(topic, 'i'), `reconnaissance must record ${topic}`);
   }
-  assert.match(text, /Ask in dependency order: materials → real vs simulated → goals and flows → constraints/i);
+  assert.match(text, /Ask in dependency order: materials → real vs simulated → goals and flows → constraints → stack and skills → preserved behaviors → harness and Git/i);
   assert.match(text, /never batch dependent questions/i);
+});
+
+test('inception: reconnaissance asks the stack and version policy, researches candidates in the background, and checks the remote identity', () => {
+  const text = flat(read('reconnaissance.md'));
+  assert.match(read('reconnaissance.md'), /^## Stack and skills$/m);
+  assert.match(read('reconnaissance.md'), /^## Candidate research$/m);
+  assert.match(text, /For each layer[^.]*ask what the user knows, prefers, or wants to avoid\. Record the answers as constraints/i);
+  assert.match(text, /version policy[^.]*one question with numbered options and a recommendation/i);
+  assert.match(text, /1\. latest stable versions that the whole combination supports/i);
+  assert.match(text, /2\. conservative: LTS or N-1/i);
+  assert.match(text, /3\. per layer/i);
+  assert.match(text, /Record the choice as a constraint/i);
+  assert.match(text, /constraints: technical, product, legal, hosting, budget, deadlines, stack preferences per layer, and the version policy;/i);
+  assert.match(text, /Before you propose a remote owner or repository name, read the remote host's authenticated identity/i);
+  assert.match(text, /Propose only owners that identity can reach/i);
+  assert.match(text, /Once the constraints and the stack preferences are recorded, write them to `\.apex\/inception\/<run-id>\/reconnaissance\.md` first/i);
+  assert.match(text, /dispatch candidate research children, one per layer or topic, one at a time, in the background/i);
+  assert.match(text, /Each child gets that exact path as input and writes `research\/<topic>\.md`/i);
+  assert.match(text, /candidate options, official sources, the latest stable versions, support status, and compatibility/i);
+  assert.match(text, /summary of at most 15 lines/i);
+  assert.match(text, /Continue the remaining questions meanwhile/i);
+  assert.match(text, /Set phase `architecture` only after every candidate research child has returned/i);
+  assert.match(text, /Complete the findings in `\.apex\/inception\/<run-id>\/reconnaissance\.md`, then set phase `architecture`/i);
 });
 
 test('inception: architecture requires reasoned alternatives, sourced versions, isolated experiments, limits, and a byte-bound approval', () => {
