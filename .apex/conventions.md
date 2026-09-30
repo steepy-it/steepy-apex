@@ -72,6 +72,13 @@ only the current conductor ledger schema and identify unsupported records as inv
   boundaries, flows, design, deploy, a foundational technology) needs a targeted decision and a new
   approval. Foundational choices cite official sources, explicit versions, and a verification date;
   no preset stack.
+- The run pauses at two planned session boundaries, after approval and after bootstrap. At each one
+  it completes the descriptor update, waits for running children, prints the resume note,
+  recommends a new session, and ends the turn. Status stays `active`; it continues in the same
+  session only on the user's explicit request. Children get exact inputs and one exact output file,
+  write their full result there, and return terse status: the four-field shape plus at most 15
+  lines. Every dispatch carries an explicit abstract tier: research and experiments `standard`,
+  bootstrap parts `most-capable`.
 - Helpers verify formats, paths, digests, and receipts; the skill owns dialogue, architecture
   judgement, evidence interpretation, and promotion decisions. A digest makes a change detectable; it
   does not authenticate a person.

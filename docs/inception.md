@@ -32,16 +32,32 @@ what the harness itself can verify — into the project write-up the next phases
 ## Phases
 
 1. **Reconnaissance** — materials, what's real vs. simulated, constraints, goals, the main flows,
-   and the harness's own capabilities (subagents, shell, network, browser).
-2. **Architecture** — two or three alternatives with trade-offs, boundaries and data ownership,
-   observability and error handling, the reused assets, and one **representative path**: the one
-   flow that crosses the agreed boundaries end to end. Other flows stay recorded context.
+   the harness's own capabilities (subagents, shell, network, browser), your stack preferences per
+   layer (what you know, prefer, or avoid) and a version policy; candidate research starts in the
+   background.
+2. **Architecture** — a dialogue over nine stack-neutral decision categories. A real fork gets its
+   own question with alternatives, trade-offs, and a recommendation. A decision with one reasonable
+   answer joins a grouped confirmation you can correct. A category that does not apply is skipped
+   with a reason. The project is written after the dialogue, covering boundaries and data
+   ownership, observability and error handling, the reused assets, and one **representative
+   path**: the one flow that crosses the agreed boundaries end to end. Other flows stay recorded
+   context.
 3. **Research** — every foundational choice (runtime, framework, build tooling, core dependencies)
-   cites its official source, an explicit version, and a verification date. No preset stack.
+   cites its official source, an explicit version, and a verification date. No preset stack. It pins
+   the chosen combination and shows a version review — one table per layer — that you confirm or
+   correct.
 4. **Approval** — you approve the whole project once, before anything is built.
 5. **Bootstrap** — the approved project is actually built and wired together.
 6. **Verification** — every check runs from a clean state and the results are recorded.
 7. **Init** — the run hands off to `init`, which builds the governed hub.
+
+## Three sessions
+
+A run spans three sessions: [reconnaissance → architecture → research → approval], [bootstrap], and
+[verification → init]. At the two planned pauses, after approval and after bootstrap, the run saves
+its state, prints a resume note, recommends a new session, and ends the turn. Say so if you want to
+continue in the same session. Why: a long session carries its whole context into every turn, so a
+fresh session keeps each stage cheap and focused.
 
 ## Approval and the autonomy it grants
 
@@ -73,7 +89,8 @@ not a shortcut around verifying what the project does cover.
 
 A run can be interrupted and picked back up. Resume reads only the exact files the run already
 recorded — the descriptor, whatever it references, and the paths named in the last resume note —
-never by browsing the run's own local directory. An approval that no longer matches its approved
+never by browsing the run's own local directory. A planned pause leaves the run active: invoking
+`inception` in a new session resumes it from the descriptor. An approval that no longer matches its approved
 bytes means something changed after you approved it: that reopens a targeted decision and a new
 approval before bootstrap continues.
 

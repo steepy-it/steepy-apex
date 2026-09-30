@@ -1127,3 +1127,31 @@ test('standards/tests.md keeps the structural-lock inventory at ten skills and f
   assert.match(testsStandard, /fs-access recorder/i, 'must flag the duplicated fs-access recorder');
   assert.match(testsStandard, /`withTemp`\/`put`\/`git`/, 'must flag the duplicated withTemp/put/git helpers');
 });
+
+test('public inception guide names the three sessions, planned pauses, preferences, grouped confirmation, and version review', () => {
+  const guide = readFileSync(join(repoRoot, 'docs', 'inception.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(guide, /## Three sessions/, 'guide must have a Three sessions section');
+  assert.match(guide, /reconnaissance → architecture → research → approval[\s\S]*bootstrap[\s\S]*verification → init/i);
+  assert.match(guide, /planned pauses?[^.]*after approval[^.]*after bootstrap/i);
+  assert.match(guide, /recommends a new session[^.]*ends the turn/i);
+  assert.match(guide, /continue in the same session/i);
+  assert.match(guide, /stack preferences per layer[^.]*version policy/i);
+  assert.match(guide, /grouped confirmation you can correct/i);
+  assert.match(guide, /version review[^.]*one table per layer/i);
+  assert.match(guide, /invoking `inception` in a new session resumes it from the descriptor/i);
+});
+
+test('hub rules lock the planned pauses, exact output file, terse return, and explicit tiers', () => {
+  const conventions = readFileSync(join(repoRoot, '.apex', 'conventions.md'), 'utf8');
+  const section = conventions.match(/## Inception \(pre-hub\)\n([\s\S]*?)(?=\n## |$)/)?.[1];
+  assert.ok(section, 'conventions.md must have an "## Inception (pre-hub)" section');
+  const skills = readFileSync(join(repoRoot, '.apex', 'standards', 'skills.md'), 'utf8');
+  for (const [name, text] of [['conventions', section], ['skills standard', skills]]) {
+    const flat = text.replace(/\s+/g, ' ');
+    assert.match(flat, /two planned session boundaries[^.]*after approval[^.]*after bootstrap/i, `${name} must name the two pauses`);
+    assert.match(flat, /status (?:stays )?`active`/i, `${name} must keep status active`);
+    assert.match(flat, /one exact output file/i, `${name} must name the exact output file`);
+    assert.match(flat, /at most 15 lines/i, `${name} must cap the return`);
+    assert.match(flat, /research and experiments `standard`[^.]*bootstrap parts `most-capable`/i, `${name} must name the tiers`);
+  }
+});
