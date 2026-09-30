@@ -23,8 +23,8 @@ or project bootstrap. Its state lives only in the local area `.apex/inception/`.
 - Talk with the user one question at a time, with numbered options and a recommendation. Use your
   harness's question UI if it has one.
 - The user approves the whole project once, before bootstrap. After that, work on your own inside
-  the approved scope, except at the planned pauses (see "Session boundaries"). A substantial change needs a targeted decision and a new approval of the
-  changed bytes.
+  the approved scope, except at the planned pauses (see "Session boundaries"). A substantial change
+  needs a targeted decision and a new approval of the changed bytes.
 - Stay stack-agnostic. Propose no preset stack. Back every foundational choice with the official
   sources you consulted.
 - Under `.apex/inception/**`, read only the descriptor (through `inspect`) and the exact run files
@@ -109,7 +109,7 @@ before you work on the new phase.
 
 | Descriptor phase | Load | Leave when |
 |---|---|---|
-| `reconnaissance` | `reconnaissance.md` | materials, facts vs simulations, constraints, stack preferences, the version policy, goals, flows, harness, and Git policy are recorded |
+| `reconnaissance` | `reconnaissance.md` | materials, facts vs simulations, constraints, stack preferences, the version policy, goals, flows, harness, and Git policy are recorded, and every candidate research child has returned |
 | `architecture` | `architecture.md` | every applicable decision category is decided, then the project documents describe the architecture, the reuse, and the representative path |
 | `research` | `architecture.md` | the chosen combination is pinned, every foundational choice has an official source, a version, and a date, and the user confirmed the version review |
 | `approval` | `architecture.md` | the user approved the whole project and the approval is bound |

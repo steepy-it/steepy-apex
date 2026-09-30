@@ -510,6 +510,7 @@ test('inception: bootstrap dispatches one child per part in dependency order and
   assert.match(text, /one child per part.*?one at a time, in dependency order: the producer of a contract comes before its consumers/i);
   assert.match(text, /exact paths to[^.]*approved project documents[^.]*`research\/version-review\.md`[^.]*`\.apex\/inception\/<run-id>\/bootstrap\/<part>\.md`/i);
   assert.match(text, /Put the "Build it" rules that apply to its part in its brief/i);
+  assert.match(text, /approved project's confirmed version tables are the version authority\. The child pins those versions; where `research\/version-review\.md` differs, the approved project wins/i);
   assert.match(text, /child writes code only under its part's path, and writes its report/i);
   assert.match(text, /You keep the bootstrap log, the checkpoints, the commits, the descriptor, and the dialogue with the user/i);
   assert.match(text, /Before each child, append its intent to the log\. After it, append the outcome, run the checks, record and bind a checkpoint, and commit when the Git policy allows/i);

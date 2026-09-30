@@ -11,6 +11,8 @@ comes before its consumers.
 
 - Give each child exact paths to the approved project documents, the version research
   `research/version-review.md`, and its report path `.apex/inception/<run-id>/bootstrap/<part>.md`.
+- The approved project's confirmed version tables are the version authority. The child pins those
+  versions; where `research/version-review.md` differs, the approved project wins.
 - Put the "Build it" rules that apply to its part in its brief.
 - The child writes code only under its part's path, and writes its report.
 - You keep the bootstrap log, the checkpoints, the commits, the descriptor, and the dialogue with

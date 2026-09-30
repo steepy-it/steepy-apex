@@ -53,10 +53,10 @@ what the harness itself can verify — into the project write-up the next phases
 
 ## Three sessions
 
-A run spans three sessions: [reconnaissance → architecture → research → approval], [bootstrap], and
-[verification → init]. At the two planned pauses, after approval and after bootstrap, the run saves
-its state, prints a resume note, recommends a new session, and ends the turn. Say so if you want to
-continue in the same session. Why: a long session carries its whole context into every turn, so a
+A run spans three sessions: [reconnaissance → architecture → research → approval], [bootstrap],
+and [verification → init]. At the two planned pauses, after approval and after bootstrap, the run
+saves its state, prints a resume note, recommends a new session, and ends the turn. Say so if you
+want to continue in the same session. Why: a long session carries its whole context into every turn, so a
 fresh session keeps each stage cheap and focused.
 
 ## Approval and the autonomy it grants
@@ -90,9 +90,9 @@ not a shortcut around verifying what the project does cover.
 A run can be interrupted and picked back up. Resume reads only the exact files the run already
 recorded — the descriptor, whatever it references, and the paths named in the last resume note —
 never by browsing the run's own local directory. A planned pause leaves the run active: invoking
-`inception` in a new session resumes it from the descriptor. An approval that no longer matches its approved
-bytes means something changed after you approved it: that reopens a targeted decision and a new
-approval before bootstrap continues.
+`inception` in a new session resumes it from the descriptor. An approval that no longer matches
+its approved bytes means something changed after you approved it: that reopens a targeted
+decision and a new approval before bootstrap continues.
 
 ## Handing off to init
 

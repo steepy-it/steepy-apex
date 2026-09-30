@@ -60,9 +60,9 @@ Record the choice as a constraint.
 
 ## Questions
 
-Ask in dependency order: materials → real vs simulated → goals and flows → constraints → stack and
-skills → preserved behaviors → harness and Git. An answer can change the next question, so never
-batch dependent questions.
+Ask in dependency order: materials → real vs simulated → goals and flows → constraints → stack
+and skills → preserved behaviors → harness and Git. An answer can change the next question, so
+never batch dependent questions.
 
 ## Candidate research
 

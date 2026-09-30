@@ -34,8 +34,8 @@ one document or several; the approval lists each one.
   architecture of each part. Never batch dependent questions.
 - Write the project documents after the dialogue, not before. Record how each decision was made:
   asked, grouped default, or not applicable. Record why each one was accepted or rejected.
-- The documents then define boundaries and responsibilities, data and its owner, contracts between parts, and the
-  patterns to follow.
+- The documents then define boundaries and responsibilities, data and its owner, contracts between
+  parts, and the patterns to follow.
 - Define observability (logs, metrics, traces, health checks) and error handling (what fails, how it
   surfaces, how it recovers).
 - Choose the representative path: one flow that crosses the agreed boundaries end to end. Other flows
@@ -47,6 +47,8 @@ one document or several; the approval lists each one.
 ## Research
 
 After the dialogue, pin and verify the chosen combination.
+
+Pinning runs in a research child (`SKILL.md` → "Child agents"). These lookups are its brief.
 
 For each foundational choice — runtime, framework, build tooling, generators, core dependencies:
 
@@ -61,7 +63,7 @@ An experiment before approval (a spike to check compatibility) runs isolated, in
 directory outside the repository, and the project records it as an experiment with its result. It
 never becomes the bootstrap.
 
-Pinning runs in a research child (`SKILL.md` → "Child agents"). Give it the exact project document
+Give the child the exact project document
 paths and the output path `research/version-review.md`. It writes a `## Version review` section
 there with one table per layer and exactly these six columns, in order:
 
@@ -85,8 +87,9 @@ State the limits explicitly: what the project does not cover and what is still u
    path, verification plan, deploy choice, and limits. Name each document. List the grouped
    defaults and every choice you made on your own.
 3. No foundational choice reaches the approval unless it was asked in the dialogue or confirmed as a
-   grouped default. If the documents contain one that was not, ask it first. Ask for one explicit approval of the whole project. A requested change edits the documents; then
-   present what changed.
+   grouped default. If the documents contain one that was not, ask it first.
+   Ask for one explicit approval of the whole project. A requested change edits the documents;
+   then present what changed.
 4. On explicit approval, write the approval record with the digests of the exact approved bytes
    (`protocol.md` → "Approval record"). In one update, bind it and set phase `bootstrap`.
 5. Pause (`SKILL.md` → "Session boundaries").
