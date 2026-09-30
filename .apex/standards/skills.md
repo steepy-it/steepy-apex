@@ -50,8 +50,7 @@
 - General workflow subagent dispatch is conditional on the harness (D1): with a task/subagent tool, reviewers/explorers use neutral roles and implementers use the bound `<surface>-agent`, one in flight at a time;
   otherwise the orchestrator runs the prompt inline and records degradation. Prompt templates use the fenced `Subagent (...):` schema, write full reports to files, and return terse status.
   Gear-4 is the exception: its packaged controller selects a supported headless runner and dispatches the loop prompts; runner-unavailable fails closed without inline degradation.
-- Prompt templates carry an abstract tier in `model:` (`standard`, `most-capable`, or the Gear-4 controller's `[MODEL_TIER]` placeholder); the dispatching skill, orchestrator, or Gear-4 controller translates it to a concrete available model.
-  Never paste a concrete model id into a real dispatch.
+- Prompt templates carry an abstract tier in `model:` (`standard`, `most-capable`, or the Gear-4 controller's `[MODEL_TIER]` placeholder). At dispatch, the skill or orchestrator selects a concrete available model through the harness's native parameter, or selects a registered agent with the required model. An abstract tier is never passed as a native model identifier unless that harness explicitly supports it. When per-dispatch selection is unavailable, use the session model and record the degradation in the phase's report or ledger. Reusable prompts keep abstract tiers so they remain portable across harnesses.
 - Work-input access is default-deny for every workflow phase. An active handoff grants only its
   exact work-artifact paths; a pathless invocation may perform bounded workflow-header recovery
   discovery only, and stops for a human handoff if it cannot recover one unambiguously. A user may
@@ -86,7 +85,7 @@
   independently testable task, and stops before mutation for an optional plan when decomposition is
   required. Resume requires exact `progress-ledger` and `task-results` capabilities; fresh-run output
   creation remains allowed when neither derived artifact exists.
-  Skills route abstract tiers; adapters, not skill prose, apply or degrade concrete models.
+  Skills route abstract tiers. Headless controllers use the adapters to apply or degrade concrete models; interactive orchestration uses the native model or agent selection described above, with the same explicit degradation rule.
 - The chain skills carry one byte-identical workflow-header grammar whose phase domain is `phase: <brainstorm|plan|implement|review|loop-engineer|goal-contract>`; `goal-contract` is the producer-facing Gear-4 identity consumed by `loop-engineer` and checked by Gear-4 `review` provenance.
 - Manual drive and legacy autopilot protocol 1 artifact-first child results emitted by the implement controller and its three prompt templates share this exact ordered four-field shape: `status`, `artifact`, `changed-paths`, `signals`. Status domains and placeholder text are role-specific and are not byte-identical. Implementer and fix roles use `DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT`. Reviewer roles use `APPROVED | ISSUES_FOUND | BLOCKED | NEEDS_CONTEXT`.
   Each emitting prompt may specialize placeholder text while retaining those field names in that order. The loop prompt templates use closed artifact-first envelopes in the exact ordered four-field shape; their immutable reports carry detail, while the final reviewer returns `status: DONE` plus `signals: approved | issues-found`.
@@ -131,8 +130,8 @@
 ## Anti-patterns
 - Specs and plans live only under `.apex/work/` (gitignored local artifacts) — never register
   them in `_INDEX.md` or create a specs/plans sub-index.
-- Never omit `model:` when dispatching a subagent — an omitted model inherits the expensive
-  session model and defeats the tier policy.
+- Never silently inherit the session model: select the model or registered agent explicitly when
+  the harness supports it, and record the session-model fallback when it does not.
 - Never hardcode a concrete model id in a reviewer prompt — map tier → a concrete model at
   dispatch time.
 - Repair mode stays non-destructive — create-only / append; never overwrite an existing hub file.
