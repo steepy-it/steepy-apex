@@ -581,6 +581,26 @@ export function correlateAttempt(expectedAttempt, event) {
   return event;
 }
 
+// Shared by finite controllers whose event domains and reducers remain separate.
+export function assertNextWorkflowSequence(lastSequence, event) {
+  if (!Number.isSafeInteger(lastSequence) || lastSequence < 0) {
+    fail('INVALID_SEQUENCE', 'last sequence must be a non-negative safe integer');
+  }
+  assertCorrelationEvent(event);
+  assertPositiveInteger(event.sequence, 'event sequence');
+  const expectedSequence = lastSequence + 1;
+  if (event.sequence < expectedSequence) {
+    if (event.sequence === lastSequence) {
+      fail('DUPLICATE_IDENTITY', `duplicate sequence identity ${event.sequence}`);
+    }
+    fail('REORDERED_SEQUENCE', `reordered sequence identity ${event.sequence}; expected ${expectedSequence}`);
+  }
+  if (event.sequence > expectedSequence) {
+    fail('TRUNCATED_STREAM', `truncated stream before event ${event.sequence}; expected sequence ${expectedSequence}`);
+  }
+  return event;
+}
+
 const PHASE_WORKFLOW_KINDS = new Set([
   'OBSERVED',
   'BASELINE',
@@ -906,22 +926,7 @@ function advancedState(state, event, patch = {}) {
 }
 
 function validateSequenceAndCorrelation(state, event) {
-  const expectedSequence = state.lastSequence + 1;
-  if (event.sequence < expectedSequence) {
-    if (event.sequence === state.lastSequence) {
-      fail('DUPLICATE_IDENTITY', `duplicate sequence identity ${event.sequence}`);
-    }
-    fail(
-      'REORDERED_SEQUENCE',
-      `reordered sequence identity ${event.sequence}; expected ${expectedSequence}`,
-    );
-  }
-  if (event.sequence > expectedSequence) {
-    fail(
-      'TRUNCATED_STREAM',
-      `truncated stream before event ${event.sequence}; expected sequence ${expectedSequence}`,
-    );
-  }
+  assertNextWorkflowSequence(state.lastSequence, event);
   if (state.runId === null) {
     if (event.event !== 'RUN_STARTED') {
       fail('IMPOSSIBLE_TRANSITION', 'first event must be RUN_STARTED');

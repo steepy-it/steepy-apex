@@ -7,6 +7,7 @@ import {
   WORKFLOW_EVENT_SCHEMA_VERSION,
   WORKFLOW_MODES,
   classifyWorkflowStart,
+  assertNextWorkflowSequence,
   classifyCommitReconciliation,
   correlateAttempt,
   correlateRun,
@@ -32,6 +33,12 @@ const BASELINE = 'a'.repeat(40);
 const COMMIT = 'b'.repeat(40);
 const SECOND_COMMIT = 'c'.repeat(40);
 const TIMESTAMP = '2026-09-03T10:00:00.000Z';
+
+test('shared sequence primitive rejects duplicate and truncated identities without changing Gear 4 domain', () => {
+  assert.equal(assertNextWorkflowSequence(0, { sequence: 1 }).sequence, 1);
+  assert.throws(() => assertNextWorkflowSequence(1, { sequence: 1 }), /duplicate sequence/u);
+  assert.throws(() => assertNextWorkflowSequence(1, { sequence: 3 }), /truncated stream/u);
+});
 
 function envelope(event, fields = {}, sequence = 1) {
   return {
