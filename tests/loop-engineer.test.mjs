@@ -2353,6 +2353,10 @@ test('CLI streaming persists raw evidence while the child is alive and leaves re
     );
     assert.equal(result.status, 0, JSON.stringify(result));
     assert.match(result.output, /status: DONE/u);
+    assert.deepEqual(result.process, { status: 0, signal: null });
+    assert.equal(result.transport.error, null);
+    assert.equal(result.terminal.payload, result.output);
+    assert.deepEqual(result.capture, { persisted: true, error: null });
     assert.match(readWorkPath(repo, rawPath, { family: 'runner-raw', encoding: 'utf8' }), /item\.completed/u);
     assert.ok(readWorkPath(repo, readablePath, { family: 'runner-log' }).length > 0);
   } finally {
