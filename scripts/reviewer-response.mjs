@@ -241,6 +241,23 @@ function readEvidence(root, state) {
   const result = corrected === null ? original : validateResult(corrected, baseline, original);
   return { baseline, original, reserved, corrected, result };
 }
+// The correction role receives an original receipt only after the gate has
+// replayed its baseline, original result, and consumed one-shot reservation.
+// Re-observing here also binds the source and both review artifacts before a
+// context manifest grants the role any read capability.
+export function inspectCorrectionEvidence(root, state) {
+  const evidence = readEvidence(root, state);
+  if (evidence.baseline.version !== 5 || evidence.original.status !== 'REPAIRABLE'
+    || evidence.reserved === null) throw new Error('v3 correction requires a consumed gate reservation');
+  if (!equal(observe(root, state, evidence.baseline), evidence.original.observation)) {
+    throw new Error('review evidence changed before correction context');
+  }
+  if (evidence.baseline.handoff !== null && handoffDetails(root, evidence.baseline.config.plan,
+    evidence.baseline.config.index, state).digest !== evidence.baseline.handoff) {
+    throw new Error('review handoff evidence changed before correction context');
+  }
+  return { config: evidence.baseline.config, captured: evidence.corrected !== null };
+}
 export function reserveRepair(root, state) {
   const evidence = readEvidence(root, state);
   if (evidence.original.status !== 'REPAIRABLE') throw new Error('review response is not repairable');

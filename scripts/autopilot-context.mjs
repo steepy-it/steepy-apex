@@ -14,6 +14,7 @@ import {
 } from './stable-paths.mjs';
 import { parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
 import { parseTaskResultProjection } from './task-results.mjs';
+import { inspectCorrectionEvidence } from './reviewer-response.mjs';
 
 export const CONTEXT_MANIFEST_SCHEMA_VERSION = 1;
 export const MODEL_TIERS = Object.freeze(['cheap', 'standard', 'most-capable']);
@@ -716,20 +717,23 @@ function correctionInputs(input, final) {
   if (input.reportPath !== report || input.issuePath !== issues) throw new Error('correction report or issue path does not bind original receipt');
   assertCorrectionReceipt(root, receipt, { runId: input.runId, attempt: input.attempt, task: final ? 'final' : String(input.task), report, issues });
   const paths = [receipt, report, ...(existsSync(join(root, issues)) ? [issues] : [])];
-  return paths.map((path) => required(root, path, path === receipt ? 'original reviewer receipt' : path === report ? PURPOSES.report : PURPOSES.issue));
+  return paths.map((path) => {
+    const family = path === receipt ? 'review-guard' : 'review-artifact';
+    const bytes = readWorkPath(root, path, { expect: 'work-output', family });
+    return { path, purpose: path === receipt ? 'original reviewer receipt' : path === report ? PURPOSES.report : PURPOSES.issue,
+      read: 'full', bytes: bytes.length, available: true };
+  });
 }
 
-function assertCorrectionReceipt(root, path, binding) {
-  let original;
-  try { original = JSON.parse(readWorkPath(root, path, { expect: 'work-output', family: 'review-guard', encoding: 'utf8' })); }
-  catch (error) { throw new Error(`cannot read original reviewer receipt: ${error.message}`); }
-  const config = original?.config;
-  if (original?.version !== 5 || original.status !== 'REPAIRABLE' || original.accepted !== false
-    || config?.reviewerResponseProtocol !== 3 || config.runId !== binding.runId
+function assertCorrectionReceipt(root, path, binding, { allowCaptured = false } = {}) {
+  const state = path.slice(0, -'-original.json'.length);
+  const { config, captured } = inspectCorrectionEvidence(root, state);
+  if (config.reviewerResponseProtocol !== 3 || config.runId !== binding.runId
     || config.attempt !== binding.attempt || config.task !== binding.task
     || config.report !== binding.report || config.issues !== binding.issues) {
     throw new Error('original reviewer receipt does not bind correction run, scope, or artifacts');
   }
+  if (captured && !allowCaptured) throw new Error('captured correction must replay without another dispatch');
 }
 
 export function buildTaskReviewCorrectionManifest(input) {
@@ -923,7 +927,7 @@ export function buildPhaseManifest(role, input) {
   return builders[role](input);
 }
 
-function validateInputEntry(entry, index, list, repoRoot) {
+function validateInputEntry(entry, index, list, repoRoot, confinedFamily = null) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
     throw new Error(`${list}[${index}] must be an object`);
   }
@@ -933,6 +937,13 @@ function validateInputEntry(entry, index, list, repoRoot) {
   assertSafeLine(entry.purpose, `${list}[${index}].purpose`);
   const expectedRead = requiredEntry ? 'full' : 'on-demand';
   if (entry.read !== expectedRead) throw new Error(`${list}[${index}].read must be '${expectedRead}'`);
+  if (confinedFamily !== null) {
+    const bytes = readWorkPath(repoRoot, entry.path, { expect: 'work-output', family: confinedFamily });
+    if (entry.available !== true || entry.bytes !== bytes.length) {
+      throw new Error(`${list}[${index}] does not match confined work artifact`);
+    }
+    return { path: entry.path, purpose: entry.purpose, read: expectedRead, bytes: bytes.length, available: true };
+  }
   const absolute = join(repoRoot, entry.path);
   const available = existsSync(absolute) && statSync(absolute).isFile();
   if (requiredEntry && !available) throw new Error(`required input does not exist: ${entry.path}`);
@@ -975,7 +986,10 @@ export function validateContextManifest(manifest, { repoRoot }) {
   }
   const objective = assertSafeLine(manifest.objective, 'objective');
   if (!Array.isArray(manifest.required) || !Array.isArray(manifest.onDemand)) throw new Error('required and onDemand must be lists');
-  const requiredInputs = manifest.required.map((entry, index) => validateInputEntry(entry, index, 'required', root));
+  const correction = role === 'task-review-correction' || role === 'final-review-correction';
+  if (correction && manifest.onDemand.length !== 0) throw new Error('correction manifest has no on-demand inputs');
+  const requiredInputs = manifest.required.map((entry, index) => validateInputEntry(entry, index, 'required', root,
+    correction ? index === 0 ? 'review-guard' : 'review-artifact' : null));
   const onDemandInputs = manifest.onDemand.map((entry, index) => validateInputEntry(entry, index, 'onDemand', root));
   const outputs = safePaths(manifest.outputs, 'output path');
   const modelTier = safeTier(manifest.modelTier);
@@ -1019,7 +1033,7 @@ export function validateContextManifest(manifest, { repoRoot }) {
     if (requiredInputs.length < 2 || requiredInputs.length > 3 || requiredInputs[1].path !== report
       || requiredInputs.length === 3 && requiredInputs[2].path !== issues) throw new Error('correction inputs must be original receipt and assigned report/issues only');
     assertCorrectionReceipt(root, receipt, { runId: normalized.runId, attempt: normalized.attempt,
-      task: final ? 'final' : String(task), report, issues });
+      task: final ? 'final' : String(task), report, issues }, { allowCaptured: true });
   }
   return normalized;
 }

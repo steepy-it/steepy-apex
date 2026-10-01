@@ -33,6 +33,7 @@ import {
   writeContextManifest,
 } from '../scripts/autopilot-context.mjs';
 import { phasePrompt } from '../scripts/autopilot.mjs';
+import { beginReview, checkReview, reserveRepair } from '../scripts/reviewer-response.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const scriptPath = join(here, '..', 'scripts', 'autopilot-context.mjs');
@@ -52,6 +53,37 @@ function materialize(t) {
   t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
   seedFixture(repoRoot);
   return repoRoot;
+}
+
+function correctionGateFixture(t) {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'steepy-correction-context-'));
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  git('init'); git('config', 'user.email', 'test@example.com'); git('config', 'user.name', 'Test');
+  writeFileSync(join(repoRoot, '.gitignore'), '.apex/work/\n');
+  writeFileSync(join(repoRoot, 'code.js'), 'committed source\n');
+  git('add', '.'); git('commit', '-m', 'base');
+  const dir = '.apex/work/tasks/context-efficient';
+  mkdirSync(join(repoRoot, dir), { recursive: true });
+  const make = (task) => {
+    const stem = task === 'final' ? 'final' : `task-${task}`;
+    const state = `${dir}/${stem}-review-guard-attempt-2-iteration-1`;
+    const report = `${dir}/${stem}-review.md`;
+    const issues = `${dir}/${task === 'final' ? 'final-review' : stem}-issues.md`;
+    const config = { runId: base.runId, attempt: 2, iteration: 1, task, report, issues, reviewerResponseProtocol: 3 };
+    beginReview(repoRoot, state, config);
+    writeFileSync(join(repoRoot, report), 'Review report.\n');
+    writeFileSync(join(repoRoot, issues), 'Frozen finding.\n');
+    assert.equal(checkReview(repoRoot, state, 'signals: review:critical\nstatus: ISSUES_FOUND\n').status, 'REPAIRABLE');
+    reserveRepair(repoRoot, state);
+    const input = { ...base, repoRoot, attempt: 2, originalReceiptPath: `${state}-original.json`, reportPath: report,
+      issuePath: issues, ...(task === 'final' ? {} : { task: Number(task) }) };
+    return { state, report, issues, input };
+  };
+  return { repoRoot, dir, make };
 }
 
 const base = {
@@ -94,29 +126,14 @@ test('implementer manifest records bytes, preserves order, and keeps upstream ar
 });
 
 test('correction manifests expose only the bound original receipt and frozen review artifacts', (t) => {
-  const repoRoot = materialize(t);
-  const dir = '.apex/work/tasks/context-efficient';
-  const taskReceipt = `${dir}/task-1-review-guard-attempt-2-iteration-1-original.json`;
-  const taskReport = `${dir}/task-1-review.md`;
-  const taskIssues = `${dir}/task-1-issues.md`;
-  const finalReceipt = `${dir}/final-review-guard-attempt-2-iteration-1-original.json`;
-  const finalReport = `${dir}/final-review.md`;
-  const finalIssues = `${dir}/final-review-issues.md`;
-  for (const path of [taskReceipt, taskReport, taskIssues, finalReceipt, finalReport, finalIssues]) {
-    mkdirSync(dirname(join(repoRoot, path)), { recursive: true });
-    writeFileSync(join(repoRoot, path), `${path}\n`);
-  }
-  const receipt = (task, report, issues) => JSON.stringify({ version: 5, status: 'REPAIRABLE', accepted: false,
-    config: { runId: base.runId, attempt: 2, task, report, issues, reviewerResponseProtocol: 3 } });
-  writeFileSync(join(repoRoot, taskReceipt), receipt('1', taskReport, taskIssues));
-  writeFileSync(join(repoRoot, finalReceipt), receipt('final', finalReport, finalIssues));
-  const task = buildTaskReviewCorrectionManifest({ ...base, repoRoot, task: 1, attempt: 2,
-    originalReceiptPath: taskReceipt, reportPath: taskReport, issuePath: taskIssues });
-  const final = buildFinalReviewCorrectionManifest({ ...base, repoRoot, attempt: 2,
-    originalReceiptPath: finalReceipt, reportPath: finalReport, issuePath: finalIssues });
+  const { repoRoot, make } = correctionGateFixture(t);
+  const taskGate = make('1');
+  const finalGate = make('final');
+  const task = buildTaskReviewCorrectionManifest(taskGate.input);
+  const final = buildFinalReviewCorrectionManifest(finalGate.input);
   for (const [manifest, role, paths] of [
-    [task, 'task-review-correction', [taskReceipt, taskReport, taskIssues]],
-    [final, 'final-review-correction', [finalReceipt, finalReport, finalIssues]],
+    [task, 'task-review-correction', [taskGate.input.originalReceiptPath, taskGate.report, taskGate.issues]],
+    [final, 'final-review-correction', [finalGate.input.originalReceiptPath, finalGate.report, finalGate.issues]],
   ]) {
     assert.equal(manifest.scope.role, role);
     assert.deepEqual(manifest.required.map((entry) => entry.path), paths);
@@ -128,10 +145,80 @@ test('correction manifests expose only the bound original receipt and frozen rev
     assert.deepEqual(validateContextManifest(manifest, { repoRoot }), manifest);
     assert.throws(() => validateContextManifest({ ...manifest, testCommand: 'npm test' }, { repoRoot }), /correction manifest/);
   }
-  assert.throws(() => buildTaskReviewCorrectionManifest({ ...base, repoRoot, task: 1, attempt: 2,
-    originalReceiptPath: finalReceipt, reportPath: taskReport, issuePath: taskIssues }), /receipt|task/);
-  assert.throws(() => buildFinalReviewCorrectionManifest({ ...base, repoRoot, attempt: 2,
-    originalReceiptPath: taskReceipt, reportPath: finalReport, issuePath: finalIssues }), /receipt|final/);
+  assert.throws(() => buildTaskReviewCorrectionManifest({ ...taskGate.input, originalReceiptPath: finalGate.input.originalReceiptPath }), /receipt|task/);
+  assert.throws(() => buildFinalReviewCorrectionManifest({ ...finalGate.input, originalReceiptPath: taskGate.input.originalReceiptPath }), /receipt|final/);
+});
+
+test('correction manifests require a consumed valid reservation and frozen artifacts', (t) => {
+  const { repoRoot, make } = correctionGateFixture(t);
+  const gate = make('1');
+  const build = () => buildTaskReviewCorrectionManifest(gate.input);
+  const manifest = build();
+  const reservedPath = `${gate.state}-reserved.json`;
+  const reserved = readFileSync(join(repoRoot, reservedPath));
+  rmSync(join(repoRoot, reservedPath));
+  assert.throws(build, /reservation|reserved|missing/);
+  assert.throws(() => validateContextManifest(manifest, { repoRoot }), /reservation|reserved|missing/);
+  writeFileSync(join(repoRoot, reservedPath), reserved);
+  const tampered = JSON.parse(reserved);
+  tampered.budget = 2;
+  writeFileSync(join(repoRoot, reservedPath), JSON.stringify(tampered));
+  assert.throws(build, /reservation|correlation|budget/);
+  writeFileSync(join(repoRoot, reservedPath), reserved);
+  const originalPath = gate.input.originalReceiptPath;
+  const original = readFileSync(join(repoRoot, originalPath));
+  writeFileSync(join(repoRoot, originalPath), JSON.stringify({ version: 5, status: 'REPAIRABLE', accepted: false,
+    config: { runId: base.runId, attempt: 2, task: '1', report: gate.report, issues: gate.issues, reviewerResponseProtocol: 3 } }));
+  assert.throws(build, /review|evidence|schema|observation/);
+  writeFileSync(join(repoRoot, originalPath), original);
+  const report = readFileSync(join(repoRoot, gate.report));
+  writeFileSync(join(repoRoot, gate.report), 'Drifted review.\n');
+  assert.throws(build, /drift|changed|review/);
+  assert.throws(() => validateContextManifest(manifest, { repoRoot }), /drift|changed|review|confined/);
+  writeFileSync(join(repoRoot, gate.report), report);
+  writeFileSync(join(repoRoot, gate.issues), 'Drifted finding.\n');
+  assert.throws(build, /drift|changed|review/);
+  assert.throws(() => validateContextManifest(manifest, { repoRoot }), /drift|changed|review|confined/);
+});
+
+for (const target of ['report', 'issues', 'run-ancestor', 'baseline', 'original', 'reserved']) {
+  test(`correction manifest refuses linked ${target} before publication`, (t) => {
+    const { repoRoot, dir, make } = correctionGateFixture(t);
+    const gate = make('1');
+    const manifest = buildTaskReviewCorrectionManifest(gate.input);
+    const outside = join(repoRoot, '..', `steepy-correction-outside-${Date.now()}-${Math.random()}`);
+    t.after(() => rmSync(outside, { recursive: true, force: true }));
+    if (target === 'run-ancestor') {
+      cpSync(join(repoRoot, dir), outside, { recursive: true });
+      rmSync(join(repoRoot, dir), { recursive: true });
+      symlinkSync(outside, join(repoRoot, dir));
+    } else {
+      const path = target === 'baseline' ? `${gate.state}-baseline.json`
+        : target === 'reserved' ? `${gate.state}-reserved.json`
+          : target === 'original' ? `${gate.state}-original.json` : gate[target];
+      writeFileSync(outside, readFileSync(join(repoRoot, path)));
+      rmSync(join(repoRoot, path));
+      symlinkSync(outside, join(repoRoot, path));
+    }
+    assert.throws(() => buildTaskReviewCorrectionManifest(gate.input), /symlink|unsafe|review|changed|work path/);
+    assert.throws(() => validateContextManifest(manifest, { repoRoot }), /symlink|unsafe|review|changed|work path/);
+  });
+}
+
+test('captured correction stays verifiable without another correction dispatch', (t) => {
+  const { repoRoot, make } = correctionGateFixture(t);
+  const gate = make('1');
+  const manifest = buildTaskReviewCorrectionManifest(gate.input);
+  assert.equal(checkReview(repoRoot, gate.state, 'status: ISSUES_FOUND\nsignals: review:critical\n', true).accepted, true);
+  assert.throws(() => buildTaskReviewCorrectionManifest(gate.input), /captured correction.*without another dispatch/);
+  assert.deepEqual(validateContextManifest(manifest, { repoRoot }), manifest);
+  const correctedPath = `${gate.state}-corrected.json`;
+  const outside = join(repoRoot, '..', `steepy-correction-outside-${Date.now()}-${Math.random()}`);
+  t.after(() => rmSync(outside, { force: true }));
+  writeFileSync(outside, readFileSync(join(repoRoot, correctedPath)));
+  rmSync(join(repoRoot, correctedPath));
+  symlinkSync(outside, join(repoRoot, correctedPath));
+  assert.throws(() => validateContextManifest(manifest, { repoRoot }), /symlink|unsafe|review|work path/);
 });
 
 test('validator rejects traversal, absolute paths, unknown roles, and missing required inputs', (t) => {
