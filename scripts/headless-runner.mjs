@@ -202,34 +202,9 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
       return;
     }
     const { rawPath, readablePath } = setup;
-    let raw;
-    try {
-      const rawFamily = confinedLogFamily(rawPath, RAW_FAMILIES, 'raw');
-      const fd = openWorkPathFd(cwd, rawPath, {
-        expect: 'work-output', family: rawFamily, disposition: 'create-new', mode: 0o600,
-      });
-      raw = durableFdDestination(fd, setup.rawWrite);
-    } catch (error) {
-      const captureError = new Error(`raw-open failed: ${error.message}`);
-      resolveRun(runResult({
-        processResult: { status: null, signal: null }, transportError: captureError,
-        terminal: null, captureError,
-      }));
-      return;
-    }
-
+    let raw = null;
     let degraded = false;
     let readable = null;
-    try {
-      const readableFamily = confinedLogFamily(readablePath, LOG_FAMILIES, 'readable');
-      const fd = openWorkPathFd(cwd, readablePath, {
-        expect: 'work-output', family: readableFamily, disposition: 'create-new', mode: 0o600,
-      });
-      readable = durableFdDestination(fd);
-    } catch {
-      degraded = true;
-    }
-
     const { liveStdout, liveStderr, abortSignal } = setup;
     let bridgeError = null;
     let captureError = null;
@@ -242,6 +217,7 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
     let abortCleanup = null;
     let interrupted = null;
     let stopForwarding = () => {};
+    const sourceSubscriptions = [];
     const { killGraceMs, processGroupConvergenceMs, processGroupProbe, processGroupSignal } = setup;
     const requestStop = (error, captureFailure = true) => {
       if (stopRequested || settled) return;
@@ -256,24 +232,73 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
         }, killGraceMs);
       }
     };
-    const writer = new BoundedMultiDestinationWriter({
-      destinations: [
-        { name: 'raw', role: 'raw', stream: raw },
-        ...(readable === null ? [] : [{ name: 'readable', role: 'readable', stream: readable }]),
-        { name: 'liveStdout', role: 'liveStdout', stream: liveStdout },
-        { name: 'liveStderr', role: 'liveStderr', stream: liveStderr },
-      ],
-      ...(setup.writerMaxPendingBytes === undefined
-        ? {} : { maxPendingBytes: setup.writerMaxPendingBytes }),
-      ...(setup.drainTimeoutMs === undefined ? {} : { drainTimeoutMs: setup.drainTimeoutMs }),
-      onBlockingError: requestStop,
-      onDegradation() { degraded = true; },
+    const subscriptions = [];
+    const liveDestination = (stream) => ({
+      write(chunk, callback) { return stream.write(chunk, callback); },
+      on(event, listener) {
+        const subscribe = stream.on;
+        if (typeof subscribe !== 'function') return this;
+        const unsubscribe = stream.removeListener ?? stream.off;
+        let forward = listener;
+        const relay = (...args) => forward?.(...args);
+        // Record before calling user code: an emitter may attach and then throw.
+        subscriptions.push(() => {
+          forward = null;
+          if (typeof unsubscribe === 'function') unsubscribe.call(stream, event, relay);
+        });
+        subscribe.call(stream, event, relay);
+        return this;
+      },
     });
     let stderrDiagnostic = '';
     const framers = {
       stdout: new LineFramer({ sourceStream: 'stdout' }),
       stderr: new LineFramer({ sourceStream: 'stderr' }),
     };
+    let writer = null;
+    const closeAll = () => {
+      writer?.terminate();
+      for (const unsubscribe of sourceSubscriptions.splice(0)) {
+        try { unsubscribe(); } catch { degraded = true; }
+      }
+      for (const unsubscribe of subscriptions.splice(0)) {
+        try { unsubscribe(); } catch { degraded = true; }
+      }
+      try { raw?.close(); } catch (error) { captureError ??= error; bridgeError ??= error; }
+      try { readable?.close(); } catch { degraded = true; }
+    };
+    try {
+      writer = new BoundedMultiDestinationWriter({
+        destinations: [
+          { name: 'raw', role: 'raw', stream: {
+            on() { return this; },
+            write(chunk, callback) { return raw.write(chunk, callback); },
+          } },
+          { name: 'readable', role: 'readable', stream: {
+            on() { return this; },
+            write(chunk, callback) {
+              if (readable !== null) return readable.write(chunk, callback);
+              callback?.();
+              return true;
+            },
+          } },
+          { name: 'liveStdout', role: 'liveStdout', stream: liveDestination(liveStdout) },
+          { name: 'liveStderr', role: 'liveStderr', stream: liveDestination(liveStderr) },
+        ],
+        ...(setup.writerMaxPendingBytes === undefined
+          ? {} : { maxPendingBytes: setup.writerMaxPendingBytes }),
+        ...(setup.drainTimeoutMs === undefined ? {} : { drainTimeoutMs: setup.drainTimeoutMs }),
+        onBlockingError: requestStop,
+        onDegradation() { degraded = true; },
+      });
+    } catch (error) {
+      closeAll();
+      resolveRun(runResult({
+        processResult: { status: null, signal: null }, transportError: error,
+        terminal: null, captureError: error, degraded,
+      }));
+      return;
+    }
     const consume = (frame, source) => {
       if (bridgeError) return;
       const result = processEventLine({
@@ -303,11 +328,36 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
       }
       if (Object.keys(chunks).length > 0) writer.write(chunks, { source });
     };
-    const closeAll = () => {
-      writer.terminate();
-      try { raw.close(); } catch (error) { captureError ??= error; bridgeError ??= error; }
-      try { readable?.close(); } catch { degraded = true; }
-    };
+    let fd = null;
+    try {
+      const rawFamily = confinedLogFamily(rawPath, RAW_FAMILIES, 'raw');
+      fd = openWorkPathFd(cwd, rawPath, {
+        expect: 'work-output', family: rawFamily, disposition: 'create-new', mode: 0o600,
+      });
+      raw = durableFdDestination(fd, setup.rawWrite);
+      fd = null;
+    } catch (error) {
+      if (fd !== null) try { closeSync(fd); } catch { /* preserve the primary error */ }
+      closeAll();
+      const rawOpenError = new Error(`raw-open failed: ${error.message}`);
+      resolveRun(runResult({
+        processResult: { status: null, signal: null }, transportError: rawOpenError,
+        terminal: null, captureError: rawOpenError, degraded,
+      }));
+      return;
+    }
+    fd = null;
+    try {
+      const readableFamily = confinedLogFamily(readablePath, LOG_FAMILIES, 'readable');
+      fd = openWorkPathFd(cwd, readablePath, {
+        expect: 'work-output', family: readableFamily, disposition: 'create-new', mode: 0o600,
+      });
+      readable = durableFdDestination(fd);
+      fd = null;
+    } catch {
+      if (fd !== null) try { closeSync(fd); } catch { /* readable evidence is optional */ }
+      degraded = true;
+    }
     try {
       child = spawn(setup.cmd, setup.args, {
         cwd, stdio: ['ignore', 'pipe', 'pipe'], shell: false, detached: true,
@@ -347,21 +397,25 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
       process.once('SIGHUP', onSighup);
       for (const sourceStream of ['stdout', 'stderr']) {
         const source = child[sourceStream];
-        source.on('data', (chunk) => {
+        const onData = (chunk) => {
           if (sourceStream === 'stderr') stderrDiagnostic = appendBoundedDiagnostic(stderrDiagnostic, chunk);
           try {
             for (const frame of framers[sourceStream].push(chunk)) consume(frame, source);
           } catch (error) {
             requestStop(error);
           }
-        });
-        source.on('end', () => {
+        };
+        const onEnd = () => {
           try {
             for (const frame of framers[sourceStream].end()) consume(frame, source);
           } catch (error) {
             requestStop(error);
           }
-        });
+        };
+        sourceSubscriptions.push(() => source.removeListener('data', onData));
+        source.on('data', onData);
+        sourceSubscriptions.push(() => source.removeListener('end', onEnd));
+        source.on('end', onEnd);
       }
     } catch (error) {
       requestStop(error, false);
@@ -405,21 +459,43 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
         finishIfReady();
       });
     };
-    child.once('error', (error) => {
-      leaderResult = leaderResult === null
-        ? { status: null, signal: null, error }
-        : { ...leaderResult, error };
-      startConvergence();
-    });
-    child.once('exit', (code, signal) => {
-      leaderResult = { status: code, signal, error: leaderResult?.error ?? null };
-      startConvergence();
-    });
-    child.once('close', (code, signal) => {
-      if (leaderResult === null) leaderResult = { status: code, signal, error: null };
-      streamsFinalized = true;
-      startConvergence();
-      finishIfReady();
-    });
+    try {
+      child.once('error', (error) => {
+        leaderResult = leaderResult === null
+          ? { status: null, signal: null, error }
+          : { ...leaderResult, error };
+        startConvergence();
+      });
+      child.once('exit', (code, signal) => {
+        leaderResult = { status: code, signal, error: leaderResult?.error ?? null };
+        startConvergence();
+      });
+      child.once('close', (code, signal) => {
+        if (leaderResult === null) leaderResult = { status: code, signal, error: null };
+        streamsFinalized = true;
+        startConvergence();
+        finishIfReady();
+      });
+    } catch (error) {
+      requestStop(error, false);
+      settled = true;
+      void convergeProcessTree(
+        child, killGraceMs, processGroupConvergenceMs, processGroupProbe, processGroupSignal,
+      ).then((converged) => {
+        if (graceTimer !== null) { clearTimeout(graceTimer); graceTimer = null; }
+        try { abortCleanup?.(); } catch { /* retain the setup error */ }
+        stopForwarding();
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        closeAll();
+        const convergenceFailure = converged ? null
+          : new Error(`process-group convergence timed out after ${processGroupConvergenceMs}ms`);
+        resolveRun(runResult({
+          processResult: leaderResult ?? { status: child.exitCode, signal: child.signalCode },
+          transportError: convergenceFailure ?? error, terminal: null, captureError,
+          stderr: stderrDiagnostic, degraded,
+        }));
+      });
+    }
   });
 }

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -115,6 +116,39 @@ test('invalid abort signal cannot spawn a child or create capture files', () => 
   assert.match(result.transport.error?.message ?? '', /signal/u);
   assert.equal(result.capture.persisted, false);
   await new Promise((resolve) => setTimeout(resolve, 100));
+  for (const path of [rawPath, readablePath, 'spawned.txt']) {
+    assert.equal(existsSync(join(repo, path)), false, path);
+  }
+}));
+
+test('throwing live listener setup returns failure facts without capture, child, or listeners', () => withRepo(async (repo) => {
+  const spawnedPath = join(repo, 'spawned.txt');
+  const script = `require('node:fs').writeFileSync(${JSON.stringify(spawnedPath)},'spawned')`;
+  const plain = {
+    write(_chunk, callback) { callback?.(); return true; },
+    on() { throw new Error('listener failed'); },
+  };
+  const first = await run(repo, script, { liveStdout: plain });
+  assert.equal(first.process.status, null);
+  assert.match(first.transport.error?.message ?? '', /listener failed/u);
+  assert.equal(first.capture.persisted, false);
+  const live = new EventEmitter();
+  live.write = (_chunk, callback) => { callback?.(); return true; };
+  const on = live.on;
+  live.on = function (event, listener) {
+    const result = on.call(this, event, listener);
+    if (event === 'error') throw new Error('listener failed');
+    return result;
+  };
+  const result = await run(repo, script, {
+    liveStdout: live,
+  });
+  assert.equal(result.process.status, null);
+  assert.match(result.transport.error?.message ?? '', /listener failed/u);
+  assert.equal(result.terminal, null);
+  assert.equal(result.capture.persisted, false);
+  assert.equal(live.listenerCount('drain'), 0);
+  assert.equal(live.listenerCount('error'), 0);
   for (const path of [rawPath, readablePath, 'spawned.txt']) {
     assert.equal(existsSync(join(repo, path)), false, path);
   }
