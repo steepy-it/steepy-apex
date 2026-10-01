@@ -4538,3 +4538,209 @@ describe('autopilot main(argv)', () => {
     }
   });
 });
+
+describe('controller protocol 2 routing (runConductor and main)', () => {
+  let autopilot;
+  before(async () => { autopilot = await import(pathToFileURL(join(root, 'scripts', 'autopilot.mjs'))); });
+
+  const RUN = '1f1e1d1c-1b1a-4918-8716-151413121110';
+  const TASKS = '.apex/work/tasks/topic';
+  const SPEC_PATH = '.apex/work/specs/topic.md';
+  const PLAN_PATH = '.apex/work/plans/topic.md';
+  const CONTROLLER_PLAN = `<!-- steepy-workflow: v1\nphase: plan\nstatus: DRAFT\nnext: implement\nsource: ${SPEC_PATH}\nconsumed-by: none\n-->\n# Plan\n\n## Task 1 — update value\n\n- **Requirements and deliverables:** Set the value to 1.\n- **Relevant global constraints:** Node built-ins only.\n- **Surface:** \`scripts\`\n- **Specialist agent:** \`scripts-agent\`\n- **Exact paths:** \`src/value.mjs\`\n- **Test command:** \`npm test\`\n- **Dependencies:** none\n- **Complexity:** integration\n- **Success criteria:** SC1\n`;
+
+  // A committed hub whose routing row binds the specialist agent, as v2 plans require.
+  function controllerRepo(t) {
+    const dir = mkdtempSync(join(tmpdir(), 'steepy-autopilot-controller-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
+    const put = (path, text) => { mkdirSync(dirname(join(dir, path)), { recursive: true }); writeFileSync(join(dir, path), text); };
+    git('init', '-q', '-b', 'gear3-topic');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    put('.gitignore', '.apex/work/\n');
+    put('.apex/_INDEX.md', '# Hub\n\n| Surface | Min docs | Specialist agent | Applicable skill |\n|---|---|---|---|\n| `scripts` | [standards/scripts.md](standards/scripts.md) | `scripts-agent` | — |\n');
+    put('.apex/standards/scripts.md', '# Scripts\n');
+    put('.apex/testing-and-checklist.md', '# Tests\n');
+    put('.apex/conventions.md', '# Conventions\n');
+    put('src/value.mjs', 'export const value = 0;\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'baseline');
+    put(SPEC_PATH, `<!-- verdict: GAP | gear: 3\ndrive: autopilot\nbranch: gear3-topic\ncommit-auth: per-task\nharness: claude\nblast-radius: branch-only, no-push, stop-before-PR\n-->\n\n# Topic\n\n- **Owning surface:** \`scripts\`\n- **Feature complexity:** \`integration\`\n\n## Success criteria\n\n1. SC1 — The value is 1.\n`);
+    return { dir, git, put, read: (path) => readFileSync(join(dir, path), 'utf8'), specPath: join(dir, SPEC_PATH) };
+  }
+
+  function roleRunner(repo) {
+    const calls = [];
+    const act = {
+      plan: () => { repo.put(PLAN_PATH, CONTROLLER_PLAN); return 'status: DONE\nsignals: none'; },
+      implementer: () => {
+        repo.put('src/value.mjs', 'export const value = 1;\n');
+        repo.put(`${TASKS}/task-1-report.md`, '# Report\n\nRED then GREEN.\n');
+        return `status: DONE\nartifact: ${TASKS}/task-1-report.md\nsignals: tdd:red-green`;
+      },
+      'task-reviewer': () => { repo.put(`${TASKS}/task-1-review.md`, '# Review\n'); return 'status: APPROVED\nsignals: none'; },
+      'final-review': () => { repo.put(`${TASKS}/final-review.md`, '# Final\n'); return 'status: APPROVED\nsignals: none'; },
+      review: () => {
+        repo.put(`${TASKS}/review-report.md`, `<!-- steepy-workflow: v1\nphase: review\nstatus: DRAFT\nnext: none\nsource: ${TASKS}/task-result-index.md\nconsumed-by: none\n-->\n# Review\n`);
+        repo.put(`${TASKS}/evidence-report.md`, '# Evidence\n\nAll commands passed: true\n');
+        return 'status: READY_FOR_PR\nsignals: none';
+      },
+    };
+    const runner = { prepare: (request) => ({
+      requestedModel: null, descriptorModel: null, degradationReason: 'injected test runner',
+      run: async () => { calls.push(request.role); return { payload: act[request.role](), exit: { status: 0, signal: null } }; },
+    }) };
+    return { runner, calls };
+  }
+
+  async function conduct(repo, opts = {}, argv) {
+    const out = [];
+    const err = [];
+    const realLog = console.log;
+    const realError = console.error;
+    console.log = (...args) => out.push(args.join(' '));
+    console.error = (...args) => err.push(args.join(' '));
+    try {
+      const options = {
+        cwd: repo.dir, runId: RUN, commandFor: () => { throw new Error('the legacy driver must not dispatch'); }, ...opts,
+      };
+      const code = argv === undefined ? await autopilot.runConductor(repo.specPath, options) : await autopilot.main(argv, options);
+      return { code, out: out.join('\n'), err: err.join('\n') };
+    } finally {
+      console.log = realLog;
+      console.error = realError;
+    }
+  }
+
+  const exists = (repo, path) => existsSync(join(repo.dir, path));
+
+  it('--controller-protocol 2 drives a fresh run through the controller under the lease', async (t) => {
+    const repo = controllerRepo(t);
+    const { runner, calls } = roleRunner(repo);
+    const result = await conduct(repo, { controllerServices: { runner } }, [SPEC_PATH, '--controller-protocol', '2']);
+    assert.equal(result.code, 0, result.err);
+    assert.deepEqual(calls, ['plan', 'implementer', 'task-reviewer', 'final-review', 'review']);
+    const status = repo.read(`${TASKS}/autopilot-status.md`);
+    assert.match(status, /^# Autopilot status\n\nRun: 1f1e1d1c-1b1a-4918-8716-151413121110\nStatus: COMPLETED\n/);
+    assert.doesNotMatch(status, /STATUS_PROTOCOL/);
+    assert.match(result.out, /READY_FOR_PR/);
+    assert.equal(exists(repo, '.apex/work/.gear-3-autopilot.lock'), false, 'the existing lease is released');
+  });
+
+  it('an existing controller run imposes its protocol on resume and refuses an incompatible override', async (t) => {
+    const repo = controllerRepo(t);
+    const first = roleRunner(repo);
+    const crash = (point, detail) => { if (point === 'response-captured' && detail.role === 'implementer') throw new Error('simulated crash'); };
+    const crashed = await conduct(repo, { controllerProtocol: 2, controllerServices: { runner: first.runner, crash } });
+    assert.equal(crashed.code, 1);
+    assert.match(crashed.err, /simulated crash/);
+    const events = repo.read(`${TASKS}/autopilot-events.jsonl`);
+    let leased = false;
+    const refused = await conduct(repo, { controllerProtocol: 1, lockTransition: () => { leased = true; } });
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /existing run uses controller protocol 2; refusing incompatible controller protocol 1/);
+    assert.equal(leased, false);
+    assert.equal(repo.read(`${TASKS}/autopilot-events.jsonl`), events);
+    const resumed = roleRunner(repo);
+    const result = await conduct(repo, { controllerServices: { runner: resumed.runner } });
+    assert.equal(result.code, 0, result.err);
+    assert.deepEqual(resumed.calls, ['task-reviewer', 'final-review', 'review'], 'the captured writer is never dispatched again');
+  });
+
+  it('a legacy run refuses a controller override and a fresh run still defaults to the legacy driver', async (t) => {
+    const repo = controllerRepo(t);
+    const { runner, calls } = roleRunner(repo);
+    const legacy = await conduct(repo, { controllerServices: { runner }, commandFor: () => null });
+    assert.equal(legacy.code, 1);
+    assert.match(repo.read(`${TASKS}/autopilot-status.md`), /CONDUCTOR — STATUS_PROTOCOL — version=1/);
+    assert.equal(exists(repo, `${TASKS}/autopilot-run.json`), false);
+    assert.deepEqual(calls, []);
+    const status = repo.read(`${TASKS}/autopilot-status.md`);
+    const refused = await conduct(repo, { controllerProtocol: 2, controllerServices: { runner } });
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /existing run uses controller protocol 1; refusing incompatible controller protocol 2/);
+    assert.equal(repo.read(`${TASKS}/autopilot-status.md`), status);
+    assert.equal(exists(repo, `${TASKS}/autopilot-run.json`), false);
+  });
+
+  for (const [label, corrupt, reason] of [
+    ['a missing run identity', (repo) => rmSync(join(repo.dir, `${TASKS}/autopilot-run.json`)), /without its immutable run identity; refusing legacy fallback/],
+    ['an unreadable run identity', (repo) => repo.put(`${TASKS}/autopilot-run.json`, '{"schemaVersion":1}\n'), /run identity/],
+    ['a legacy status beside a controller identity', (repo) => repo.put(`${TASKS}/autopilot-status.md`, protocolLine),
+      /legacy status and controller run identity coexist/],
+  ]) {
+    it(`${label} never falls back to the legacy driver`, async (t) => {
+      const repo = controllerRepo(t);
+      const first = roleRunner(repo);
+      const crash = (point, detail) => { if (point === 'response-captured' && detail.role === 'implementer') throw new Error('simulated crash'); };
+      await conduct(repo, { controllerProtocol: 2, controllerServices: { runner: first.runner, crash } });
+      corrupt(repo);
+      const status = repo.read(`${TASKS}/autopilot-status.md`);
+      const { runner, calls } = roleRunner(repo);
+      const result = await conduct(repo, { controllerServices: { runner } });
+      assert.equal(result.code, 1);
+      assert.match(result.err, reason);
+      assert.deepEqual(calls, []);
+      assert.equal(repo.read(`${TASKS}/autopilot-status.md`), status, 'no legacy status protocol is appended');
+    });
+  }
+
+  it('a fresh controller run refuses a dirty tree and legacy resume inputs before writing state', async (t) => {
+    const repo = controllerRepo(t);
+    const { runner, calls } = roleRunner(repo);
+    repo.put('src/extra.mjs', 'export const extra = 1;\n');
+    const dirty = await conduct(repo, { controllerProtocol: 2, controllerServices: { runner } });
+    assert.equal(dirty.code, 1);
+    assert.match(dirty.err, /uncommitted changes/);
+    rmSync(join(repo.dir, 'src/extra.mjs'));
+    repo.put(`${TASKS}/task-1-report.md`, 'existing evidence\n');
+    const inputs = await conduct(repo, { controllerProtocol: 2, controllerServices: { runner }, resumeInputs: [`${TASKS}/task-1-report.md`] });
+    assert.equal(inputs.code, 1);
+    assert.match(inputs.err, /resume inputs belong to the legacy implement phase/);
+    assert.deepEqual(calls, []);
+    assert.equal(exists(repo, `${TASKS}/autopilot-run.json`), false);
+    const unknown = await conduct(repo, {}, [SPEC_PATH, '--controller-protocol', '3']);
+    assert.equal(unknown.code, 1);
+    assert.match(unknown.err, /controller protocol must be 1 or 2/);
+  });
+
+  it('the default controller runner dispatches headless descriptors and records native model selection', async (t) => {
+    const repo = controllerRepo(t);
+    const child = join(repo.dir, '.apex', 'work', 'fake-role-child.mjs');
+    repo.put('.apex/work/fake-role-child.mjs', `import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+const prompt = process.argv[2];
+const manifest = JSON.parse(readFileSync(/Context manifest: (\\S+) \\(/.exec(prompt)[1], 'utf8'));
+const put = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
+const [first, second] = manifest.outputs;
+let payload;
+switch (manifest.scope.role) {
+  case 'plan': put(first, ${JSON.stringify(CONTROLLER_PLAN)}); payload = 'status: DONE\\nsignals: none'; break;
+  case 'implementer': put('src/value.mjs', 'export const value = 1;\\n'); put(first, '# Report\\n'); payload = \`status: DONE\\nartifact: \${first}\\nsignals: none\`; break;
+  case 'task-reviewer': case 'final-review': put(first, '# Review\\n'); payload = 'status: APPROVED\\nsignals: none'; break;
+  case 'review': put(first, '# Evidence\\n\\nAll commands passed: true\\n'); put(second, '<!-- steepy-workflow: v1\\nphase: review\\nstatus: DRAFT\\nnext: none\\nsource: ${TASKS}/task-result-index.md\\nconsumed-by: none\\n-->\\n# Review\\n'); payload = 'status: READY_FOR_PR\\nsignals: none'; break;
+  default: process.exit(9);
+}
+console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'role-session' }));
+console.log(JSON.stringify({ type: 'result', subtype: 'success', result: payload, session_id: 'role-session' }));
+`);
+    const commandFor = (harness, prompt, options) => {
+      const descriptor = headlessCommand(harness, prompt, options);
+      return { ...descriptor, cmd: process.execPath, args: [child, prompt, ...(descriptor.resolvedModel ? ['--model', descriptor.resolvedModel] : [])] };
+    };
+    const sink = { write: (_chunk, callback) => { callback?.(); return true; }, on() { return this; } };
+    const result = await conduct(repo, { commandFor, liveStdout: sink, liveStderr: sink }, [SPEC_PATH, '--controller-protocol', '2']);
+    assert.equal(result.code, 0, result.err);
+    const reservations = repo.read(`${TASKS}/autopilot-events.jsonl`).trim().split('\n').map((line) => JSON.parse(line))
+      .filter((event) => event.event === 'ROLE_RESERVED');
+    assert.deepEqual(reservations.map((event) => event.role), ['plan', 'implementer', 'task-reviewer', 'final-review', 'review']);
+    for (const event of reservations) {
+      assert.equal(typeof event.requestedModel, 'string');
+      assert.equal(event.descriptorModel, event.requestedModel, 'the concrete model rides the argv, never the abstract tier');
+      assert.equal(event.degradationReason, null);
+      assert.ok(existsSync(join(repo.dir, `${TASKS}/role-${event.roleSequence}.raw.jsonl`)));
+      assert.equal(JSON.parse(repo.read(`${TASKS}/role-${event.roleSequence}-response.json`)).sessionId, 'role-session');
+    }
+  });
+});

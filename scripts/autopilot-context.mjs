@@ -277,6 +277,34 @@ export function writeControllerTaskBrief(input) {
   return { ...context, briefPath };
 }
 
+function existingBrief(repoRoot, briefPath) {
+  try {
+    return readWorkPath(safeRoot(repoRoot), briefPath, { expect: 'work-output', family: 'task-brief' });
+  } catch (error) {
+    if (/^work path: missing (?:work artifact|ancestor directory)/.test(error.message)) return null;
+    throw error;
+  }
+}
+
+function assertBriefBytes(task, briefPath, bytes, brief) {
+  if (!bytes.equals(Buffer.from(brief))) {
+    throw new Error(`Task ${task} brief drift: ${briefPath} differs from the validated plan materialization; refusing to overwrite or bind it`);
+  }
+}
+
+// Resume-safe publication: an existing brief is reused only when its bytes equal
+// the current materialization of the validated plan task. Different bytes are
+// drift; the create-only brief is never overwritten.
+export function ensureControllerTaskBrief(input) {
+  if (input.controllerProtocol !== 2) throw new Error('controller-owned task briefs require controllerProtocol 2');
+  const context = controllerTaskContext(input);
+  const briefPath = controllerBriefPath(input.briefPath, context.task.task);
+  const bytes = existingBrief(input.repoRoot, briefPath);
+  if (bytes === null) return { ...writeControllerTaskBrief(input), created: true };
+  assertBriefBytes(context.task.task, briefPath, bytes, context.brief);
+  return { ...context, briefPath, created: false };
+}
+
 function controllerBriefPath(path, task) {
   const briefPath = parseWorkPath(path, 'work-output', 'task-brief').path;
   if (!briefPath.endsWith(`/task-${task}-brief.md`)) {
@@ -293,7 +321,11 @@ export function buildControllerTaskManifest(role, input) {
     throw new Error(`controller task manifest does not support role ${role}`);
   }
   const context = controllerTaskContext(input);
-  controllerBriefPath(input.briefPath, context.task.task);
+  const briefPath = controllerBriefPath(input.briefPath, context.task.task);
+  // Bind the brief on disk to this exact plan task before any manifest names it.
+  // A missing brief stays the builder's required-input error.
+  const bytes = existingBrief(input.repoRoot, briefPath);
+  if (bytes !== null) assertBriefBytes(context.task.task, briefPath, bytes, context.brief);
   return buildTaskManifest(role, {
     ...input,
     task: Number(context.task.task),
@@ -1106,7 +1138,9 @@ export function validateContextManifest(manifest, { repoRoot }) {
   return normalized;
 }
 
-export function writeContextManifest(manifest, { repoRoot, manifestPath }) {
+// `createOnly` publishes an immutable controller role manifest: an existing
+// manifest is never replaced.
+export function writeContextManifest(manifest, { repoRoot, manifestPath, createOnly = false }) {
   const root = safeRoot(repoRoot);
   const path = parseWorkPath(
     assertSafeRelPath(manifestPath, 'manifest path'),
@@ -1115,7 +1149,7 @@ export function writeContextManifest(manifest, { repoRoot, manifestPath }) {
   ).path;
   const normalized = validateContextManifest(manifest, { repoRoot: root });
   const json = `${JSON.stringify(normalized, null, 2)}\n`;
-  writeWorkPath(root, path, json, { expect: 'work-output', family: 'manifest' });
+  writeWorkPath(root, path, json, { expect: 'work-output', family: 'manifest', createOnly });
   return { path, bytes: Buffer.byteLength(json), manifest: normalized };
 }
 
@@ -1218,16 +1252,41 @@ function readRepoFile(repoRoot, path, label) {
   return readStableDocument(repoRoot, safePath, label);
 }
 
+export const CONTROLLER_ROUTING_PATH = '.apex/_INDEX.md';
+
+// The plan gate a controller-protocol-2 run applies at plan acceptance: the
+// complete executable grammar with the controller's own routing inputs, plus
+// the compact public parser that downstream review handoffs still replay.
+// The controller resolves no spec sections, so a v2 task must carry its own
+// constraints; a spec section reference is refused as a named plan error.
+export function controllerPlanContext({ repoRoot, planText }) {
+  const root = safeRoot(repoRoot);
+  const routingText = readStableDocument(root, CONTROLLER_ROUTING_PATH, 'routing index');
+  const standardsBySurface = standardsBySurfaceFromRouting(routingText, { repoRoot: root });
+  const executable = parseExecutablePlan(planText, { routingText, standardsBySurface, specCapabilities: [] });
+  const compact = planPhaseContext(planText);
+  const ids = (tasks) => tasks.map((task) => task.task).join(',');
+  if (ids(executable.tasks) !== ids(compact.tasks)) throw new Error('executable and compact plan task inventories differ');
+  return { tasks: executable.tasks, compact, routingText, standardsBySurface };
+}
+
 function verifyPlan(values) {
-  const usage = 'usage: autopilot-context.mjs --verify-plan --repo-root <root> --plan <plan-path>';
-  const accepted = new Set(['verify-plan', 'repo-root', 'plan']);
-  if (!values['repo-root'] || !values.plan || suppliedOptionsOutside(values, accepted).length > 0) {
+  const usage = 'usage: autopilot-context.mjs --verify-plan --repo-root <root> --plan <plan-path> [--controller-protocol <1|2>]';
+  const accepted = new Set(['verify-plan', 'repo-root', 'plan', 'controller-protocol']);
+  if (!values['repo-root'] || !values.plan || suppliedOptionsOutside(values, accepted).length > 0
+    || ![undefined, '1', '2'].includes(values['controller-protocol'])) {
     console.error(usage);
     return 2;
   }
   try {
     const repoRoot = safeRoot(values['repo-root']);
-    const route = planPhaseContext(readRepoFile(repoRoot, values.plan, 'plan path'));
+    const planText = readRepoFile(repoRoot, values.plan, 'plan path');
+    if (values['controller-protocol'] === '2') {
+      const { tasks } = controllerPlanContext({ repoRoot, planText });
+      console.log(`plan OK — controller protocol 2 — ${tasks.length} task(s): ${tasks.map((task) => task.task).join(', ')}`);
+      return 0;
+    }
+    const route = planPhaseContext(planText);
     console.log(`plan OK — ${route.tasks.length} task(s): ${route.tasks.map((task) => task.task).join(', ')}`);
     return 0;
   } catch (error) {
@@ -1294,6 +1353,7 @@ export function main(argv = process.argv.slice(2)) {
         output: { type: 'string' },
         'verify-plan': { type: 'boolean' },
         'verify-handoff': { type: 'boolean' },
+        'controller-protocol': { type: 'string' },
       },
     }));
   } catch (error) {
@@ -1307,7 +1367,8 @@ export function main(argv = process.argv.slice(2)) {
   }
   if (values['verify-plan']) return verifyPlan(values);
   if (values['verify-handoff']) return verifyHandoff(values);
-  if (!values.role || !values['repo-root'] || !values['run-id'] || !values['model-tier'] || !values.output) {
+  if (!values.role || !values['repo-root'] || !values['run-id'] || !values['model-tier'] || !values.output
+    || values['controller-protocol'] !== undefined) {
     console.error(usage);
     return 2;
   }

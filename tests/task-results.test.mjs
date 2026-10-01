@@ -272,3 +272,40 @@ test('a branch switch blocks recording without rewriting source and a missing re
     assert.equal(JSON.parse(readFileSync(join(root, `${state}-result.json`))).response, response);
   });
 });
+
+test('a controller commit after the writer returns and before record stays inside the observed execution', () => fixture(({ root, git, put }) => {
+  beginTask(root, state, config);
+  put('source', 'implemented'); put('added', 'new file'); put(config.report, 'Implemented with tests.');
+  git('add', '-A', '--', '.'); git('commit', '-qm', 'controller commit');
+  const done = recordTaskResult(root, state, response);
+  assert.equal(done.accepted, true);
+  assert.deepEqual(done.changedPaths, ['added', 'source']);
+  const next = `${dir}/task-2-execution-1`;
+  const second = { ...config, task: '2', report: `${dir}/task-2-report.md`, parentState: state };
+  assert.equal(beginTask(root, next, second).status, 'READY', 'the next execution starts from the captured committed state');
+}));
+
+test('a commit after record is drift for the next execution, never part of the recorded one', () => fixture(({ root, git, put }) => {
+  beginTask(root, state, config);
+  put('source', 'implemented'); put(config.report, 'Implemented.');
+  recordTaskResult(root, state, response);
+  git('add', '-A', '--', '.'); git('commit', '-qm', 'late commit');
+  assert.throws(() => inspectTaskResult(root, state), /source snapshot drift/);
+  assert.throws(() => beginTask(root, `${dir}/task-2-execution-1`, { ...config, task: '2', report: `${dir}/task-2-report.md`, parentState: state }),
+    /parent source or correlation drift/);
+}));
+
+test('payload capture is durable independently of semantic success', () => fixture(({ root, put }) => {
+  const malformed = `${dir}/task-1-execution-1`;
+  beginTask(root, malformed, config); put(config.report, 'Report.');
+  const rejected = recordTaskResult(root, malformed, 'status: DONE\nsignals: none');
+  assert.deepEqual([rejected.accepted, rejected.retryable, rejected.reason], [false, false, 'invalid task response schema']);
+  for (const suffix of ['capture.json', 'report.md', 'result.json']) assert.ok(statSync(join(root, `${malformed}-${suffix}`)).isFile());
+  assert.equal(JSON.parse(readFileSync(join(root, `${malformed}-capture.json`))).response, 'status: DONE\nsignals: none');
+}));
+
+test('a semantic non-success is captured, retryable, and keeps its own status', () => fixture(({ root, put }) => {
+  beginTask(root, state, config); put(config.report, 'Needs the missing context.');
+  const pending = recordTaskResult(root, state, response.replace('DONE', 'NEEDS_CONTEXT'));
+  assert.deepEqual([pending.status, pending.accepted, pending.retryable], ['NEEDS_CONTEXT', false, true]);
+}));

@@ -44,6 +44,8 @@ import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { verifyImplementReviews, captureRetainedApproval } from './reviewer-response.mjs';
+import { captureBranchDiff, inspectControllerState, runController } from './autopilot-controller.mjs';
+import { runManagedHeadlessDescriptor } from './headless-runner.mjs';
 import { headlessCommand } from '../adapters/headless.mjs';
 import { decodeHeadlessEvent } from '../adapters/headless-events.mjs';
 import { resolveProviderFromModel, tierModelsForProvider } from '../adapters/model-mappings.mjs';
@@ -1014,39 +1016,8 @@ export function runBaseline(statusText) {
 }
 
 // The aggregate branch diff is derived data, so the conductor produces it rather than
-// asking a child for it: `git diff <baseline>` covers committed and uncommitted tracked
-// work in one call, under either commit-auth policy. Untracked paths carry no diff, so
-// they are named explicitly — a review input must never hide a new file behind silence.
-export function captureBranchDiff({ cwd, baseline, outputPath }) {
-  const safePath = parseWorkPath(outputPath, 'work-output', 'diff').path;
-  const diff = spawnSync('git', ['diff', '--no-color', baseline], {
-    cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
-  });
-  if (diff.error) throw new Error(`git diff ${baseline} failed: ${diff.error.message}`);
-  if (diff.status !== 0) throw new Error(`git diff ${baseline} failed: ${diff.stderr.trim()}`);
-
-  const untracked = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], {
-    cwd, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
-  });
-  if (untracked.error) throw new Error(`git ls-files --others failed: ${untracked.error.message}`);
-  if (untracked.status !== 0) throw new Error(`git ls-files --others failed: ${untracked.stderr.trim()}`);
-  const untrackedPaths = untracked.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
-
-  const sections = [`=== branch diff: ${baseline}..working tree ===`, diff.stdout.trimEnd()];
-  if (untrackedPaths.length > 0) {
-    sections.push(
-      '=== untracked files (present on disk, no diff above) ===',
-      untrackedPaths.join('\n'),
-    );
-  }
-  const contents = `${sections.filter(Boolean).join('\n')}\n`;
-  // The derived artifact is created through the confined primitives: parent
-  // directories appear with ancestor discipline and the bytes land on a bound
-  // ordinary target — never through a symlink.
-  mkdirWorkPath(cwd, safePath, { expect: 'work-output', family: 'diff' });
-  writeWorkPath(cwd, safePath, contents, { expect: 'work-output', family: 'diff' });
-  return { path: safePath, bytes: Buffer.byteLength(contents), untracked: untrackedPaths };
-}
+// asking a child for it. Both drivers share one implementation.
+export { captureBranchDiff };
 
 function repositoryPath(cwd, absolutePath, label) {
   return assertSafeRelPath(relative(cwd, absolutePath), label);
@@ -1901,6 +1872,62 @@ function physicalRelative(cwd, absPath) {
   }
 }
 
+// One run keeps one controller protocol. An existing state imposes its own
+// protocol; `--controller-protocol` / `controllerProtocol` only selects a fresh
+// run (legacy 1 stays the default). A controller marker without its identity is
+// corrupt new state and never falls back to the legacy driver.
+function selectRunProtocol(cwd, specName, statusText, opts) {
+  const controller = inspectControllerState(cwd, specName);
+  const existing = controller !== null ? controller.controllerProtocol : statusText === '' ? null : 1;
+  const requested = opts.controllerProtocol;
+  if (existing !== null && requested !== undefined && requested !== existing) {
+    throw new Error(`the existing run uses controller protocol ${existing}; refusing incompatible controller protocol ${requested}`);
+  }
+  const protocol = existing ?? requested ?? 1;
+  if (protocol === 2 && (opts.resumeInputs ?? []).length > 0) {
+    throw new Error('explicit resume inputs belong to the legacy implement phase; controller protocol 2 resumes from its own journal');
+  }
+  return { protocol, existing: existing !== null };
+}
+
+// The production role runner: the adapter's descriptor for the abstract tier,
+// run through the shared managed runner. Requested and argv-carried concrete
+// models (or the degradation) are recorded at reservation; a tier is never a model ID.
+function controllerRoleRunner(cwd, contract, opts) {
+  const commandFor = opts.commandFor ?? headlessCommand;
+  const modelMappings = contract.harness === 'opencode'
+    ? opencodeProviderModelMappings(cwd, opts.opencodeConfig)
+    : undefined;
+  return {
+    prepare({ prompt, modelTier, displayName, scope, runId }) {
+      const command = commandFor(contract.harness, prompt, {
+        displayName, modelTier, ...(modelMappings === undefined ? {} : { modelMappings }),
+      });
+      if (!command) throw new Error(`harness "${contract.harness}" has no headless command`);
+      const routing = descriptorRouting(command, modelTier);
+      return {
+        requestedModel: typeof command.resolvedModel === 'string' && command.resolvedModel.length > 0 ? command.resolvedModel : null,
+        descriptorModel: routing.model,
+        degradationReason: routing.reason,
+        async run({ rawPath, readablePath }) {
+          const result = await runManagedHeadlessDescriptor(command, contract.harness, cwd, {
+            rawPath, readablePath, liveStdout: opts.liveStdout, liveStderr: opts.liveStderr,
+            runId, phase: scope.phase, attempt: scope.attempt,
+          });
+          return {
+            payload: result.terminal?.payload ?? null,
+            reason: result.terminal?.reason ?? null,
+            sessionId: result.terminal?.identity?.sessionId ?? null,
+            exit: { status: result.process.status, signal: result.process.signal },
+            transportError: result.transport.error?.message ?? null,
+            capturePersisted: result.capture.persisted,
+          };
+        },
+      };
+    },
+  };
+}
+
 // Drives `plan → implement → review` as fresh headless sessions and resolves to
 // the process exit code (0 = the run reached READY_FOR_PR, 1 = refused or
 // halted). The conductor only ever reads the children's DONE / BLOCKED /
@@ -1908,6 +1935,11 @@ function physicalRelative(cwd, absPath) {
 export async function runConductor(specPath, opts = {}) {
   const cwd = realpathSync(opts.cwd ?? process.cwd());
   let absSpec = resolve(cwd, specPath);
+  // Our own CLI selection for a fresh run, never a flag forwarded to a harness.
+  if (![undefined, 1, 2].includes(opts.controllerProtocol)) {
+    console.error(`autopilot: refusing to drive ${absSpec}: controller protocol must be 1 or 2`);
+    return 1;
+  }
 
   let specRelPath;
   try {
@@ -1971,15 +2003,18 @@ export async function runConductor(specPath, opts = {}) {
   // progress behind. The confined read refuses a symlinked status target or
   // ancestor before anything is created.
   let preflightStatus;
+  let selection;
+  const specName = basename(absSpec, '.md');
   try {
     inspectResumeInputs({ repoRoot: cwd, specPath: specRelPath, resumeInputs: opts.resumeInputs });
     preflightStatus = readStatus(cwd, statusPath);
+    selection = selectRunProtocol(cwd, specName, preflightStatus, opts);
   } catch (err) {
     console.error(`autopilot: refusing to drive ${absSpec}: ${err.message}`);
     return 1;
   }
   const startClassification = classifyWorkflowStart({
-    hasDurableState: preflightStatus !== '',
+    hasDurableState: selection.existing,
   });
   if (startClassification.classification === 'WORKTREE_OBSERVATION_REQUIRED') {
     let dirty;
@@ -2025,16 +2060,37 @@ export async function runConductor(specPath, opts = {}) {
     await opts.lockTransition?.('acquired');
     const repeatedViolations = contractViolations(contract, currentGitBranch(cwd));
     if (repeatedViolations.length) throw new Error(repeatedViolations.join('; '));
-    if (readStatus(cwd, statusPath) === '' && workingTreeStatus(cwd) !== '') {
+    const locked = selectRunProtocol(cwd, specName, readStatus(cwd, statusPath), opts);
+    if (locked.protocol !== selection.protocol || locked.existing !== selection.existing) {
+      throw new Error('the run protocol state changed before the lease was acquired');
+    }
+    if (!locked.existing && workingTreeStatus(cwd) !== '') {
       throw new Error('the working tree has uncommitted changes');
     }
-    const existingStatus = readStatus(cwd, statusPath);
-    validateStatusProtocol(existingStatus);
-    inspectResumeInputs({ repoRoot: cwd, specPath: specRelPath, resumeInputs: opts.resumeInputs });
-    mkdirWorkPath(cwd, statusPath, { expect: 'work-output', family: 'status' });
-    if (existingStatus === '') appendStatus(cwd, statusPath, 'CONDUCTOR', 'STATUS_PROTOCOL', `version=${STATUS_PROTOCOL_VERSION}`);
-    statusEstablished = true;
-    result = await driveLocked(contract, absSpec, runDir, statusPath, { ...opts, cwd, runId, recoveredLocks: lock.recovered });
+    if (locked.protocol === 2) {
+      for (const recovered of lock.recovered) {
+        console.log(`autopilot: LOCK_RECOVERED quarantine=${relative(cwd, recovered.quarantine)} pid=${recovered.pid}`);
+      }
+      const outcome = await runController({
+        repoRoot: cwd, specName, contract, runId,
+        services: {
+          runner: opts.controllerServices?.runner ?? controllerRoleRunner(cwd, contract, opts),
+          ...(opts.controllerServices?.crash === undefined ? {} : { crash: opts.controllerServices.crash }),
+          ...(opts.controllerServices?.git === undefined ? {} : { git: opts.controllerServices.git }),
+          log: (line) => console.log(`autopilot: ${line}`),
+        },
+      });
+      if (outcome.code !== 0) console.error(`autopilot: HALTED — ${outcome.reason}`);
+      result = outcome.code;
+    } else {
+      const existingStatus = readStatus(cwd, statusPath);
+      validateStatusProtocol(existingStatus);
+      inspectResumeInputs({ repoRoot: cwd, specPath: specRelPath, resumeInputs: opts.resumeInputs });
+      mkdirWorkPath(cwd, statusPath, { expect: 'work-output', family: 'status' });
+      if (existingStatus === '') appendStatus(cwd, statusPath, 'CONDUCTOR', 'STATUS_PROTOCOL', `version=${STATUS_PROTOCOL_VERSION}`);
+      statusEstablished = true;
+      result = await driveLocked(contract, absSpec, runDir, statusPath, { ...opts, cwd, runId, recoveredLocks: lock.recovered });
+    }
   } catch (error) {
     console.error(`autopilot: ${error.message}`);
   } finally {
@@ -2486,12 +2542,18 @@ export async function main(argv = process.argv.slice(2), opts = {}) {
   try {
     parsed = parseArgs({
       args: argv, allowPositionals: true, strict: true,
-      options: { 'resume-input': { type: 'string', multiple: true } },
+      options: {
+        'resume-input': { type: 'string', multiple: true },
+        'controller-protocol': { type: 'string' },
+      },
     });
     if (parsed.positionals.length !== 1) throw new Error('expected exactly one spec-path argument');
+    if (![undefined, '1', '2'].includes(parsed.values['controller-protocol'])) {
+      throw new Error('controller protocol must be 1 or 2');
+    }
   } catch (err) {
     console.error(`autopilot: ${err.message}`);
-    console.error('usage: node scripts/autopilot.mjs <spec-path> [--resume-input <exact-path>]...');
+    console.error('usage: node scripts/autopilot.mjs <spec-path> [--resume-input <exact-path>]... [--controller-protocol <1|2>]');
     return 1;
   }
   const [specPath] = parsed.positionals;
@@ -2506,7 +2568,11 @@ export async function main(argv = process.argv.slice(2), opts = {}) {
     console.error(`autopilot: spec not found: ${absSpec}`);
     return 1;
   }
-  return runConductor(absSpec, { ...opts, cwd, resumeInputs: parsed.values['resume-input'] ?? opts.resumeInputs });
+  const controllerProtocol = parsed.values['controller-protocol'] === undefined
+    ? opts.controllerProtocol : Number(parsed.values['controller-protocol']);
+  return runConductor(absSpec, {
+    ...opts, cwd, resumeInputs: parsed.values['resume-input'] ?? opts.resumeInputs, controllerProtocol,
+  });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
