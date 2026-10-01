@@ -3,11 +3,15 @@
 import { readFileSync } from 'node:fs';
 
 export function reviewerResponseSchema(protocol = 1) {
-  if (![1, 2].includes(protocol)) throw new Error('unsupported reviewer response protocol');
-  return JSON.parse(readFileSync(new URL(`../skills/implement/reviewer-response${protocol === 2 ? '-v2' : ''}.schema.json`, import.meta.url), 'utf8'));
+  if (![1, 2, 3].includes(protocol)) throw new Error('unsupported reviewer response protocol');
+  const suffix = protocol === 1 ? '' : `-v${protocol}`;
+  return JSON.parse(readFileSync(new URL(`../skills/implement/reviewer-response${suffix}.schema.json`, import.meta.url), 'utf8'));
 }
 
-export function decodeReviewerResponse(payload, format = 'text', { candidate = false, protocol = 1 } = {}) {
+// Candidate decoding checks the transport shape only. A controller may retain a
+// structurally readable response for its own gate, but only strict decoding
+// establishes that the shipped role schema accepts its values.
+export function decodeReviewerResponseCandidate(payload, format = 'text', { protocol = 1 } = {}) {
   const schema = reviewerResponseSchema(protocol);
   let fields = schema.required;
   let value;
@@ -38,15 +42,22 @@ export function decodeReviewerResponse(payload, format = 'text', { candidate = f
   if (protocol === 2 && value && Object.hasOwn(value, 'changed-paths')) fields = ['status', 'artifact', 'changed-paths', 'signals'];
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).length !== fields.length || fields.some((field) => !Object.hasOwn(value, field))) throw new Error('invalid reviewer response fields');
-  for (const field of fields) {
-    const rule = protocol === 2 && field === 'changed-paths' ? { type: 'string', minLength: 0 } : schema.properties[field];
-    if (typeof value[field] !== 'string' || value[field].length < (rule.minLength ?? 1)) throw new Error(`invalid ${field}`);
-    if (rule.enum && !rule.enum.includes(value[field])) throw new Error(`invalid ${field}`);
-    // The engine may inspect an invalid changed-paths candidate to classify recovery.
-    // This never declares that candidate a schema-valid response.
-    if (Object.hasOwn(rule, 'const') && value[field] !== rule.const && !candidate) throw new Error(`${field} must be ${rule.const}`);
-  }
+  for (const field of fields) if (typeof value[field] !== 'string') throw new Error(`invalid ${field}`);
   return Object.fromEntries(fields.map((field) => [field, value[field]]));
+}
+
+export function decodeReviewerResponse(payload, format = 'text', { candidate = false, protocol = 1 } = {}) {
+  const value = decodeReviewerResponseCandidate(payload, format, { protocol });
+  const schema = reviewerResponseSchema(protocol);
+  for (const [field, text] of Object.entries(value)) {
+    const rule = protocol === 2 && field === 'changed-paths' ? { type: 'string', minLength: 0 } : schema.properties[field];
+    if (text.length < (rule.minLength ?? 1)) throw new Error(`invalid ${field}`);
+    if (rule.enum && !rule.enum.includes(text)) throw new Error(`invalid ${field}`);
+    // Legacy callers inspect a v1 changed-paths candidate. Keep that narrow
+    // compatibility without treating candidate mode as schema validation.
+    if (Object.hasOwn(rule, 'const') && text !== rule.const && !candidate) throw new Error(`${field} must be ${rule.const}`);
+  }
+  return value;
 }
 
 export function serializeReviewerResponse(payload) {
