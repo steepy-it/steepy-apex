@@ -2618,6 +2618,66 @@ test('v2 prompts override four-field legacy examples without changing manual or 
   assert.equal(schema.additionalProperties, false);
 });
 
+test('controller protocol 2 selects closed phase results and preserves legacy phase ownership', () => {
+  for (const [phase, statuses] of [
+    ['plan', ['DONE', 'BLOCKED', 'NEEDS_CONTEXT']],
+    ['review', ['READY_FOR_PR', 'BLOCKED', 'NEEDS_CONTEXT']],
+  ]) {
+    const schema = JSON.parse(readFileSync(join(skillsDir, phase, 'controller-response.schema.json'), 'utf8'));
+    assert.deepEqual(schema.required, ['status', 'signals']);
+    assert.equal(schema.additionalProperties, false);
+    assert.deepEqual(schema.properties.status.enum, statuses);
+    assert.equal(schema.properties.signals.type, 'string');
+    const prompt = readFileSync(join(skillsDir, phase, 'SKILL.md'), 'utf8');
+    assert.match(prompt, /controllerProtocol[^]*2/);
+    assert.match(prompt, /status[^]*signals/);
+    assert.match(prompt, /controller[^]*lifecycle/i);
+    assert.match(prompt, /legacy|historical/i);
+    assert.match(prompt, /Do not invoke an installed skill by name/i);
+  }
+  const plan = readFileSync(join(skillsDir, 'plan/SKILL.md'), 'utf8');
+  assert.match(plan, /modular[^]*matching leaf/i);
+  assert.match(plan, /matching reason/i);
+});
+
+test('reviewer protocol 3 is a two-field verdict with controller-owned artifacts and one format correction', () => {
+  const schema = JSON.parse(readFileSync(join(skillsDir, 'implement/reviewer-response-v3.schema.json'), 'utf8'));
+  assert.deepEqual(schema.required, ['status', 'signals']);
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.properties.status.enum, ['APPROVED', 'ISSUES_FOUND', 'BLOCKED', 'NEEDS_CONTEXT']);
+  assert.equal(schema.properties.signals.type, 'string');
+  assert.equal(schema.properties.artifact, undefined);
+  assert.equal(schema.properties['changed-paths'], undefined);
+  for (const file of ['task-reviewer-prompt.md', 'final-review-prompt.md']) {
+    const prompt = readFileSync(join(skillsDir, 'implement', file), 'utf8');
+    assert.ok(prompt.indexOf('reviewerResponseProtocol') < prompt.indexOf('taskResultProtocol'), file);
+    assert.match(prompt, /reviewerResponseProtocol[^]*3/);
+    assert.match(prompt, /controller[^]*assign[^]*artifact/i);
+    assert.match(prompt, /legacy|manual/i);
+    assert.match(prompt, /ISSUES_FOUND[^]*issues/i);
+  }
+  const final = readFileSync(join(skillsDir, 'implement/final-review-prompt.md'), 'utf8');
+  assert.match(final, /steepy-fix-targets: v1/);
+  assert.match(final, /issueIds/);
+  const shared = readFileSync(join(skillsDir, 'implement/controller-role-prompt.md'), 'utf8');
+  assert.match(shared, /manifest[^]*required/i);
+  assert.match(shared, /controller[^]*receipts/i);
+  assert.match(shared, /do not[^]*state/i);
+  const correction = readFileSync(join(skillsDir, 'implement/reviewer-correction-prompt.md'), 'utf8');
+  assert.match(correction, /single[^]*correction/i);
+  assert.match(correction, /reverse[^]*order/i);
+  assert.match(correction, /Markdown[^]*block/i);
+  assert.match(correction, /frozen[^]*status[^]*signals/i);
+  assert.match(correction, /no[^]*new review/i);
+  assert.match(correction, /validated[^]*report[^]*Git state/i);
+  assert.match(correction, /APPROVED[^]*ISSUES_FOUND/);
+  assert.match(correction, /BLOCKED[^]*NEEDS_CONTEXT[^]*not repairable/i);
+  assert.match(correction, /crash[^]*does not replenish/i);
+  const writer = readFileSync(join(skillsDir, 'implement/implementer-prompt.md'), 'utf8');
+  assert.match(writer, /controllerProtocol[^]*2/);
+  assert.match(writer, /controller[^]*ledger[^]*receipts/i);
+});
+
 test('docs/workflow.md says the greenfield path precedes the hub and spec means the brainstorm artifact', () => {
   const workflow = readFileSync(join(root, 'docs', 'workflow.md'), 'utf8');
   const flat = workflow.replace(/\s+/g, ' ');

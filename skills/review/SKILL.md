@@ -148,6 +148,19 @@ Verify completed work with evidence. Never assert "done" without command output 
 
 ### Step 0 — Read the gear
 
+**Controller protocol 2:** When the exact phase manifest selects `controllerProtocol: 2`,
+execute this packaged phase directly using its exact required inputs and assigned DRAFT report.
+Do not invoke an installed skill by name. Read the manifest first; selected modular standards
+still require the core plus every matching leaf with a concrete reason for each on-demand read.
+After verifying the assigned criteria and gates, return only the closed
+`review/controller-response.schema.json` result: `status` is `READY_FOR_PR`, `BLOCKED`, or
+`NEEDS_CONTEXT`, followed by `signals`. The controller checks the report and evidence, owns
+the ledger, receipts, projection, and lifecycle transitions, and publishes the terminal outcome.
+Do not append `autopilot-status.md`, advance the task-result index, consume a lifecycle header,
+or infer the verdict from report prose. For this selected protocol, later publication and
+status-appending instructions are replaced by this return contract. The regular manual,
+historical legacy autopilot, and Gear-4 paths below retain their existing lifecycle and handoff rules.
+
 **Autopilot preflight:** When the conductor-supplied phase manifest is present, read that
 manifest before any other task input. Validate its role and scope against the review phase and the
 supplied correlation identity. Eagerly read every `required` input before acting. Do not preload `onDemand`;

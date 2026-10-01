@@ -145,6 +145,20 @@ the goal it chases, with review checkpoints.
 
 ### Step 0 — Read the gear
 
+**Controller protocol 2:** When the exact phase manifest selects `controllerProtocol: 2`,
+execute this packaged phase directly using the manifest's exact inputs and assigned DRAFT output.
+Do not invoke an installed skill by name. Read the manifest first, then every required input.
+For a modular owning standard, use the declared routing evidence to select the core and every
+matching leaf; read each matching leaf from `onDemand` and record the concrete matching reason
+in the assigned plan/report. Zero matches means core-only context. Never read all leaves as a
+fallback. Finish with the closed `plan/controller-response.schema.json` result: `status` is
+`DONE`, `BLOCKED`, or `NEEDS_CONTEXT`, followed by `signals`. The controller validates the
+assigned output and evidence, owns the ledger, receipts, projection, and lifecycle transitions,
+and publishes the plan. Do not append `autopilot-status.md`, mutate a lifecycle header, or infer
+acceptance from the plan's prose. For this selected protocol, later publication/status-appending
+instructions are replaced by this return contract. The manual and historical legacy autopilot
+paths below retain their existing publication and handoff rules.
+
 **Autopilot preflight:** When the conductor's `phasePrompt` supplies a phase manifest, read that
 manifest before any other task input. Validate its role and scope against the plan phase and the
 supplied correlation identity. Eagerly read every `required` input before acting. Do not preload `onDemand`;

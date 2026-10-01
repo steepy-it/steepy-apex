@@ -7,7 +7,15 @@ named suspected routing conflict; the controller records that concrete reason be
 Otherwise review inline in a dedicated same-session pass over those same inputs and record the
 no-task-tool or manual no-manifest degradation in the ledger.
 
-Protocol selection: `manifest.contract.taskResultProtocol` equal to `2` takes precedence over
+Protocol selection: when `manifest.contract.reviewerResponseProtocol` is `3`, first apply the
+packaged `controller-role-prompt.md` and this role prompt. The controller assigns the review and
+issues artifact paths; write the review, and write issues for `ISSUES_FOUND`. Return exactly
+`status`, `signals` in that order, in the controller-selected text or JSON format. The controller
+owns the verdict gate, receipts, and lifecycle; report prose cannot supply a verdict. A response
+containing `artifact` or `changed-paths` is invalid. Only one reserved response-only correction
+may repair reversed text-line order or one Markdown block around the whole selected payload;
+values and types remain frozen. This v3 branch takes precedence over v2 and legacy examples.
+Otherwise, `manifest.contract.taskResultProtocol` equal to `2` takes precedence over
 all four-field examples below. In v2 return only `status`, `artifact`, `signals`, in that text order
 (or the same JSON keys when the controller selected JSON). Preserve the role's status and artifact
 rules. A legacy extra `changed-paths` is raw-only telemetry ignored by the gate, never authoritative.
@@ -36,7 +44,13 @@ Subagent (reviewer):
     **Review artifact:** [REVIEW_FILE]
     **Issue artifact:** [ISSUE_FILE]
 
-    In autopilot, read and validate the manifest first. When `manifest.contract.taskResultProtocol`
+    In autopilot, read and validate the manifest first. When `manifest.contract.reviewerResponseProtocol`
+    is `3`, use the packaged controller-role instructions and this role prompt directly. The controller
+    assigns [REVIEW_FILE] and [ISSUE_FILE]. Write the review for every status, and for ISSUES_FOUND
+    write the complete actionable set to [ISSUE_FILE]. Return only status, signals; no artifact or
+    changed-paths field. The controller owns receipts and lifecycle, and validates the verdict from
+    the response rather than the report. Do not invoke an installed skill by name. This branch wins
+    before all v2 and legacy response rules below. Otherwise, when `manifest.contract.taskResultProtocol`
     is `2`, return only status, artifact, signals; this rule takes precedence over every legacy
     four-field example in this prompt. Do not include a source-path claim. The controller obtains
     paths from Git observations; a legacy extra changed-paths is ignored raw-only telemetry.
