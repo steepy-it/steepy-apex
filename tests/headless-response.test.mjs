@@ -126,3 +126,63 @@ test('an earlier direct lifecycle identity binds ID-less Codex and OpenCode even
     { type: 'turn.completed', thread_id: 'other' },
   ]).reason, 'identity-mismatch');
 });
+
+test('child provenance at every outer, part and item location cannot become a direct response', () => {
+  const markerNames = ['agent_id', 'agentId', 'parent_actor_id', 'parentActorId', 'parent_tool_use_id', 'parentToolUseId'];
+  const eventShapes = {
+    codex: {
+      candidate: { type: 'item.completed', thread_id: 'main', item: { type: 'agent_message', text: payload } },
+      completion: { type: 'turn.completed', thread_id: 'main' },
+    },
+    opencode: {
+      candidate: { type: 'text', sessionID: 'main', part: { type: 'text', text: payload } },
+      completion: { type: 'step_finish', sessionID: 'main', part: { reason: 'stop' } },
+    },
+  };
+  const marked = (event, location, marker) => location === 'outer'
+    ? { ...event, [marker]: 'child' }
+    : { ...event, [location]: { ...event[location], [marker]: 'child' } };
+  for (const [harness, { candidate, completion }] of Object.entries(eventShapes)) {
+    for (const location of ['outer', 'part', 'item']) {
+      for (const marker of markerNames) {
+        assert.equal(correlate(harness, [marked(candidate, location, marker), completion]).reason,
+          'missing-response', `${harness} candidate ${location}.${marker}`);
+        assert.equal(correlate(harness, [candidate, marked(completion, location, marker)]).reason,
+          'missing-terminal', `${harness} completion ${location}.${marker}`);
+      }
+    }
+  }
+  for (const location of ['outer', 'part', 'item']) {
+    for (const marker of markerNames) {
+      const result = { type: 'result', subtype: 'success', session_id: 'main', result: payload };
+      assert.equal(correlate('claude', [marked(result, location, marker)]).reason,
+        'missing-terminal', `claude result ${location}.${marker}`);
+    }
+  }
+});
+
+test('an earlier identified message cannot identify a later ID-less terminal pair', () => {
+  const codex = correlate('codex', [
+    { type: 'item.completed', thread_id: 'first', item: { type: 'agent_message', text: 'intermediate' } },
+    { type: 'item.completed', item: { type: 'agent_message', text: payload } },
+    { type: 'turn.completed' },
+  ]);
+  assert.equal(codex.payload, payload);
+  assert.deepEqual(codex.identity, { sessionId: null, actor: 'direct' });
+  assert.equal(codex.reason, null);
+  const opencode = correlate('opencode', [
+    { type: 'text', sessionID: 'first', part: { type: 'text', text: 'intermediate' } },
+    { type: 'text', part: { type: 'text', text: payload } },
+    { type: 'step_finish', part: { reason: 'stop' } },
+  ]);
+  assert.equal(opencode.payload, payload);
+  assert.deepEqual(opencode.identity, { sessionId: null, actor: 'direct' });
+  assert.equal(opencode.reason, null);
+  const lateLifecycle = correlate('codex', [
+    { type: 'item.completed', item: { type: 'agent_message', text: payload } },
+    { type: 'turn.completed' },
+    { type: 'thread.started', thread_id: 'late' },
+  ]);
+  assert.equal(lateLifecycle.payload, payload);
+  assert.deepEqual(lateLifecycle.identity, { sessionId: null, actor: 'direct' });
+});

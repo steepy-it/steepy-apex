@@ -9,13 +9,13 @@ function object(value) {
 }
 
 function direct(event, part = null) {
-  return event.agent_id == null && event.agentId == null
-    && event.parent_actor_id == null && event.parentActorId == null
-    && event.parent_tool_use_id == null && event.parentToolUseId == null
-    && (part === null || (part.agent_id == null && part.agentId == null
-      && part.parent_actor_id == null && part.parentActorId == null))
-    && (!object(event.item) || (event.item.agent_id == null && event.item.agentId == null
-      && event.item.parent_actor_id == null && event.item.parentActorId == null));
+  const noChildMarkers = (source) => source === null || (
+    source.agent_id == null && source.agentId == null
+    && source.parent_actor_id == null && source.parentActorId == null
+    && source.parent_tool_use_id == null && source.parentToolUseId == null
+  );
+  return noChildMarkers(event) && noChildMarkers(part)
+    && noChildMarkers(object(event.item) ? event.item : null);
 }
 
 function sessionId(harness, event, part = null) {
@@ -33,18 +33,15 @@ export function createHeadlessResponseCorrelator(harness, { maxBytes = DEFAULT_M
 
   let candidate = null;
   let candidateSession = null;
-  let observedSession = null;
   let streamSession = null;
+  let terminalSession = null;
   let terminalCount = 0;
   let reason = null;
   let retainedBytes = 0;
 
   const bind = (id) => {
     if (id === undefined) { reason ??= 'invalid-identity'; return; }
-    if (id !== null) {
-      if (observedSession !== null && id !== observedSession) reason ??= 'identity-mismatch';
-      else observedSession = id;
-    }
+    if (id !== null && streamSession !== null && id !== streamSession) reason ??= 'identity-mismatch';
   };
   const retain = (value, id) => {
     bind(id);
@@ -65,6 +62,7 @@ export function createHeadlessResponseCorrelator(harness, { maxBytes = DEFAULT_M
   const complete = (id, value = candidate) => {
     bind(id);
     const completionSession = id ?? streamSession;
+    terminalSession = completionSession;
     terminalCount++;
     if (terminalCount > 1) reason ??= 'multiple-terminals';
     if (value === null) reason ??= 'missing-response';
@@ -105,7 +103,7 @@ export function createHeadlessResponseCorrelator(harness, { maxBytes = DEFAULT_M
       if (harness === 'claude') {
         if (event.type === 'result') {
           if (event.subtype === 'success' && typeof event.result === 'string') complete(id, event.result);
-          else if (event.subtype === 'error' || event.subtype === 'failure') { bind(id); terminalCount++; reason ??= 'failed-terminal'; }
+          else if (event.subtype === 'error' || event.subtype === 'failure') { bind(id); terminalSession = id ?? streamSession; terminalCount++; reason ??= 'failed-terminal'; }
           else reason ??= 'invalid-terminal';
         }
         return;
@@ -115,19 +113,22 @@ export function createHeadlessResponseCorrelator(harness, { maxBytes = DEFAULT_M
           && typeof event.item.text === 'string' && terminalCount === 0) retain(event.item.text, id);
         else if (event.item?.type === 'command_execution' || event.item?.type === 'tool_call') reset();
         else if (event.type === 'turn.completed') complete(id);
-        else if (event.type === 'turn.failed' || event.type === 'error') { bind(id); terminalCount++; reason ??= 'failed-terminal'; }
+        else if (event.type === 'turn.failed' || event.type === 'error') { bind(id); terminalSession = id ?? streamSession; terminalCount++; reason ??= 'failed-terminal'; }
         return;
       }
       if (event.type === 'text' && typeof part?.text === 'string' && terminalCount === 0) retain(part.text, id);
       else if (event.type === 'tool_use' || (event.type === 'step_finish' && part?.reason === 'tool-calls')) reset();
       else if (event.type === 'step_finish' && part?.reason === 'stop') complete(id);
-      else if (event.type === 'error') { bind(id); terminalCount++; reason ??= 'failed-terminal'; }
+      else if (event.type === 'error') { bind(id); terminalSession = id ?? streamSession; terminalCount++; reason ??= 'failed-terminal'; }
     },
     result() {
       const failure = reason ?? (terminalCount === 0 ? 'missing-terminal' : candidate === null ? 'missing-response' : null);
       return Object.freeze({
         payload: failure === null ? candidate : null,
-        identity: observedSession === null && terminalCount === 0 ? null : Object.freeze({ sessionId: observedSession, actor: 'direct' }),
+        identity: terminalCount === 0 && streamSession === null ? null : Object.freeze({
+          sessionId: terminalCount === 0 ? streamSession : terminalSession,
+          actor: 'direct',
+        }),
         reason: failure,
         retainedBytes,
       });
