@@ -74,3 +74,55 @@ test('correlation rejects invalid streams, identity mismatch, multiple completio
   ]).reason, 'missing-response');
   assert.equal(correlate('claude', [{ type: 'result', subtype: 'success', result: '' }]).payload, '');
 });
+
+test('candidate and completion require matching provenance when only one has an identity', () => {
+  const bareMessage = { type: 'item.completed', item: { type: 'agent_message', text: payload } };
+  const identifiedMessage = { ...bareMessage, thread_id: 'main' };
+  const bareCompletion = { type: 'turn.completed' };
+  const identifiedCompletion = { ...bareCompletion, thread_id: 'main' };
+  assert.equal(correlate('codex', [bareMessage, identifiedCompletion]).reason, 'identity-mismatch');
+  assert.equal(correlate('codex', [identifiedMessage, bareCompletion]).reason, 'identity-mismatch');
+  assert.equal(correlate('codex', [bareMessage, bareCompletion]).reason, null);
+  assert.equal(correlate('codex', [bareMessage, bareCompletion]).identity.sessionId, null);
+  assert.equal(correlate('opencode', [
+    { type: 'text', part: { text: payload } },
+    { type: 'step_finish', sessionID: 'main', part: { reason: 'stop' } },
+  ]).reason, 'identity-mismatch');
+  assert.equal(correlate('codex', [
+    bareMessage,
+    { type: 'thread.started', thread_id: 'main' },
+    bareCompletion,
+  ]).reason, 'identity-mismatch');
+});
+
+test('an earlier direct lifecycle identity binds ID-less Codex and OpenCode events', () => {
+  const identified = correlate('codex', [
+    { type: 'thread.started', thread_id: 'main' },
+    { type: 'item.completed', thread_id: 'main', item: { type: 'agent_message', text: 'working' } },
+    { type: 'item.completed', thread_id: 'main', item: { type: 'agent_message', text: payload } },
+    { type: 'turn.completed', thread_id: 'main' },
+  ]);
+  assert.equal(identified.payload, payload);
+  assert.deepEqual(identified.identity, { sessionId: 'main', actor: 'direct' });
+  const codex = correlate('codex', [
+    { type: 'thread.started', thread_id: 'main' },
+    { type: 'item.completed', item: { type: 'agent_message', text: 'working' } },
+    { type: 'item.completed', item: { type: 'agent_message', text: payload } },
+    { type: 'turn.completed' },
+  ]);
+  assert.equal(codex.payload, payload);
+  assert.deepEqual(codex.identity, { sessionId: 'main', actor: 'direct' });
+  assert.equal(codex.reason, null);
+  const opencode = correlate('opencode', [
+    { type: 'step_start', sessionID: 'main', part: { type: 'step-start' } },
+    { type: 'text', part: { text: payload } },
+    { type: 'step_finish', part: { reason: 'stop' } },
+  ]);
+  assert.equal(opencode.payload, payload);
+  assert.deepEqual(opencode.identity, { sessionId: 'main', actor: 'direct' });
+  assert.equal(correlate('codex', [
+    { type: 'thread.started', thread_id: 'main' },
+    { type: 'item.completed', item: { type: 'agent_message', text: payload } },
+    { type: 'turn.completed', thread_id: 'other' },
+  ]).reason, 'identity-mismatch');
+});

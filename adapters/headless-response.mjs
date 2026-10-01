@@ -34,6 +34,7 @@ export function createHeadlessResponseCorrelator(harness, { maxBytes = DEFAULT_M
   let candidate = null;
   let candidateSession = null;
   let observedSession = null;
+  let streamSession = null;
   let terminalCount = 0;
   let reason = null;
   let retainedBytes = 0;
@@ -50,7 +51,10 @@ export function createHeadlessResponseCorrelator(harness, { maxBytes = DEFAULT_M
     const bytes = Buffer.byteLength(value, 'utf8');
     if (bytes > maxBytes) { reason ??= 'oversized-response'; return; }
     candidate = value;
-    candidateSession = id;
+    // A lifecycle event may identify an otherwise ID-less native message.
+    // The candidate's own ID cannot retroactively identify a later ID-less
+    // completion, or vice versa.
+    candidateSession = id ?? streamSession;
     retainedBytes = bytes;
   };
   const reset = () => {
@@ -60,10 +64,11 @@ export function createHeadlessResponseCorrelator(harness, { maxBytes = DEFAULT_M
   };
   const complete = (id, value = candidate) => {
     bind(id);
+    const completionSession = id ?? streamSession;
     terminalCount++;
     if (terminalCount > 1) reason ??= 'multiple-terminals';
     if (value === null) reason ??= 'missing-response';
-    if (candidateSession !== null && id !== null && candidateSession !== id) reason ??= 'identity-mismatch';
+    if (candidate !== null && candidateSession !== completionSession) reason ??= 'identity-mismatch';
     if (value !== null && value !== candidate) {
       const bytes = Buffer.byteLength(value, 'utf8');
       if (bytes > maxBytes) reason ??= 'oversized-response';
@@ -86,6 +91,17 @@ export function createHeadlessResponseCorrelator(harness, { maxBytes = DEFAULT_M
         if (outer != null && inner != null && outer !== inner) reason ??= 'identity-mismatch';
       }
       const id = sessionId(harness, event, part);
+      const lifecycle = harness === 'claude' ? event.type === 'system' && event.subtype === 'init'
+        : harness === 'codex' ? event.type === 'thread.started'
+          : event.type === 'step_start';
+      if (lifecycle) {
+        bind(id);
+        if (id !== null && id !== undefined) {
+          if (streamSession !== null && streamSession !== id) reason ??= 'identity-mismatch';
+          else streamSession = id;
+        }
+        return;
+      }
       if (harness === 'claude') {
         if (event.type === 'result') {
           if (event.subtype === 'success' && typeof event.result === 'string') complete(id, event.result);
