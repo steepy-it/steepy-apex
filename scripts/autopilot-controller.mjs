@@ -446,12 +446,27 @@ function routing(ctx) {
   return { routingText, standardsBySurface: standardsBySurfaceFromRouting(routingText, { repoRoot: ctx.root }) };
 }
 
+// A headered spec is the plan's brainstorm input: READY and unconsumed before
+// publication, or already consumed by exactly this plan. Headerless specs carry
+// no lifecycle. Checked before the plan role is dispatched and at publication.
+function specLifecycle(ctx) {
+  const text = readWorkPath(ctx.root, ctx.paths.spec, { expect: 'spec', encoding: 'utf8' });
+  const header = gate(ctx, 'spec lifecycle', () => lifecycleOf(text));
+  if (header !== null && (header.phase !== 'brainstorm' || header.next !== 'plan'
+    || !(header.status === 'READY' && header['consumed-by'] === 'none'
+      || header.status === 'CONSUMED' && header['consumed-by'] === ctx.paths.plan))) {
+    halt(ctx, `spec lifecycle is not a READY brainstorm input for ${ctx.paths.plan}`);
+  }
+  return { text, header };
+}
+
 async function planPhase(ctx) {
   const scope = scopeOf('plan');
   if (ensurePhase(ctx, scope)) return;
   const { paths, root } = ctx;
   let entry = roleIn(ctx, scope, 'plan');
   if (!entry) {
+    specLifecycle(ctx);
     const route = gate(ctx, 'plan context', () => specRoute(ctx));
     const { standardsBySurface } = gate(ctx, 'plan context', () => routing(ctx));
     entry = await dispatchRole(ctx, {
@@ -508,13 +523,9 @@ function publishPlan(ctx, entry) {
     writeWorkPath(root, paths.plan, withLifecycle(text, { status: 'READY' }), { family: 'plan' });
     ctx.crash('plan-published', {});
   } else if (!['READY', 'CONSUMED'].includes(header.status)) halt(ctx, `plan publication has invalid status ${header.status}`, { reconciliation: true });
-  const spec = readWorkPath(root, paths.spec, { expect: 'spec', encoding: 'utf8' });
-  const source = gate(ctx, 'spec lifecycle', () => lifecycleOf(spec));
-  if (source === null) return;
-  if (source.status === 'READY' && source['consumed-by'] === 'none') {
-    writeWorkPath(root, paths.spec, withLifecycle(spec, { status: 'CONSUMED', 'consumed-by': paths.plan }), { expect: 'spec' });
-  } else if (source.status !== 'CONSUMED' || source['consumed-by'] !== paths.plan) {
-    halt(ctx, `spec lifecycle cannot be consumed by ${paths.plan}`, { reconciliation: true });
+  const spec = specLifecycle(ctx);
+  if (spec.header?.status === 'READY') {
+    writeWorkPath(root, paths.spec, withLifecycle(spec.text, { status: 'CONSUMED', 'consumed-by': paths.plan }), { expect: 'spec' });
   }
 }
 

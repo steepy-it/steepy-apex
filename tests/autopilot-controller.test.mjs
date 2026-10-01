@@ -585,3 +585,38 @@ test('a resumed run refuses a different selected engine without writing', async 
   assert.equal(repo.read(`${DIR}/autopilot-events.jsonl`), events);
   assert.deepEqual(resumed.calls, []);
 });
+
+const headeredSpec = (status = 'READY', consumedBy = 'none', phase = 'brainstorm') => specText.replace('-->\n\n# Topic spec',
+  `-->\n<!-- steepy-workflow: v1\nphase: ${phase}\nstatus: ${status}\nnext: plan\nsource: none\nconsumed-by: ${consumedBy}\n-->\n\n# Topic spec`);
+
+test('a headered brainstorm spec is consumed by the published plan and later runs are no-ops', async (t) => {
+  const repo = repository(t);
+  repo.put(SPEC, headeredSpec());
+  const result = await control(repo, scriptedRunner(repo).runner);
+  assert.equal(result.code, 0, result.reason);
+  assert.deepEqual(header(repo.read(SPEC)), { phase: 'brainstorm', status: 'CONSUMED', next: 'plan', source: 'none', 'consumed-by': PLAN });
+  assert.match(repo.read(SPEC), /^<!-- verdict: GAP \| gear: 3\n/, 'the verdict contract stays at the head');
+  assert.match(repo.read(`${DIR}/success-criteria.md`), /SC1 — The value is updated\./);
+  const spec = repo.read(SPEC);
+  const again = scriptedRunner(repo);
+  assert.equal((await control(repo, again.runner)).code, 0);
+  assert.equal(repo.read(SPEC), spec);
+  assert.deepEqual(again.calls, []);
+});
+
+for (const [label, spec] of [
+  ['consumed by another plan', () => headeredSpec('CONSUMED', '.apex/work/plans/other.md')],
+  ['still a DRAFT', () => headeredSpec('DRAFT')],
+  ['not a brainstorm output', () => headeredSpec('READY', 'none', 'plan')],
+]) {
+  test(`a spec ${label} is refused before the plan role is dispatched`, async (t) => {
+    const repo = repository(t);
+    repo.put(SPEC, spec());
+    const { runner, calls } = scriptedRunner(repo);
+    const result = await control(repo, runner);
+    assert.equal(result.code, 1);
+    assert.match(result.reason, /spec lifecycle is not a READY brainstorm input for \.apex\/work\/plans\/topic\.md/);
+    assert.deepEqual(calls, []);
+    assert.equal(journal(repo).roles.length, 0);
+  });
+}
