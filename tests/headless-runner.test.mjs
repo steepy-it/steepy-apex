@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -77,4 +77,45 @@ test('runner refuses a confined work artifact that is not a raw log', () => with
   assert.equal(result.process.status, null);
   assert.equal(result.capture.persisted, false);
   assert.match(result.capture.error?.message ?? '', /admitted raw log/u);
+}));
+
+test('invalid setup options return failure facts without creating capture paths', async () => {
+  for (const invalid of [
+    { terminalResponseLimit: 0 },
+    { writerMaxPendingBytes: 0 },
+    { drainTimeoutMs: 0 },
+    { liveStdout: {} },
+  ]) {
+    await withRepo(async (repo) => {
+      const result = await run(repo, 'process.exit(0)', invalid);
+      assert.equal(result.process.status, null);
+      assert.ok(result.transport.error, JSON.stringify(invalid));
+      assert.equal(result.capture.persisted, false);
+      assert.equal(result.terminal, null);
+      assert.equal(existsSync(join(repo, rawPath)), false);
+      assert.equal(existsSync(join(repo, readablePath)), false);
+    });
+  }
+});
+
+test('late raw failure leaves no process-group signal scheduled after settlement', { timeout: 5000 }, () => withRepo(async (repo) => {
+  const descendant = "setTimeout(()=>{process.stdout.write(JSON.stringify({type:'turn.completed'})+'\\n',()=>process.exit(0))},40);";
+  const script = [
+    "const {spawn}=require('node:child_process');",
+    `spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','inherit','inherit']}).unref();`,
+    'process.exit(0);',
+  ].join('');
+  const signals = [];
+  const result = await run(repo, script, {
+    rawWrite() { return 0; },
+    killGraceMs: 300,
+    processGroupConvergenceMs: 200,
+    processGroupProbe: () => false,
+    processGroupSignal(_pid, signal) { signals.push(signal); },
+  });
+  assert.equal(result.process.status, 0);
+  assert.equal(result.capture.persisted, false);
+  const signalsAtSettlement = [...signals];
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.deepEqual(signals, signalsAtSettlement);
 }));

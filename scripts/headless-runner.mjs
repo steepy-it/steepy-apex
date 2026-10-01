@@ -140,6 +140,29 @@ function durableFdDestination(fd, writeToFd = writeSync) {
 
 export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options = {}) {
   return new Promise((resolveRun) => {
+    let correlator;
+    try {
+      correlator = createHeadlessResponseCorrelator(harness, {
+        maxBytes: options.terminalResponseLimit ?? TERMINAL_RESPONSE_LIMIT,
+      });
+      for (const [value, label] of [
+        [options.writerMaxPendingBytes, 'maxPendingBytes'],
+        [options.drainTimeoutMs, 'drainTimeoutMs'],
+      ]) {
+        if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) {
+          throw new TypeError(`${label} must be a positive safe integer`);
+        }
+      }
+      for (const stream of [options.liveStdout ?? process.stdout, options.liveStderr ?? process.stderr]) {
+        if (typeof stream?.write !== 'function') throw new TypeError('live destination must be writable');
+      }
+    } catch (error) {
+      resolveRun(runResult({
+        processResult: { status: null, signal: null }, transportError: error,
+        terminal: null, captureError: error,
+      }));
+      return;
+    }
     const rawPath = options.rawPath;
     const readablePath = options.readablePath;
     let raw;
@@ -177,6 +200,9 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
     let child = null;
     let stopRequested = false;
     let graceTimer = null;
+    let settled = false;
+    let convergenceStarted = false;
+    let convergenceComplete = false;
     let abortCleanup = null;
     let interrupted = null;
     let stopForwarding = () => {};
@@ -185,15 +211,17 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
     const processGroupProbe = options.processGroupProbe ?? null;
     const processGroupSignal = options.processGroupSignal ?? null;
     const requestStop = (error, captureFailure = true) => {
-      if (stopRequested) return;
+      if (stopRequested || settled) return;
       stopRequested = true;
       if (error && bridgeError === null) bridgeError = error;
       if (error && captureFailure && captureError === null) captureError = error;
-      killProcessTree(child, 'SIGTERM', processGroupSignal);
-      graceTimer = setTimeout(
-        () => killProcessTree(child, 'SIGKILL', processGroupSignal),
-        killGraceMs,
-      );
+      if (!convergenceStarted && !convergenceComplete) {
+        killProcessTree(child, 'SIGTERM', processGroupSignal);
+        graceTimer = setTimeout(() => {
+          graceTimer = null;
+          if (!settled) killProcessTree(child, 'SIGKILL', processGroupSignal);
+        }, killGraceMs);
+      }
     };
     const writer = new BoundedMultiDestinationWriter({
       destinations: [
@@ -207,9 +235,6 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
       ...(options.drainTimeoutMs === undefined ? {} : { drainTimeoutMs: options.drainTimeoutMs }),
       onBlockingError: requestStop,
       onDegradation() { degraded = true; },
-    });
-    const correlator = createHeadlessResponseCorrelator(harness, {
-      maxBytes: options.terminalResponseLimit ?? TERMINAL_RESPONSE_LIMIT,
     });
     let stderrDiagnostic = '';
     const framers = {
@@ -304,15 +329,13 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
         }
       });
     }
-    let settled = false;
     let leaderResult = null;
     let streamsFinalized = false;
-    let convergenceStarted = false;
-    let convergenceComplete = false;
     let convergenceError = null;
     const finishIfReady = () => {
       if (settled || leaderResult === null || !streamsFinalized || !convergenceComplete) return;
       settled = true;
+      if (graceTimer !== null) { clearTimeout(graceTimer); graceTimer = null; }
       abortCleanup?.();
       stopForwarding();
       closeAll();
@@ -330,7 +353,7 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
     const startConvergence = () => {
       if (convergenceStarted) return;
       convergenceStarted = true;
-      if (graceTimer) clearTimeout(graceTimer);
+      if (graceTimer !== null) { clearTimeout(graceTimer); graceTimer = null; }
       void convergeProcessTree(
         child,
         killGraceMs,
