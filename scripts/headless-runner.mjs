@@ -141,21 +141,59 @@ function durableFdDestination(fd, writeToFd = writeSync) {
 export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options = {}) {
   return new Promise((resolveRun) => {
     let correlator;
+    let setup;
     try {
+      if (typeof descriptor?.cmd !== 'string' || descriptor.cmd.length === 0
+        || !Array.isArray(descriptor.args) || descriptor.args.some((arg) => typeof arg !== 'string')) {
+        throw new TypeError('descriptor requires a command and string argv');
+      }
+      setup = {
+        cmd: descriptor.cmd,
+        args: [...descriptor.args],
+        rawPath: options.rawPath,
+        readablePath: options.readablePath,
+        rawWrite: options.rawWrite ?? writeSync,
+        liveStdout: options.liveStdout ?? process.stdout,
+        liveStderr: options.liveStderr ?? process.stderr,
+        writerMaxPendingBytes: options.writerMaxPendingBytes,
+        drainTimeoutMs: options.drainTimeoutMs,
+        killGraceMs: options.killGraceMs ?? 500,
+        processGroupConvergenceMs: options.processGroupConvergenceMs ?? 1000,
+        processGroupProbe: options.processGroupProbe ?? null,
+        processGroupSignal: options.processGroupSignal ?? null,
+        abortSignal: options.signal ?? null,
+      };
       correlator = createHeadlessResponseCorrelator(harness, {
         maxBytes: options.terminalResponseLimit ?? TERMINAL_RESPONSE_LIMIT,
       });
       for (const [value, label] of [
-        [options.writerMaxPendingBytes, 'maxPendingBytes'],
-        [options.drainTimeoutMs, 'drainTimeoutMs'],
+        [setup.writerMaxPendingBytes, 'maxPendingBytes'],
+        [setup.drainTimeoutMs, 'drainTimeoutMs'],
+        [setup.processGroupConvergenceMs, 'processGroupConvergenceMs'],
       ]) {
         if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) {
           throw new TypeError(`${label} must be a positive safe integer`);
         }
       }
-      for (const stream of [options.liveStdout ?? process.stdout, options.liveStderr ?? process.stderr]) {
+      if (!Number.isSafeInteger(setup.killGraceMs) || setup.killGraceMs < 0) {
+        throw new TypeError('killGraceMs must be a nonnegative safe integer');
+      }
+      for (const stream of [setup.liveStdout, setup.liveStderr]) {
         if (typeof stream?.write !== 'function') throw new TypeError('live destination must be writable');
       }
+      if (typeof setup.rawWrite !== 'function') throw new TypeError('rawWrite must be a function');
+      if (setup.processGroupProbe !== null && typeof setup.processGroupProbe !== 'function') {
+        throw new TypeError('processGroupProbe must be a function');
+      }
+      if (setup.processGroupSignal !== null && typeof setup.processGroupSignal !== 'function') {
+        throw new TypeError('processGroupSignal must be a function');
+      }
+      const { abortSignal } = setup;
+      if (abortSignal !== null && (
+        typeof abortSignal.aborted !== 'boolean'
+        || typeof abortSignal.addEventListener !== 'function'
+        || typeof abortSignal.removeEventListener !== 'function'
+      )) throw new TypeError('signal must support aborted, addEventListener, and removeEventListener');
     } catch (error) {
       resolveRun(runResult({
         processResult: { status: null, signal: null }, transportError: error,
@@ -163,15 +201,14 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
       }));
       return;
     }
-    const rawPath = options.rawPath;
-    const readablePath = options.readablePath;
+    const { rawPath, readablePath } = setup;
     let raw;
     try {
       const rawFamily = confinedLogFamily(rawPath, RAW_FAMILIES, 'raw');
       const fd = openWorkPathFd(cwd, rawPath, {
         expect: 'work-output', family: rawFamily, disposition: 'create-new', mode: 0o600,
       });
-      raw = durableFdDestination(fd, options.rawWrite ?? writeSync);
+      raw = durableFdDestination(fd, setup.rawWrite);
     } catch (error) {
       const captureError = new Error(`raw-open failed: ${error.message}`);
       resolveRun(runResult({
@@ -193,8 +230,7 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
       degraded = true;
     }
 
-    const liveStdout = options.liveStdout ?? process.stdout;
-    const liveStderr = options.liveStderr ?? process.stderr;
+    const { liveStdout, liveStderr, abortSignal } = setup;
     let bridgeError = null;
     let captureError = null;
     let child = null;
@@ -206,10 +242,7 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
     let abortCleanup = null;
     let interrupted = null;
     let stopForwarding = () => {};
-    const killGraceMs = options.killGraceMs ?? 500;
-    const processGroupConvergenceMs = options.processGroupConvergenceMs ?? 1000;
-    const processGroupProbe = options.processGroupProbe ?? null;
-    const processGroupSignal = options.processGroupSignal ?? null;
+    const { killGraceMs, processGroupConvergenceMs, processGroupProbe, processGroupSignal } = setup;
     const requestStop = (error, captureFailure = true) => {
       if (stopRequested || settled) return;
       stopRequested = true;
@@ -230,9 +263,9 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
         { name: 'liveStdout', role: 'liveStdout', stream: liveStdout },
         { name: 'liveStderr', role: 'liveStderr', stream: liveStderr },
       ],
-      ...(options.writerMaxPendingBytes === undefined
-        ? {} : { maxPendingBytes: options.writerMaxPendingBytes }),
-      ...(options.drainTimeoutMs === undefined ? {} : { drainTimeoutMs: options.drainTimeoutMs }),
+      ...(setup.writerMaxPendingBytes === undefined
+        ? {} : { maxPendingBytes: setup.writerMaxPendingBytes }),
+      ...(setup.drainTimeoutMs === undefined ? {} : { drainTimeoutMs: setup.drainTimeoutMs }),
       onBlockingError: requestStop,
       onDegradation() { degraded = true; },
     });
@@ -276,7 +309,7 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
       try { readable?.close(); } catch { degraded = true; }
     };
     try {
-      child = spawn(descriptor.cmd, descriptor.args, {
+      child = spawn(setup.cmd, setup.args, {
         cwd, stdio: ['ignore', 'pipe', 'pipe'], shell: false, detached: true,
       });
     } catch (error) {
@@ -287,47 +320,51 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
       }));
       return;
     }
-    if (options.signal) {
-      const onAbort = () => requestStop(new Error('headless descriptor aborted'), false);
-      if (options.signal.aborted) onAbort();
-      else {
-        options.signal.addEventListener('abort', onAbort, { once: true });
-        abortCleanup = () => options.signal.removeEventListener('abort', onAbort);
+    try {
+      if (abortSignal !== null) {
+        const onAbort = () => requestStop(new Error('headless descriptor aborted'), false);
+        if (abortSignal.aborted) onAbort();
+        else {
+          abortCleanup = () => abortSignal.removeEventListener('abort', onAbort);
+          abortSignal.addEventListener('abort', onAbort, { once: true });
+        }
       }
-    }
-    const forwardSignal = (signal) => {
-      stopForwarding();
-      interrupted = signal;
-      requestStop(new Error(`headless descriptor interrupted by ${signal}`), false);
-    };
-    const onSigint = () => forwardSignal('SIGINT');
-    const onSigterm = () => forwardSignal('SIGTERM');
-    const onSighup = () => forwardSignal('SIGHUP');
-    stopForwarding = () => {
-      process.removeListener('SIGINT', onSigint);
-      process.removeListener('SIGTERM', onSigterm);
-      process.removeListener('SIGHUP', onSighup);
-    };
-    process.once('SIGINT', onSigint);
-    process.once('SIGTERM', onSigterm);
-    process.once('SIGHUP', onSighup);
-    for (const sourceStream of ['stdout', 'stderr']) {
-      const source = child[sourceStream];
-      source.on('data', (chunk) => {
-        if (sourceStream === 'stderr') stderrDiagnostic = appendBoundedDiagnostic(stderrDiagnostic, chunk);
-        try {
-          for (const frame of framers[sourceStream].push(chunk)) consume(frame, source);
-        } catch (error) {
-          requestStop(error);
-        }
-      });
-      source.on('end', () => {
-        try {
-          for (const frame of framers[sourceStream].end()) consume(frame, source);
-        } catch (error) {
-          requestStop(error);
-        }
-      });
+      const forwardSignal = (signal) => {
+        stopForwarding();
+        interrupted = signal;
+        requestStop(new Error(`headless descriptor interrupted by ${signal}`), false);
+      };
+      const onSigint = () => forwardSignal('SIGINT');
+      const onSigterm = () => forwardSignal('SIGTERM');
+      const onSighup = () => forwardSignal('SIGHUP');
+      stopForwarding = () => {
+        process.removeListener('SIGINT', onSigint);
+        process.removeListener('SIGTERM', onSigterm);
+        process.removeListener('SIGHUP', onSighup);
+      };
+      process.once('SIGINT', onSigint);
+      process.once('SIGTERM', onSigterm);
+      process.once('SIGHUP', onSighup);
+      for (const sourceStream of ['stdout', 'stderr']) {
+        const source = child[sourceStream];
+        source.on('data', (chunk) => {
+          if (sourceStream === 'stderr') stderrDiagnostic = appendBoundedDiagnostic(stderrDiagnostic, chunk);
+          try {
+            for (const frame of framers[sourceStream].push(chunk)) consume(frame, source);
+          } catch (error) {
+            requestStop(error);
+          }
+        });
+        source.on('end', () => {
+          try {
+            for (const frame of framers[sourceStream].end()) consume(frame, source);
+          } catch (error) {
+            requestStop(error);
+          }
+        });
+      }
+    } catch (error) {
+      requestStop(error, false);
     }
     let leaderResult = null;
     let streamsFinalized = false;
@@ -336,7 +373,7 @@ export function runManagedHeadlessDescriptor(descriptor, harness, cwd, options =
       if (settled || leaderResult === null || !streamsFinalized || !convergenceComplete) return;
       settled = true;
       if (graceTimer !== null) { clearTimeout(graceTimer); graceTimer = null; }
-      abortCleanup?.();
+      try { abortCleanup?.(); } catch (error) { bridgeError ??= error; }
       stopForwarding();
       closeAll();
       const correlated = correlator.result();

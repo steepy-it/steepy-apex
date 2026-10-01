@@ -85,6 +85,10 @@ test('invalid setup options return failure facts without creating capture paths'
     { writerMaxPendingBytes: 0 },
     { drainTimeoutMs: 0 },
     { liveStdout: {} },
+    { signal: {} },
+    { rawWrite: 42 },
+    { processGroupProbe: {} },
+    { killGraceMs: -1 },
   ]) {
     await withRepo(async (repo) => {
       const result = await run(repo, 'process.exit(0)', invalid);
@@ -97,6 +101,39 @@ test('invalid setup options return failure facts without creating capture paths'
     });
   }
 });
+
+test('invalid abort signal cannot spawn a child or create capture files', () => withRepo(async (repo) => {
+  const spawnedPath = join(repo, 'spawned.txt');
+  const descriptor = {
+    cmd: process.execPath,
+    args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(spawnedPath)},'spawned')`],
+  };
+  const result = await runManagedHeadlessDescriptor(descriptor, 'codex', repo, {
+    rawPath, readablePath, liveStdout: quiet, liveStderr: quiet, signal: {},
+  });
+  assert.equal(result.process.status, null);
+  assert.match(result.transport.error?.message ?? '', /signal/u);
+  assert.equal(result.capture.persisted, false);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  for (const path of [rawPath, readablePath, 'spawned.txt']) {
+    assert.equal(existsSync(join(repo, path)), false, path);
+  }
+}));
+
+test('post-spawn signal registration failure converges and returns transport facts', { timeout: 5000 }, () => withRepo(async (repo) => {
+  const result = await run(repo, 'setInterval(()=>{},1000)', {
+    signal: {
+      aborted: false,
+      addEventListener() { throw new Error('subscribe failed'); },
+      removeEventListener() {},
+    },
+    killGraceMs: 100,
+  });
+  assert.match(result.transport.error?.message ?? '', /subscribe failed/u);
+  assert.equal(result.process.status, null);
+  assert.equal(result.process.signal, 'SIGTERM');
+  assert.equal(result.capture.persisted, true);
+}));
 
 test('late raw failure leaves no process-group signal scheduled after settlement', { timeout: 5000 }, () => withRepo(async (repo) => {
   const descendant = "setTimeout(()=>{process.stdout.write(JSON.stringify({type:'turn.completed'})+'\\n',()=>process.exit(0))},40);";
