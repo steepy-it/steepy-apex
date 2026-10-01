@@ -58,20 +58,34 @@ function closesFence(line, fence) {
 // the verbatim task notes, which run to the next H2. An unknown top-level bold
 // label and any canonical field after the notes are rejected rather than merged.
 // Fenced lines are verbatim content of their field or notes: a fenced H2 or
-// label is never a boundary.
+// label is never a boundary. Every other open container fails closed: a fence
+// still open at the section end, a field fence whose list item an unindented
+// line ends, and an HTML comment still open at an H2 or at the section end.
 function fieldsOf({ task, body }) {
   const fields = new Map();
   const notes = [];
   let current = null;
   let fence = null;
+  let comment = false;
   for (const line of body.replace(/\r\n?/g, '\n').split('\n')) {
     if (fence) {
+      if (notes.length === 0 && /^[^ \t]/.test(line)) {
+        throw new Error(`Task ${task} has an unclosed code fence in ${current}`);
+      }
       (notes.length > 0 ? notes : fields.get(current)).push(line);
       if (closesFence(line, fence)) fence = null;
       continue;
     }
-    if (/^##[ \t]/.test(line)) break;
-    fence = openingFence(line);
+    if (/^##[ \t]/.test(line)) {
+      if (comment) throw new Error(`Task ${task} has an unclosed HTML comment`);
+      break;
+    }
+    if (comment) {
+      comment = !line.includes('-->');
+    } else {
+      fence = openingFence(line);
+      comment = !fence && /^ {0,3}<!--/.test(line) && !line.slice(line.indexOf('<!--') + 4).includes('-->');
+    }
     const label = FIELD_LABEL.exec(line);
     if (notes.length > 0) {
       if (label && ALL_FIELDS.has(label[1])) throw new Error(`Task ${task} field ${label[1]} follows task notes`);
@@ -87,6 +101,9 @@ function fieldsOf({ task, body }) {
       notes.push(line);
     }
   }
+  // An open fence would otherwise swallow every global section after it.
+  if (fence) throw new Error(`Task ${task} has an unclosed code fence`);
+  if (comment) throw new Error(`Task ${task} has an unclosed HTML comment`);
   // Keep a value's nested structure: only the label-line lead and the trailing
   // blank lines are trimmed.
   const values = Object.fromEntries([...fields].map(([name, lines]) => [
@@ -145,8 +162,8 @@ function pathList(value, label, { annotated = false } = {}) {
     // Case-insensitive, because darwin storage is: these are outside source.
     const [first, second] = parts.map((part) => part.toLowerCase());
     if (first === '.git') throw new Error(`${label} must not name Git metadata: ${path}`);
-    if (first === '.apex' && LOCAL_AREA_NAMES.includes(second)) {
-      throw new Error(`${label} must not enter repository-local area .apex/${second}: ${path}`);
+    if (first === '.apex' && (parts.length === 1 || LOCAL_AREA_NAMES.includes(second))) {
+      throw new Error(`${label} must not enter repository-local area .apex${second ? `/${second}` : ''}: ${path}`);
     }
     if (seen.has(path)) throw new Error(`${label} has duplicate path ${path}`);
     seen.add(path);

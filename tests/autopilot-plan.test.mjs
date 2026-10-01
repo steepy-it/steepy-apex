@@ -213,3 +213,50 @@ test('fix targets refuse omitted findings, missing markers, numeric tasks, empty
   assert.throws(() => parseFixTargets(issue('[{"task":"1","issueIds":["F1"]},{"task":"1","issueIds":["F2"]}]'), options),
     /duplicate task/i);
 });
+
+// Review fix — iteration 2: a fence still open when its task section ends is
+// refused by name, never allowed to absorb the global sections after it.
+
+test('an unclosed fence in the last task fails before an unfenced global H2 can join the notes', () => {
+  assert.throws(() => parse(`${task(1)}\nNotes.\n\n\`\`\`\ncode\n\n## Notes\n\nHuman context remains outside the task.\n`),
+    /Task 1 has an unclosed code fence/);
+});
+
+test('an unclosed fence before the next task fails instead of absorbing a global section', () => {
+  assert.throws(() => parse(`${task(1)}\nNotes.\n\n\`\`\`\ncode\n\n## Global footer\n\nGLOBAL CONTENT\n${task(2)}`),
+    /Task 1 has an unclosed code fence/);
+});
+
+test('a mismatched closer leaves the fence open and fails by name', () => {
+  for (const [opener, closer] of [['````', '```'], ['~~~', '```'], ['```', '``` trailing'], ['```', '~~~']]) {
+    assert.throws(() => parse(`${task(1)}\nNotes.\n\n${opener}\ncode\n${closer}\n\n## Notes\n\nGLOBAL CONTENT\n`),
+      /Task 1 has an unclosed code fence/, `${opener} closed by ${closer}`);
+  }
+});
+
+test('an unclosed fence inside the last multi-line field fails before a global H2 can join the field', () => {
+  assert.throws(() => parse(`${task(1)}- **Routing reasons:** Core only.\n  \`\`\`\n  sketch\n\n## Global footer\n\nGLOBAL CONTENT\n`),
+    /Task 1 has an unclosed code fence/);
+});
+
+test('the bare hub directory is refused like the local areas it contains', () => {
+  assert.throws(() => parse(task(1).replace('scripts/example.mjs', '.apex')), /repository-local area/);
+});
+
+test('a fence opened in a field value is unclosed when an unindented line ends its list item', () => {
+  const inField = (lines) => task(1).replace('- **Relevant global constraints:** Preserve compatibility.\n',
+    `- **Relevant global constraints:** Preserve compatibility:\n  \`\`\`\n${lines}\n`);
+  for (const lines of ['## Global inside field fence\n  ```', 'COL0 TEXT\n  ```', '  code\n```']) {
+    assert.throws(() => parse(inField(lines)), /Task 1 has an unclosed code fence in Relevant global constraints/, lines);
+  }
+  const [wellFormed] = parse(inField('  ## not a heading\n  ```')).tasks;
+  assert.equal(wellFormed.constraints, 'Preserve compatibility:\n  ```\n  ## not a heading\n  ```');
+});
+
+test('an HTML comment still open at an H2 or at the section end fails instead of dropping notes', () => {
+  assert.throws(() => parse(`${task(1)}\nNotes.\n\n<!--\n## commented\n-->\n\nMORE REQUIREMENTS\n`),
+    /Task 1 has an unclosed HTML comment/);
+  assert.throws(() => parse(`${task(1)}\nNotes.\n\n<!-- still open\n${task(2)}`), /Task 1 has an unclosed HTML comment/);
+  const [closed] = parse(`${task(1)}\nNotes.\n\n<!-- a closed comment -->\n<!--\nspans lines\n-->\n\nMORE REQUIREMENTS\n`).tasks;
+  assert.ok(closed.notes.endsWith('MORE REQUIREMENTS'));
+});
