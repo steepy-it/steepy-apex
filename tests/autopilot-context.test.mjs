@@ -21,6 +21,8 @@ import {
   buildTaskManifest,
   buildTaskReviewerManifest,
   buildTaskReviewCorrectionManifest,
+  buildControllerTaskManifest,
+  controllerTaskContext,
   deriveImplicatedStandardPaths,
   manifestReferencePrompt,
   materializeSuccessCriteria,
@@ -31,6 +33,7 @@ import {
   standardsBySurfaceFromRouting,
   validateContextManifest,
   writeContextManifest,
+  writeControllerTaskBrief,
 } from '../scripts/autopilot-context.mjs';
 import { phasePrompt } from '../scripts/autopilot.mjs';
 import { beginReview, checkReview, reserveRepair } from '../scripts/reviewer-response.mjs';
@@ -93,6 +96,49 @@ const base = {
   criterionIds: ['SC3', 'SC5'],
   outputs: ['.apex/work/tasks/context-efficient/task-1-report.md'],
 };
+
+test('controller protocol 2 selects a fully bound task; legacy keeps the compact parser', () => {
+  const plan = '# Plan\n\n## Task 1 — implement\n\n- **Requirements and deliverables:** Add the parser.\n- **Relevant global constraints:** Preserve old parsing.\n- **Surface:** scripts\n- **Specialist agent:** scripts-agent\n- **Exact paths:** scripts/autopilot-plan.mjs, tests/autopilot-plan.test.mjs\n- **Test command:** npm test\n- **Dependencies:** none\n- **Complexity:** design\n- **Success criteria:** SC1\n';
+  const routingText = '| `scripts` | [scripts](standards/scripts.md) | `scripts-agent` | — |\n';
+  const bound = controllerTaskContext({ controllerProtocol: 2, planText: plan, routingText,
+    standardsBySurface: { scripts: '.apex/standards/scripts.md' }, taskId: '1' });
+  assert.deepEqual(bound.standardPaths, ['.apex/standards/scripts.md']);
+  assert.equal(bound.testCommand, 'npm test');
+  assert.deepEqual(bound.criterionIds, ['SC1']);
+  assert.match(bound.brief, /Add the parser\./);
+  assert.throws(() => controllerTaskContext({ controllerProtocol: 2,
+    planText: plan.replace('- **Specialist agent:** scripts-agent\n', ''), routingText,
+    standardsBySurface: { scripts: '.apex/standards/scripts.md' }, taskId: '1' }), /missing Specialist agent/i);
+  const legacy = controllerTaskContext({ controllerProtocol: 1,
+    planText: '# Plan\n\n## Task 1\n- **Surface:** scripts\n- **Complexity:** design\n- **Success criteria:** SC1\n', taskId: '1' });
+  assert.equal(legacy.task.owningSurface, 'scripts');
+  assert.equal(legacy.brief, undefined);
+});
+
+test('controller v2 publishes a create-only brief then builds the existing role inventory without choosing a model', (t) => {
+  const repoRoot = materialize(t);
+  const planText = '# Plan\n\n## Task 2 — implement\n\n- **Requirements and deliverables:** Add parser behavior.\n- **Relevant global constraints:** Keep legacy entry points.\n- **Surface:** scripts\n- **Specialist agent:** scripts-agent\n- **Exact paths:** scripts/autopilot-plan.mjs\n- **Test command:** npm test\n- **Dependencies:** none\n- **Complexity:** design\n- **Success criteria:** SC1\n';
+  const binding = { controllerProtocol: 2, repoRoot, planText, taskId: '2',
+    routingText: '| `scripts` | [scripts](standards/scripts.md) | `scripts-agent` | — |\n',
+    standardsBySurface: { scripts: '.apex/standards/scripts.md' },
+    briefPath: '.apex/work/tasks/context-efficient/task-2-brief.md' };
+  const prepared = writeControllerTaskBrief(binding);
+  assert.equal(prepared.briefPath, binding.briefPath);
+  assert.match(readFileSync(join(repoRoot, binding.briefPath), 'utf8'), /Add parser behavior\./);
+  assert.throws(() => writeControllerTaskBrief(binding), /already exists/i);
+  const manifest = buildControllerTaskManifest('implementer', {
+    ...binding, runId: base.runId, modelTier: 'most-capable',
+  });
+  assert.equal(manifest.modelTier, 'most-capable');
+  assert.deepEqual(manifest.required.map(({ path }) => path), [binding.briefPath, '.apex/standards/scripts.md']);
+  assert.equal(manifest.testCommand, 'npm test');
+  assert.deepEqual(manifest.criterionIds, ['SC1']);
+  assert.throws(() => buildControllerTaskManifest('implementer', { ...binding, runId: base.runId }), /modelTier/i);
+  assert.throws(() => buildControllerTaskManifest('implementer', {
+    ...binding, runId: base.runId, modelTier: 'standard',
+    briefPath: '.apex/work/tasks/context-efficient/task-1-brief.md',
+  }), /brief path does not match Task 2/i);
+});
 
 test('implementer manifest records bytes, preserves order, and keeps upstream artifacts non-eager', (t) => {
   const repoRoot = materialize(t);
@@ -1644,4 +1690,20 @@ test('a routed single-file standard is verified on metadata before any child can
   rmSync(join(repoRoot, '.apex', 'standards', 'scripts.md'));
   assert.deepEqual(standardsBySurfaceFromRouting(routing, { repoRoot }), { scripts: '.apex/standards/scripts.md' },
     'a missing single-file standard stays for the manifest builder to report');
+});
+
+test('controller v2 selects routed modular leaves from the core without reading a leaf body', (t) => {
+  const repoRoot = modularRepo(t);
+  const routingText = fs.readFileSync(join(repoRoot, '.apex/_INDEX.md'), 'utf8');
+  const plan = (selection) => `# Plan\n\n## Task 1 — sessions\n\n- **Requirements and deliverables:** Add sessions.\n- **Relevant global constraints:** Keep the routed standard.\n- **Surface:** \`web\`\n- **Specialist agent:** \`web-agent\`\n- **Exact paths:** \`web/session.mjs\`\n- **Test command:** \`npm test\`\n- **Dependencies:** none\n- **Complexity:** integration\n- **Success criteria:** SC1\n${selection}`;
+  const context = (planText) => controllerTaskContext({ controllerProtocol: 2, repoRoot, routingText, planText, taskId: 1 });
+  assert.throws(() => context(plan('')), /Standard paths required for modular core web/u,
+    'a historical plan without a selection needs explicit preparation');
+  const selection = `- **Standard paths:** \`${CORE}\`, \`${AUTH}\`\n- **Routing reasons:** \`web-auth.md\` matches session handling.\n`;
+  const { result, error, accesses } = recordFsAccess(() => context(plan(selection)));
+  assert.equal(error, undefined);
+  assert.deepEqual(result.standardPaths, [CORE, AUTH]);
+  assert.doesNotMatch(result.brief, /web-data\.md/u);
+  assert.ok(accesses.some(({ path }) => path.endsWith('web-core.md')), 'the recorder observes the core read');
+  assert.deepEqual(accesses.filter(({ path }) => /web-(?:auth|data)\.md$/u.test(path)), []);
 });

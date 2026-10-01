@@ -15,6 +15,7 @@ import {
 import { parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
 import { parseTaskResultProjection } from './task-results.mjs';
 import { inspectCorrectionEvidence } from './reviewer-response.mjs';
+import { materializeTaskBrief, parseExecutablePlan } from './autopilot-plan.mjs';
 
 export const CONTEXT_MANIFEST_SCHEMA_VERSION = 1;
 export const MODEL_TIERS = Object.freeze(['cheap', 'standard', 'most-capable']);
@@ -233,6 +234,71 @@ export function planPhaseContext(planText, { review = false } = {}) {
       ? `phase-controller-tier=${modelTier};${distributionToken(distribution)};reviewer-floor=standard`
       : `phase-controller-tier=${modelTier};${distributionToken(distribution)}`,
   };
+}
+
+// Version selection is explicit. Historical plans retain the compact public
+// parser, while controller v2 needs the complete executable task contract.
+// The caller supplies modelTier separately; complexity is evidence, never an
+// implicit model identifier.
+export function controllerTaskContext({
+  controllerProtocol, planText, taskId, routingText, repoRoot, standardsBySurface,
+  specCapabilities = [], sourcePlanPath,
+}) {
+  if (controllerProtocol !== 1 && controllerProtocol !== 2) {
+    throw new Error('controllerProtocol must be 1 or 2');
+  }
+  const plan = controllerProtocol === 2
+    ? parseExecutablePlan(planText, {
+      routingText,
+      standardsBySurface: standardsBySurface ?? (repoRoot === undefined
+        ? undefined : standardsBySurfaceFromRouting(routingText, { repoRoot })),
+      specCapabilities,
+    })
+    : planPhaseContext(planText);
+  const task = plan.tasks.find((entry) => entry.task === String(taskId));
+  if (!task) throw new Error(`plan does not contain Task ${taskId}`);
+  if (controllerProtocol === 1) return { task };
+  return {
+    task,
+    brief: materializeTaskBrief(task, { sourcePlanPath }),
+    standardPaths: task.standardPaths,
+    testCommand: task.testCommand,
+    criterionIds: task.criterionIds,
+  };
+}
+
+export function writeControllerTaskBrief(input) {
+  if (input.controllerProtocol !== 2) throw new Error('controller-owned task briefs require controllerProtocol 2');
+  const context = controllerTaskContext(input);
+  const briefPath = controllerBriefPath(input.briefPath, context.task.task);
+  writeWorkPath(safeRoot(input.repoRoot), briefPath, context.brief, {
+    expect: 'work-output', family: 'task-brief', createOnly: true,
+  });
+  return { ...context, briefPath };
+}
+
+function controllerBriefPath(path, task) {
+  const briefPath = parseWorkPath(path, 'work-output', 'task-brief').path;
+  if (!briefPath.endsWith(`/task-${task}-brief.md`)) {
+    throw new Error(`brief path does not match Task ${task}`);
+  }
+  return briefPath;
+}
+
+export function buildControllerTaskManifest(role, input) {
+  if (input.controllerProtocol !== 2) return buildTaskManifest(role, input);
+  if (!['implementer', 'task-reviewer', 'fix'].includes(role)) {
+    throw new Error(`controller task manifest does not support role ${role}`);
+  }
+  const context = controllerTaskContext(input);
+  controllerBriefPath(input.briefPath, context.task.task);
+  return buildTaskManifest(role, {
+    ...input,
+    task: Number(context.task.task),
+    standardPaths: context.standardPaths,
+    testCommand: context.testCommand,
+    criterionIds: context.criterionIds,
+  });
 }
 
 export function reviewPhaseContext(planText, resultIndexText) {
