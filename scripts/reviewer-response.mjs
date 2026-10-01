@@ -81,8 +81,10 @@ function keys(value, expected, label) {
 function validateConfig(state, config) {
   keys(config, ['runId', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'index',
     ...(Object.hasOwn(config, 'execution') ? ['execution'] : []),
-    ...(Object.hasOwn(config, 'taskResultProtocol') ? ['taskResultProtocol'] : [])], 'review correlation');
+    ...(Object.hasOwn(config, 'taskResultProtocol') ? ['taskResultProtocol'] : []),
+    ...(Object.hasOwn(config, 'reviewerResponseProtocol') ? ['reviewerResponseProtocol'] : [])], 'review correlation');
   if (Object.hasOwn(config, 'taskResultProtocol') && config.taskResultProtocol !== 2) throw new Error('invalid reviewer task result protocol');
+  if (Object.hasOwn(config, 'reviewerResponseProtocol') && config.reviewerResponseProtocol !== 3) throw new Error('invalid reviewer response protocol');
   if (config.taskResultProtocol === 2 && config.task !== 'final' && !Object.hasOwn(config, 'execution')) throw new Error('v2 task review requires an execution receipt');
   if (typeof config.runId !== 'string' || !/^[A-Za-z0-9-]+$/.test(config.runId)
     || !Number.isSafeInteger(config.attempt) || config.attempt < 1
@@ -107,12 +109,12 @@ function validateConfig(state, config) {
 }
 function baselineFor(root, state) {
   const baseline = load(root, state, 'baseline');
-  keys(baseline, ['version', 'config', 'snapshot', 'handoff', ...(baseline.version === 4 ? ['implementation'] : [])], 'review baseline');
-  if (![VERSION, 4].includes(baseline.version) || !digestPattern.test(baseline.snapshot)
+  keys(baseline, ['version', 'config', 'snapshot', 'handoff', ...([4, 5].includes(baseline.version) && baseline.config.taskResultProtocol === 2 ? ['implementation'] : [])], 'review baseline');
+  if (![VERSION, 4, 5].includes(baseline.version) || !digestPattern.test(baseline.snapshot)
     || !(baseline.handoff === null || digestPattern.test(baseline.handoff))) throw new Error('invalid review baseline evidence');
   validateConfig(state, baseline.config);
-  if ((baseline.version === 4) !== (baseline.config.taskResultProtocol === 2)) throw new Error('invalid review execution version');
-  if (baseline.version === 4 && (baseline.config.task === 'final' ? baseline.implementation !== null : !digestPattern.test(baseline.implementation))) throw new Error('invalid review execution digest');
+  if (baseline.version !== (baseline.config.reviewerResponseProtocol === 3 ? 5 : baseline.config.taskResultProtocol === 2 ? 4 : VERSION)) throw new Error('invalid review execution version');
+  if (baseline.config.taskResultProtocol === 2 && (baseline.config.task === 'final' ? baseline.implementation !== null : !digestPattern.test(baseline.implementation))) throw new Error('invalid review execution digest');
   if ((baseline.config.plan === null) !== (baseline.handoff === null)) throw new Error('invalid handoff evidence');
   return baseline;
 }
@@ -128,13 +130,32 @@ export function beginReview(root, state, input) {
     if (!execution.accepted || execution.config.task !== config.task) throw new Error('task execution is not ready for review');
     implementation = execution.digest;
   }
-  return save(root, state, 'baseline', { version: config.taskResultProtocol === 2 ? 4 : VERSION,
+  return save(root, state, 'baseline', { version: config.reviewerResponseProtocol === 3 ? 5 : config.taskResultProtocol === 2 ? 4 : VERSION,
     config, snapshot: snapshot(root, exclusions(state, config), config.taskResultProtocol), handoff,
     ...(config.taskResultProtocol === 2 ? { implementation: implementation ?? null } : {}) });
 }
-function candidateResponse(text, config) {
-  const value = decodeReviewerResponse(text, config.format ?? 'text', { candidate: true, protocol: config.taskResultProtocol ?? 1 });
+function repairableV3Payload(text, format) {
+  if (typeof text !== 'string') throw new Error('invalid reviewer response');
+  const fenced = /^```(?:text|json)?\r?\n([\s\S]*?)\r?\n```\r?\n?$/.exec(text);
+  if (fenced && !fenced[1].includes('```')) return fenced[1] + '\n';
+  if (format === 'text') {
+    const reversed = /^signals: ([^\r\n]+)\r?\nstatus: ([^\r\n]+)\r?\n?$/.exec(text);
+    if (reversed) return `status: ${reversed[2]}\nsignals: ${reversed[1]}\n`;
+  }
+  throw new Error('reviewer response is not an eligible format correction');
+}
+function candidateResponse(text, config, { allowRepair = false } = {}) {
+  const protocol = config.reviewerResponseProtocol === 3 ? 3 : config.taskResultProtocol ?? 1;
+  let value;
+  let formatRepair = false;
+  try { value = decodeReviewerResponse(text, config.format ?? 'text', { candidate: true, protocol }); }
+  catch (error) {
+    if (!allowRepair || protocol !== 3) throw error;
+    value = decodeReviewerResponse(repairableV3Payload(text, config.format ?? 'text'), config.format ?? 'text', { protocol: 3 });
+    formatRepair = true;
+  }
   if (!/^(?:none|[A-Za-z0-9][A-Za-z0-9:._-]*(?:, [A-Za-z0-9][A-Za-z0-9:._-]*)*)$/.test(value.signals)) throw new Error('invalid reviewer signals');
+  if (protocol === 3) return { ...value, artifact: value.status === 'ISSUES_FOUND' ? config.issues : config.report, 'changed-paths': 'none', formatRepair };
   if (value.artifact !== (value.status === 'ISSUES_FOUND' ? config.issues : config.report)) throw new Error('wrong reviewer artifact');
   // v2 paths are an observation owned by this gate. outcome() accepts this
   // semantic candidate only after independently proving source immutability.
@@ -143,6 +164,10 @@ function candidateResponse(text, config) {
 export function parseReviewerResponse(text, config) {
   const value = candidateResponse(text, config);
   if (value['changed-paths'] !== 'none') throw new Error('changed-paths must be none for read-only review');
+  if (config.reviewerResponseProtocol === 3) {
+    const { formatRepair: ignored, ...envelope } = value;
+    return envelope;
+  }
   return value;
 }
 function identity(value) { return { status: value.status, artifact: value.artifact, signals: value.signals }; }
@@ -150,20 +175,28 @@ function outcome(response, baseline, observation, original = null) {
   const blocked = (reason) => ({ status: 'BLOCKED', accepted: false, reason });
   if (observation.error !== null) return blocked(observation.error);
   if (observation.snapshot !== baseline.snapshot) return blocked('unauthorized repository change during review');
-  if (observation.artifacts[baseline.config.report] === null) return blocked('missing or empty review report');
+  if (baseline.version !== 5 && observation.artifacts[baseline.config.report] === null) return blocked('missing or empty review report');
   if (original && !equal(observation.artifacts, original.observation.artifacts)) return blocked('review artifacts changed during response-only correction');
   let candidate;
-  try { candidate = candidateResponse(response, baseline.config); }
+  try { candidate = candidateResponse(response, baseline.config, { allowRepair: original === null }); }
   catch (error) { return blocked(error.message); }
-  if (observation.artifacts[candidate.artifact] === null) return blocked('missing or empty reviewer artifact');
+  if (baseline.version === 5 && ['APPROVED', 'ISSUES_FOUND'].includes(candidate.status)
+    && observation.artifacts[baseline.config.report] === null) return blocked('missing or empty review report');
+  if ((baseline.version !== 5 || ['APPROVED', 'ISSUES_FOUND'].includes(candidate.status))
+    && observation.artifacts[candidate.artifact] === null) return blocked('missing or empty reviewer artifact');
   if (original && !equal(identity(candidate), original.repairIdentity)) return blocked('response-only correction changed verdict, artifact, or signals');
+  if (candidate.formatRepair) {
+    if (original || !['APPROVED', 'ISSUES_FOUND'].includes(candidate.status)) return blocked('correction is not an eligible reviewer verdict');
+    return { status: 'REPAIRABLE', accepted: false, reason: 'reviewer response format requires correction', repairIdentity: identity(candidate) };
+  }
   if (candidate['changed-paths'] !== 'none') {
     if (original || !['APPROVED', 'ISSUES_FOUND'].includes(candidate.status)) return blocked('changed-paths must be none for read-only review');
     try { for (const path of candidate['changed-paths'].split(', ')) assertSafeRelPath(path, 'reviewer changed path'); }
     catch { return blocked('invalid changed-paths is not an unambiguous path list'); }
     return { status: 'REPAIRABLE', accepted: false, reason: 'changed-paths must be none for read-only review', repairIdentity: identity(candidate) };
   }
-  return { status: candidate.status, accepted: ['APPROVED', 'ISSUES_FOUND'].includes(candidate.status), envelope: candidate };
+  const { formatRepair: ignored, ...envelope } = candidate;
+  return { status: candidate.status, accepted: ['APPROVED', 'ISSUES_FOUND'].includes(candidate.status), envelope };
 }
 function observe(root, state, baseline) {
   try {
@@ -397,12 +430,13 @@ export function verifyImplementReviews(root, { planPath, indexPath, runId, attem
   return { state, runId, attempt, status: 'APPROVED', ...(sameAttempt ? {} : { retainedApproval }) };
 }
 export function main(argv) {
-  const { values } = parseArgs({ args: argv, options: Object.fromEntries(['repo-root', 'state', 'action', 'run-id', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'task-result-index', 'previous-state', 'resume-final', 'execution'].map((name) => [name, { type: 'string' }])) });
+  const { values } = parseArgs({ args: argv, options: Object.fromEntries(['repo-root', 'state', 'action', 'run-id', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'task-result-index', 'previous-state', 'resume-final', 'execution', 'reviewer-response-protocol'].map((name) => [name, { type: 'string' }])) });
   const root = resolve(values['repo-root'] ?? '.');
   const state = values.state;
   let result;
   if (values.action === 'begin') result = beginReview(root, state, { runId: values['run-id'], attempt: Number(values.attempt), iteration: Number(values.iteration), task: values.task, report: values.report, issues: values.issues, format: values.format ?? 'text', plan: values.plan ?? null, index: values['task-result-index'] ?? null,
-    ...(values.execution === undefined ? {} : { execution: values.execution }) });
+    ...(values.execution === undefined ? {} : { execution: values.execution }),
+    ...(values['reviewer-response-protocol'] === undefined ? {} : { reviewerResponseProtocol: Number(values['reviewer-response-protocol']) }) });
   else if (values.action === 'inspect') result = inspectReview(root, state);
   else if (values.action === 'reserve') result = reserveRepair(root, state);
   else if (values.action === 'bind-reference') result = setReviewReference(root, { indexPath: values['task-result-index'], state, previousState: values['previous-state'] ?? null });

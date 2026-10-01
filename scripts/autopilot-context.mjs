@@ -18,7 +18,7 @@ import { parseTaskResultProjection } from './task-results.mjs';
 export const CONTEXT_MANIFEST_SCHEMA_VERSION = 1;
 export const MODEL_TIERS = Object.freeze(['cheap', 'standard', 'most-capable']);
 export const PHASE_ROLES = Object.freeze(['plan', 'implement', 'review']);
-export const TASK_ROLES = Object.freeze(['implementer', 'task-reviewer', 'fix', 'final-review']);
+export const TASK_ROLES = Object.freeze(['implementer', 'task-reviewer', 'fix', 'final-review', 'task-review-correction', 'final-review-correction']);
 
 const COMPLEXITY_TIER = Object.freeze({
   mechanical: 'cheap',
@@ -50,8 +50,10 @@ const ROLE_PHASE = Object.freeze({
   'task-reviewer': 'implement',
   fix: 'implement',
   'final-review': 'implement',
+  'task-review-correction': 'implement',
+  'final-review-correction': 'implement',
 });
-const TASK_SCOPED_ROLES = new Set(['implementer', 'task-reviewer', 'fix']);
+const TASK_SCOPED_ROLES = new Set(['implementer', 'task-reviewer', 'fix', 'task-review-correction']);
 const MANIFEST_KEYS = new Set([
   'schemaVersion', 'runId', 'scope', 'objective', 'required', 'onDemand', 'outputs',
   'modelTier', 'attempt', 'testCommand', 'criterionIds', 'contract',
@@ -701,6 +703,53 @@ export function buildFinalReviewManifest(input) {
   });
 }
 
+function correctionInputs(input, final) {
+  const root = safeRoot(input.repoRoot);
+  const receipt = assertSafeRelPath(input.originalReceiptPath, 'original review receipt');
+  const match = /^(\.apex\/work\/tasks\/[A-Za-z0-9][A-Za-z0-9._-]*)\/(final|task-([1-9]\d*))-review-guard-attempt-([1-9]\d*)-iteration-([1-9]\d*)-original\.json$/.exec(receipt);
+  if (!match || (final ? match[2] !== 'final' : match[3] !== String(safeInteger(input.task, 'task')))
+    || Number(match[4]) !== safeInteger(input.attempt, 'attempt')) throw new Error('original review receipt does not bind correction scope');
+  parseWorkPath(receipt, 'work-output', 'review-guard');
+  const dir = match[1];
+  const report = `${dir}/${final ? 'final' : `task-${input.task}`}-review.md`;
+  const issues = `${dir}/${final ? 'final-review' : `task-${input.task}`}-issues.md`;
+  if (input.reportPath !== report || input.issuePath !== issues) throw new Error('correction report or issue path does not bind original receipt');
+  assertCorrectionReceipt(root, receipt, { runId: input.runId, attempt: input.attempt, task: final ? 'final' : String(input.task), report, issues });
+  const paths = [receipt, report, ...(existsSync(join(root, issues)) ? [issues] : [])];
+  return paths.map((path) => required(root, path, path === receipt ? 'original reviewer receipt' : path === report ? PURPOSES.report : PURPOSES.issue));
+}
+
+function assertCorrectionReceipt(root, path, binding) {
+  let original;
+  try { original = JSON.parse(readWorkPath(root, path, { expect: 'work-output', family: 'review-guard', encoding: 'utf8' })); }
+  catch (error) { throw new Error(`cannot read original reviewer receipt: ${error.message}`); }
+  const config = original?.config;
+  if (original?.version !== 5 || original.status !== 'REPAIRABLE' || original.accepted !== false
+    || config?.reviewerResponseProtocol !== 3 || config.runId !== binding.runId
+    || config.attempt !== binding.attempt || config.task !== binding.task
+    || config.report !== binding.report || config.issues !== binding.issues) {
+    throw new Error('original reviewer receipt does not bind correction run, scope, or artifacts');
+  }
+}
+
+export function buildTaskReviewCorrectionManifest(input) {
+  return taskInput({ ...input, outputs: [], testCommand: undefined, criterionIds: undefined, contract: { reviewerResponseProtocol: 3 } }, {
+    role: 'task-review-correction',
+    objective: `Correct the response format for Task ${safeInteger(input.task, 'task')}`,
+    requiredInputs: () => correctionInputs(input, false),
+    onDemandInputs: () => [],
+  });
+}
+
+export function buildFinalReviewCorrectionManifest(input) {
+  return commonManifest({ ...input, outputs: [], testCommand: undefined, criterionIds: undefined, contract: { reviewerResponseProtocol: 3 } }, {
+    phase: 'implement', role: 'final-review-correction',
+    objective: 'Correct the final reviewer response format',
+    requiredInputs: () => correctionInputs(input, true),
+    onDemandInputs: () => [],
+  });
+}
+
 export function buildTaskManifest(role, input) {
   safeRole(role);
   const builders = {
@@ -708,6 +757,8 @@ export function buildTaskManifest(role, input) {
     'task-reviewer': buildTaskReviewerManifest,
     fix: buildFixManifest,
     'final-review': buildFinalReviewManifest,
+    'task-review-correction': buildTaskReviewCorrectionManifest,
+    'final-review-correction': buildFinalReviewCorrectionManifest,
   };
   if (!Object.hasOwn(builders, role)) throw new Error(`'${role}' is not a task role`);
   return builders[role](input);
@@ -951,6 +1002,25 @@ export function validateContextManifest(manifest, { repoRoot }) {
   if (manifest.testCommand !== undefined) normalized.testCommand = assertSafeLine(manifest.testCommand, 'testCommand');
   if (manifest.criterionIds !== undefined) normalized.criterionIds = safeStringArray(manifest.criterionIds, 'criterionIds');
   if (manifest.contract !== undefined) normalized.contract = scalarContract(manifest.contract);
+  if (role === 'task-review-correction' || role === 'final-review-correction') {
+    const final = role === 'final-review-correction';
+    if (normalized.attempt === undefined || normalized.contract?.reviewerResponseProtocol !== 3
+      || Object.keys(normalized.contract).length !== 1 || outputs.length !== 0 || onDemandInputs.length !== 0
+      || normalized.testCommand !== undefined || normalized.criterionIds !== undefined) {
+      throw new Error('correction manifest requires protocol 3, attempt, empty outputs and no on-demand inputs');
+    }
+    const receipt = requiredInputs[0]?.path;
+    const match = /^(\.apex\/work\/tasks\/[A-Za-z0-9][A-Za-z0-9._-]*)\/(final|task-([1-9]\d*))-review-guard-attempt-([1-9]\d*)-iteration-([1-9]\d*)-original\.json$/.exec(receipt ?? '');
+    if (!match || (final ? match[2] !== 'final' : Number(match[3]) !== task)
+      || Number(match[4]) !== normalized.attempt) throw new Error('correction receipt does not bind manifest scope');
+    const dir = match[1];
+    const report = `${dir}/${final ? 'final' : `task-${task}`}-review.md`;
+    const issues = `${dir}/${final ? 'final-review' : `task-${task}`}-issues.md`;
+    if (requiredInputs.length < 2 || requiredInputs.length > 3 || requiredInputs[1].path !== report
+      || requiredInputs.length === 3 && requiredInputs[2].path !== issues) throw new Error('correction inputs must be original receipt and assigned report/issues only');
+    assertCorrectionReceipt(root, receipt, { runId: normalized.runId, attempt: normalized.attempt,
+      task: final ? 'final' : String(task), report, issues });
+  }
   return normalized;
 }
 
@@ -987,7 +1057,7 @@ export function manifestReferencePrompt({ phase, manifestPath, skill, runId, att
 
 const CLI_PATH_OPTIONS = Object.freeze([
   'brief', 'report', 'task-diff', 'standard', 'hub-index', 'plan', 'spec', 'issue',
-  'criteria', 'task-result-index', 'branch-diff', 'artifact-output',
+  'criteria', 'task-result-index', 'branch-diff', 'artifact-output', 'original-receipt',
 ]);
 
 const ROLE_OPTIONS = Object.freeze({
@@ -995,6 +1065,8 @@ const ROLE_OPTIONS = Object.freeze({
   'task-reviewer': new Set(['brief', 'report', 'task-diff', 'standard', 'hub-index']),
   fix: new Set(['brief', 'issue', 'task-diff', 'standard']),
   'final-review': new Set(['criteria', 'task-result-index', 'branch-diff', 'standard']),
+  'task-review-correction': new Set(['original-receipt', 'report', 'issue']),
+  'final-review-correction': new Set(['original-receipt', 'report', 'issue']),
 });
 
 function cliInput(values, repoRoot) {
@@ -1014,6 +1086,7 @@ function cliInput(values, repoRoot) {
     runId: values['run-id'],
     modelTier: values['model-tier'],
     task: values.task === undefined ? undefined : Number(values.task),
+    attempt: values.attempt === undefined ? undefined : Number(values.attempt),
     testCommand: values['test-command'],
     criterionIds: values.criterion,
     outputs: values['artifact-output'],
@@ -1032,6 +1105,7 @@ function cliInput(values, repoRoot) {
       planPath: values.plan,
       specPath: values.spec,
       issuePath: values.issue,
+      originalReceiptPath: values['original-receipt'],
       criteriaPath: values.criteria,
       taskResultIndexPath: values['task-result-index'],
       branchDiffPath: values['branch-diff'],
@@ -1105,7 +1179,7 @@ function verifyHandoff(values) {
 }
 
 export function main(argv = process.argv.slice(2)) {
-  const usage = 'usage: autopilot-context.mjs --role <implementer|task-reviewer|fix|final-review> --repo-root <root> --run-id <id> --model-tier <tier> --output <manifest-path> [role-specific named paths]';
+  const usage = 'usage: autopilot-context.mjs --role <implementer|task-reviewer|fix|final-review|task-review-correction|final-review-correction> --repo-root <root> --run-id <id> --model-tier <tier> --output <manifest-path> [role-specific named paths]';
   let values;
   try {
     ({ values } = parseArgs({
@@ -1118,6 +1192,7 @@ export function main(argv = process.argv.slice(2)) {
         'run-id': { type: 'string' },
         'task-result-protocol': { type: 'string' },
         task: { type: 'string' },
+        attempt: { type: 'string' },
         'model-tier': { type: 'string' },
         'test-command': { type: 'string' },
         criterion: { type: 'string', multiple: true },
@@ -1129,6 +1204,7 @@ export function main(argv = process.argv.slice(2)) {
         plan: { type: 'string' },
         spec: { type: 'string' },
         issue: { type: 'string' },
+        'original-receipt': { type: 'string' },
         criteria: { type: 'string' },
         'task-result-index': { type: 'string' },
         'branch-diff': { type: 'string' },

@@ -130,6 +130,94 @@ test('response-only correction cannot promote an issues verdict', () => fixture(
   assert.equal(checkReview(root, state, envelope(), true).status, 'BLOCKED');
 }));
 
+test('v3 derives artifact from verdict and repairs only a reversed pair after reservation', () => fixture(({ root, state, config, put, report, issues }) => {
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3 });
+  put(report, 'Review completed.\n');
+  put(issues, 'Recorded issue.\n');
+  const original = checkReview(root, state, 'signals: review:critical\nstatus: ISSUES_FOUND\n');
+  assert.equal(original.status, 'REPAIRABLE');
+  assert.equal(original.accepted, false);
+  const originalBytes = readFileSync(join(root, `${state}-original.json`));
+  assert.equal(inspectReview(root, state).status, 'REPAIRABLE');
+  const reservation = reserveRepair(root, state);
+  assert.equal(reservation.budget, 1);
+  assert.equal(inspectReview(root, state).status, 'BLOCKED');
+  assert.equal(checkReview(root, state, 'status: ISSUES_FOUND\nsignals: review:critical\n', true).accepted, true);
+  assert.equal(inspectReview(root, state).envelope.artifact, issues);
+  assert.deepEqual(readFileSync(join(root, `${state}-original.json`)), originalBytes);
+}));
+
+test('v3 one full Markdown fence is repairable but cannot change status or signals', () => fixture(({ root, state, config, put, report }) => {
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3 });
+  put(report, 'Approved.\n');
+  assert.equal(checkReview(root, state, '```text\nstatus: APPROVED\nsignals: review:clean\n```\n').status, 'REPAIRABLE');
+  reserveRepair(root, state);
+  assert.equal(checkReview(root, state, 'status: ISSUES_FOUND\nsignals: review:clean\n', true).status, 'BLOCKED');
+}));
+
+for (const malformed of [
+  'status: APPROVED\n',
+  'status: APPROVED\nsignals: review:clean\nsignals: review:other\n',
+  'Here is my review:\nstatus: APPROVED\nsignals: review:clean\n',
+  '```text\nstatus: APPROVED\nsignals: review:clean\n```\n```text\nstatus: APPROVED\nsignals: review:clean\n```\n',
+  'status: BLOCKED\nsignals: review:clean\n',
+]) {
+  test(`v3 refuses ambiguous or ineligible correction: ${malformed.slice(0, 28)}`, () => fixture(({ root, state, config, put, report }) => {
+    beginReview(root, state, { ...config, reviewerResponseProtocol: 3 });
+    put(report, 'Review completed.\n');
+    assert.notEqual(checkReview(root, state, malformed).status, 'REPAIRABLE');
+    assert.throws(() => reserveRepair(root, state), /not repairable/);
+  }));
+}
+
+test('v3 requires report for approval and report plus issues for findings', () => fixture(({ root, state, config, put, report, issues }) => {
+  rmSync(join(root, issues));
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3 });
+  assert.equal(checkReview(root, state, 'status: APPROVED\nsignals: none\n').status, 'BLOCKED');
+  const next = state.replace('iteration-2', 'iteration-3');
+  beginReview(root, next, { ...config, iteration: 3, reviewerResponseProtocol: 3 });
+  put(report, 'Review completed.\n');
+  assert.equal(checkReview(root, next, 'status: ISSUES_FOUND\nsignals: review:critical\n').status, 'BLOCKED');
+  const last = state.replace('iteration-2', 'iteration-4');
+  beginReview(root, last, { ...config, iteration: 4, reviewerResponseProtocol: 3 });
+  put(issues, 'Finding.\n');
+  assert.equal(checkReview(root, last, 'status: ISSUES_FOUND\nsignals: review:critical\n').accepted, true);
+}));
+
+test('v3 accepts a strict JSON pair and binds approval to the unchanged report', () => fixture(({ root, state, config, put, report }) => {
+  beginReview(root, state, { ...config, format: 'json', reviewerResponseProtocol: 3 });
+  put(report, 'Approved.\n');
+  const result = checkReview(root, state, JSON.stringify({ status: 'APPROVED', signals: 'review:clean' }));
+  assert.equal(result.accepted, true);
+  assert.equal(result.envelope.artifact, report);
+  assert.equal(inspectReview(root, state).accepted, true);
+  put(report, 'Changed after acceptance.\n');
+  assert.equal(inspectReview(root, state).status, 'BLOCKED');
+}));
+
+test('v3 NEEDS_CONTEXT remains non-repairable when no review report was written', () => fixture(({ root, state, config }) => {
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3 });
+  const result = checkReview(root, state, 'status: NEEDS_CONTEXT\nsignals: review:missing-context\n');
+  assert.equal(result.status, 'NEEDS_CONTEXT');
+  assert.equal(result.accepted, false);
+  assert.throws(() => reserveRepair(root, state), /not repairable/);
+}));
+
+test('v3 captured correction replays after restart; a reserved uncaptured correction cannot redispatch', () => fixture(({ root, state, config, put, report }) => {
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3 });
+  put(report, 'Approved.\n');
+  checkReview(root, state, 'signals: review:clean\nstatus: APPROVED\n');
+  reserveRepair(root, state);
+  assert.equal(inspectReview(root, state).status, 'BLOCKED');
+  assert.throws(() => reserveRepair(root, state), /already exists/);
+  checkReview(root, state, 'status: APPROVED\nsignals: review:clean\n', true);
+  assert.equal(inspectReview(root, state).accepted, true);
+  const saved = JSON.parse(readFileSync(join(root, `${state}-corrected.json`), 'utf8'));
+  saved.envelope.signals = 'review:other';
+  put(`${state}-corrected.json`, JSON.stringify(saved));
+  assert.throws(() => inspectReview(root, state), /review evidence mismatch/);
+}));
+
 test('strict parser rejects wrong fields, paths, status, and extra prose', () => fixture(({ config, envelope }) => {
   for (const text of [envelope() + 'extra', envelope().replace('APPROVED', 'DONE'), envelope().replace(config.report, '../report.md'), envelope().replace('signals:', 'other:'), envelope().replace('none', config.report)]) {
     assert.throws(() => parseReviewerResponse(text, config));

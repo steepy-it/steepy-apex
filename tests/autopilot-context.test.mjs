@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   buildFinalReviewManifest,
+  buildFinalReviewCorrectionManifest,
   buildFixManifest,
   buildImplementManifest,
   buildImplementerManifest,
@@ -19,6 +20,7 @@ import {
   buildReviewManifest,
   buildTaskManifest,
   buildTaskReviewerManifest,
+  buildTaskReviewCorrectionManifest,
   deriveImplicatedStandardPaths,
   manifestReferencePrompt,
   materializeSuccessCriteria,
@@ -89,6 +91,47 @@ test('implementer manifest records bytes, preserves order, and keeps upstream ar
     '.apex/_INDEX.md',
   ]);
   assert.ok(!JSON.stringify(manifest).includes('Node built-ins only'));
+});
+
+test('correction manifests expose only the bound original receipt and frozen review artifacts', (t) => {
+  const repoRoot = materialize(t);
+  const dir = '.apex/work/tasks/context-efficient';
+  const taskReceipt = `${dir}/task-1-review-guard-attempt-2-iteration-1-original.json`;
+  const taskReport = `${dir}/task-1-review.md`;
+  const taskIssues = `${dir}/task-1-issues.md`;
+  const finalReceipt = `${dir}/final-review-guard-attempt-2-iteration-1-original.json`;
+  const finalReport = `${dir}/final-review.md`;
+  const finalIssues = `${dir}/final-review-issues.md`;
+  for (const path of [taskReceipt, taskReport, taskIssues, finalReceipt, finalReport, finalIssues]) {
+    mkdirSync(dirname(join(repoRoot, path)), { recursive: true });
+    writeFileSync(join(repoRoot, path), `${path}\n`);
+  }
+  const receipt = (task, report, issues) => JSON.stringify({ version: 5, status: 'REPAIRABLE', accepted: false,
+    config: { runId: base.runId, attempt: 2, task, report, issues, reviewerResponseProtocol: 3 } });
+  writeFileSync(join(repoRoot, taskReceipt), receipt('1', taskReport, taskIssues));
+  writeFileSync(join(repoRoot, finalReceipt), receipt('final', finalReport, finalIssues));
+  const task = buildTaskReviewCorrectionManifest({ ...base, repoRoot, task: 1, attempt: 2,
+    originalReceiptPath: taskReceipt, reportPath: taskReport, issuePath: taskIssues });
+  const final = buildFinalReviewCorrectionManifest({ ...base, repoRoot, attempt: 2,
+    originalReceiptPath: finalReceipt, reportPath: finalReport, issuePath: finalIssues });
+  for (const [manifest, role, paths] of [
+    [task, 'task-review-correction', [taskReceipt, taskReport, taskIssues]],
+    [final, 'final-review-correction', [finalReceipt, finalReport, finalIssues]],
+  ]) {
+    assert.equal(manifest.scope.role, role);
+    assert.deepEqual(manifest.required.map((entry) => entry.path), paths);
+    assert.deepEqual(manifest.onDemand, []);
+    assert.deepEqual(manifest.outputs, []);
+    assert.equal(manifest.contract.reviewerResponseProtocol, 3);
+    assert.equal(manifest.testCommand, undefined);
+    assert.equal(manifest.criterionIds, undefined);
+    assert.deepEqual(validateContextManifest(manifest, { repoRoot }), manifest);
+    assert.throws(() => validateContextManifest({ ...manifest, testCommand: 'npm test' }, { repoRoot }), /correction manifest/);
+  }
+  assert.throws(() => buildTaskReviewCorrectionManifest({ ...base, repoRoot, task: 1, attempt: 2,
+    originalReceiptPath: finalReceipt, reportPath: taskReport, issuePath: taskIssues }), /receipt|task/);
+  assert.throws(() => buildFinalReviewCorrectionManifest({ ...base, repoRoot, attempt: 2,
+    originalReceiptPath: taskReceipt, reportPath: finalReport, issuePath: finalIssues }), /receipt|final/);
 });
 
 test('validator rejects traversal, absolute paths, unknown roles, and missing required inputs', (t) => {
