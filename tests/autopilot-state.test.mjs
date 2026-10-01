@@ -16,6 +16,9 @@ const DIR = '.apex/work/tasks/2026-10-01-autopilot-test';
 const HASH = 'a'.repeat(64);
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const scope = { phase: 'implement', attempt: 1, task: 1, iteration: 1 };
+const planScope = { phase: 'plan', attempt: 1, task: null, iteration: 1 };
+const reviewScope = { phase: 'review', attempt: 1, task: 1, iteration: 1 };
+const finalScope = { phase: 'final-review', attempt: 1, task: null, iteration: 1 };
 
 function fixture(fn) {
   const root = mkdtempSync(join(tmpdir(), 'steepy-autopilot-state-'));
@@ -49,7 +52,10 @@ test('role reservation binds the exact preceding journal and accepts only captur
   assert.deepEqual(readWorkPath(root, responsePath, { family: 'role-response' }), response);
   const receiptPath = `${DIR}/task-1-execution-1-result.json`;
   writeWorkPath(root, receiptPath, '{"ok":true}\n', { createOnly: true, family: 'task-result' });
-  acceptAutopilotResult(root, DIR, 1, { path: receiptPath, digest: sha(Buffer.from('{"ok":true}\n')) }, { verifyReceipt: (bytes) => JSON.parse(bytes).ok === true });
+  acceptAutopilotResult(root, DIR, 1, { path: receiptPath, digest: sha(Buffer.from('{"ok":true}\n')) }, {
+    verifyReceipt: (bytes, _path, invocation) => JSON.parse(bytes).ok === true
+      ? { ...invocation, accepted: true } : null,
+  });
   const state = readAutopilotRun(root, DIR).state;
   assert.equal(state.roles[0].accepted, true);
   assert.match(renderAutopilotStatus(state), /run-one/);
@@ -87,14 +93,14 @@ test('a reservation without its event remains spent and reconciles only against 
 
 test('one correction reserves a new role identity while retaining the captured original', () => fixture((root) => {
   start(root);
-  reserveAutopilotRole(root, DIR, { scope, role: 'task-reviewer' });
+  reserveAutopilotRole(root, DIR, { scope: reviewScope, role: 'task-reviewer' });
   captureAutopilotResponse(root, DIR, 1, '{}\n');
-  const correction = reserveAutopilotRole(root, DIR, { scope, role: 'task-review-correction', correctionOf: 1 });
+  const correction = reserveAutopilotRole(root, DIR, { scope: reviewScope, role: 'task-review-correction', correctionOf: 1 });
   assert.equal(correction.roleSequence, 2);
   const state = readAutopilotRun(root, DIR).state;
   assert.equal(state.roles[0].superseded, true);
   assert.equal(state.roles[1].correctionOf, 1);
-  assert.throws(() => reserveAutopilotRole(root, DIR, { scope, role: 'task-review-correction', correctionOf: 1 }), /active|already reserved/i);
+  assert.throws(() => reserveAutopilotRole(root, DIR, { scope: reviewScope, role: 'task-review-correction', correctionOf: 1 }), /active|already reserved/i);
 }));
 
 test('invalid and truncated journal prefixes refuse replay and cannot rebaseline a reservation', () => fixture((root) => {
@@ -124,4 +130,121 @@ test('status is a replaceable projection and never becomes a replay input', () =
   projectAutopilotStatus(root, DIR);
   assert.match(readWorkPath(root, `${DIR}/autopilot-status.md`, { family: 'status' }).toString(), /Status: RUNNING/u);
   assert.deepEqual(readWorkPath(root, eventPath, { family: 'autopilot-events' }), before);
+}));
+
+test('plan and reviewer roles accept their own exact evidence with invocation proof', () => fixture((root) => {
+  start(root);
+  const planPath = '.apex/work/plans/2026-10-01-autopilot-test.md';
+  reserveAutopilotRole(root, DIR, { scope: planScope, role: 'plan' });
+  captureAutopilotResponse(root, DIR, 1, '{}\n');
+  writeWorkPath(root, planPath, '# Plan\n', { createOnly: true, family: 'plan' });
+  acceptAutopilotResult(root, DIR, 1, { path: planPath, digest: sha(Buffer.from('# Plan\n')) },
+    { verifyReceipt: (_bytes, _path, invocation) => ({ ...invocation, accepted: true }) });
+  const planReceipt = JSON.parse(readWorkPath(root, `${DIR}/role-1-receipt.json`, { family: 'role-receipt' }));
+  assert.equal(planReceipt.sourcePath, planPath);
+  assert.equal(planReceipt.sourceDigest, sha(Buffer.from('# Plan\n')));
+  writeWorkPath(root, planPath, '# Plan READY\n', { family: 'plan' });
+  assert.equal(readAutopilotRun(root, DIR).state.roles[0].accepted, true);
+  const guardPath = `${DIR}/task-1-review-guard-attempt-1-iteration-1-original.json`;
+  reserveAutopilotRole(root, DIR, { scope: reviewScope, role: 'task-reviewer', expectedReceiptPath: guardPath });
+  captureAutopilotResponse(root, DIR, 2, '{}\n');
+  writeWorkPath(root, guardPath, '{"accepted":true}\n', { createOnly: true, family: 'review-guard' });
+  acceptAutopilotResult(root, DIR, 2, { path: guardPath, digest: sha(Buffer.from('{"accepted":true}\n')) },
+    { verifyReceipt: (_bytes, _path, invocation) => ({ ...invocation, accepted: true }) });
+  assert.equal(readAutopilotRun(root, DIR).state.roles.every((role) => role.accepted), true);
+}));
+
+test('whole-branch review and final reviewer use their existing evidence families', () => fixture((root) => {
+  start(root);
+  const wholeReview = { phase: 'review', attempt: 1, task: null, iteration: 1 };
+  const reviewPath = `${DIR}/review-report.md`;
+  reserveAutopilotRole(root, DIR, { scope: wholeReview, role: 'review' });
+  captureAutopilotResponse(root, DIR, 1, '{}\n');
+  writeWorkPath(root, reviewPath, '# Review DRAFT\n', { createOnly: true, family: 'review-report' });
+  const reviewDigest = sha(Buffer.from('# Review DRAFT\n'));
+  assert.throws(() => acceptAutopilotResult(root, DIR, 1, { path: reviewPath, digest: reviewDigest },
+    { verifyReceipt: () => true }), /semantic proof/i);
+  assert.throws(() => acceptAutopilotResult(root, DIR, 1, { path: reviewPath, digest: reviewDigest },
+    { verifyReceipt: (_bytes, _path, invocation) => ({ ...invocation, runId: 'foreign-run', accepted: true }) }), /semantic proof/i);
+  acceptAutopilotResult(root, DIR, 1, { path: reviewPath, digest: reviewDigest },
+    { verifyReceipt: (_bytes, _path, invocation) => ({ ...invocation, accepted: true }) });
+  writeWorkPath(root, reviewPath, '# Review READY\n', { family: 'review-report' });
+  assert.equal(readAutopilotRun(root, DIR).state.roles[0].accepted, true);
+  const finalPath = `${DIR}/final-review-guard-attempt-1-iteration-1-original.json`;
+  reserveAutopilotRole(root, DIR, { scope: finalScope, role: 'final-review' });
+  captureAutopilotResponse(root, DIR, 2, '{}\n');
+  writeWorkPath(root, finalPath, '{"approved":true}\n', { createOnly: true, family: 'review-guard' });
+  acceptAutopilotResult(root, DIR, 2, { path: finalPath, digest: sha(Buffer.from('{"approved":true}\n')) },
+    { verifyReceipt: (_bytes, _path, invocation) => ({ ...invocation, accepted: true }) });
+  assert.equal(readAutopilotRun(root, DIR).state.roles.every((role) => role.accepted), true);
+}));
+
+test('reviewer evidence from another task or iteration cannot serve this invocation', () => fixture((root) => {
+  start(root);
+  reserveAutopilotRole(root, DIR, { scope: reviewScope, role: 'task-reviewer' });
+  captureAutopilotResponse(root, DIR, 1, '{}\n');
+  for (const path of [
+    `${DIR}/task-2-review-guard-attempt-1-iteration-1-original.json`,
+    `${DIR}/task-1-review-guard-attempt-1-iteration-2-original.json`,
+  ]) {
+    writeWorkPath(root, path, '{}\n', { createOnly: true, family: 'review-guard' });
+    assert.throws(() => acceptAutopilotResult(root, DIR, 1, { path, digest: sha(Buffer.from('{}\n')) },
+      { verifyReceipt: () => true }), /receipt.*invocation/i);
+  }
+}));
+
+test('phase receipt substitution and forged role binding fail replay even with a matching event digest', () => fixture((root) => {
+  start(root);
+  reserveAutopilotRole(root, DIR, { scope: planScope, role: 'plan' });
+  captureAutopilotResponse(root, DIR, 1, '{}\n');
+  const sourcePath = '.apex/work/plans/2026-10-01-autopilot-test.md';
+  writeWorkPath(root, sourcePath, '# Draft\n', { createOnly: true, family: 'plan' });
+  acceptAutopilotResult(root, DIR, 1, { path: sourcePath, digest: sha(Buffer.from('# Draft\n')) },
+    { verifyReceipt: (_bytes, _path, invocation) => ({ ...invocation, accepted: true }) });
+  const receiptPath = `${DIR}/role-1-receipt.json`;
+  const valid = readWorkPath(root, receiptPath, { family: 'role-receipt' });
+  const forged = Buffer.from(`${JSON.stringify({ ...JSON.parse(valid), role: 'review' })}\n`);
+  writeWorkPath(root, receiptPath, forged, { family: 'role-receipt' });
+  assert.throws(() => readAutopilotRun(root, DIR), /digest mismatch/i);
+  const eventsPath = `${DIR}/autopilot-events.jsonl`;
+  const events = readWorkPath(root, eventsPath, { family: 'autopilot-events' }).toString().trimEnd().split('\n').map((line) => JSON.parse(line));
+  events.at(-1).receiptDigest = sha(forged);
+  writeWorkPath(root, eventsPath, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`, { family: 'autopilot-events' });
+  assert.throws(() => readAutopilotRun(root, DIR), /phase receipt invocation mismatch/i);
+}));
+
+test('writer acceptance refuses a different execution receipt even for the same task', () => fixture((root) => {
+  start(root);
+  const own = `${DIR}/task-1-execution-1-result.json`;
+  const other = `${DIR}/task-1-execution-2-result.json`;
+  reserveAutopilotRole(root, DIR, { scope, role: 'implementer', expectedReceiptPath: own });
+  captureAutopilotResponse(root, DIR, 1, '{}\n');
+  writeWorkPath(root, other, '{"accepted":true}\n', { createOnly: true, family: 'task-result' });
+  assert.throws(() => acceptAutopilotResult(root, DIR, 1,
+    { path: other, digest: sha(Buffer.from('{"accepted":true}\n')) }, { verifyReceipt: () => true }), /receipt|binding|expected/i);
+}));
+
+test('correction must match reviewer role and exact scope; superseded response cannot be accepted', () => fixture((root) => {
+  start(root);
+  const guardPath = `${DIR}/task-1-review-guard-attempt-1-iteration-1-original.json`;
+  reserveAutopilotRole(root, DIR, { scope: reviewScope, role: 'task-reviewer', expectedReceiptPath: guardPath });
+  captureAutopilotResponse(root, DIR, 1, '{}\n');
+  assert.throws(() => reserveAutopilotRole(root, DIR, { scope: { ...reviewScope, task: 2 }, role: 'task-review-correction', correctionOf: 1,
+    expectedReceiptPath: `${DIR}/task-2-review-guard-attempt-1-iteration-1-corrected.json` }), /scope|correction/i);
+  assert.throws(() => reserveAutopilotRole(root, DIR, { scope: reviewScope, role: 'fix', correctionOf: 1,
+    expectedReceiptPath: `${DIR}/task-1-execution-2-result.json` }), /role|correction/i);
+  reserveAutopilotRole(root, DIR, { scope: reviewScope, role: 'task-review-correction', correctionOf: 1,
+    expectedReceiptPath: `${DIR}/task-1-review-guard-attempt-1-iteration-1-corrected.json` });
+  writeWorkPath(root, guardPath, '{"accepted":true}\n', { createOnly: true, family: 'review-guard' });
+  assert.throws(() => acceptAutopilotResult(root, DIR, 1,
+    { path: guardPath, digest: sha(Buffer.from('{"accepted":true}\n')) }, { verifyReceipt: () => true }), /superseded|correction/i);
+}));
+
+test('final-review correction requires the final-review-correction role', () => fixture((root) => {
+  start(root);
+  reserveAutopilotRole(root, DIR, { scope: finalScope, role: 'final-review',
+    expectedReceiptPath: `${DIR}/final-review-guard-attempt-1-iteration-1-original.json` });
+  captureAutopilotResponse(root, DIR, 1, '{}\n');
+  assert.throws(() => reserveAutopilotRole(root, DIR, { scope: finalScope, role: 'task-review-correction', correctionOf: 1,
+    expectedReceiptPath: `${DIR}/final-review-guard-attempt-1-iteration-1-corrected.json` }), /correction|role/i);
 }));

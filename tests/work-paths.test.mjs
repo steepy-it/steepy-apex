@@ -52,6 +52,7 @@ const FAMILIES = [
   ['autopilot-events', `.apex/work/tasks/${RUN}/autopilot-events.jsonl`, 'work-output'],
   ['role-reservation', `.apex/work/tasks/${RUN}/role-1-reservation.json`, 'work-output'],
   ['role-response', `.apex/work/tasks/${RUN}/role-1-response.json`, 'work-output'],
+  ['role-receipt', `.apex/work/tasks/${RUN}/role-1-receipt.json`, 'work-output'],
   ['role-raw', `.apex/work/tasks/${RUN}/role-1.raw.jsonl`, 'work-output'],
   ['role-log', `.apex/work/tasks/${RUN}/role-1.log`, 'work-output'],
   ['task-brief', `.apex/work/tasks/${RUN}/task-1-brief.md`, 'work-output'],
@@ -61,7 +62,7 @@ const FAMILIES = [
 ];
 const SYMLINK_FAMILIES = [
   'manifest', 'criteria', 'status', 'raw', 'ledger', 'diff', 'evidence', 'review-report', 'task-report', 'task-result', 'task-result-report',
-  'autopilot-run', 'autopilot-events', 'role-reservation', 'role-response', 'role-raw', 'role-log',
+  'autopilot-run', 'autopilot-events', 'role-reservation', 'role-response', 'role-receipt', 'role-raw', 'role-log',
   'task-brief', 'task-diff', 'recovery-input', 'task-import',
 ];
 const LOOP = '2026-09-03-demo-loop';

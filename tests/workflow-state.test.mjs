@@ -40,6 +40,13 @@ test('shared sequence primitive rejects duplicate and truncated identities witho
   assert.throws(() => assertNextWorkflowSequence(1, { sequence: 3 }), /truncated stream/u);
 });
 
+test('shared envelope accepts an explicit Gear 3 disk version while Gear 4 keeps v1 by default', () => {
+  const v2 = { schemaVersion: 2, sequence: 1, runId: RUN_ID,
+    timestamp: TIMESTAMP, event: 'RUN_STARTED' };
+  assert.throws(() => normalizeWorkflowEnvelope(v2), /unsupported schemaVersion/u);
+  assert.equal(normalizeWorkflowEnvelope(v2, { schemaVersion: 2 }).schemaVersion, 2);
+});
+
 function envelope(event, fields = {}, sequence = 1) {
   return {
     schemaVersion: 1,

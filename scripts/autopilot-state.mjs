@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import { TextDecoder } from 'node:util';
-import { appendWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
+import { appendWorkPath, parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
 import {
   assertNextWorkflowSequence, correlateRun, normalizeWorkflowEnvelope, selectBaseline,
 } from './workflow-state.mjs';
 import { verifyAutopilotRuntime } from './autopilot-runtime.mjs';
 
-export const AUTOPILOT_EVENT_SCHEMA_VERSION = 1;
+export const AUTOPILOT_EVENT_SCHEMA_VERSION = 2;
 export const AUTOPILOT_RUN_SCHEMA_VERSION = 1;
+export const AUTOPILOT_RESERVATION_SCHEMA_VERSION = 2;
 export const AUTOPILOT_CONTROLLER_PROTOCOL = 2;
 export const AUTOPILOT_ROLES = Object.freeze([
   'plan', 'review', 'implementer', 'task-reviewer', 'fix', 'final-review',
@@ -22,10 +23,10 @@ const SCHEMAS = Object.freeze({
   RUN_STARTED: ['baseline', 'branch', 'runtimeFingerprint'],
   PHASE_RESERVED: ['scope'],
   PHASE_ACCEPTED: ['scope'],
-  ROLE_RESERVED: ['scope', 'roleSequence', 'role', 'reservationPath', 'reservationDigest', 'requestedModel', 'descriptorModel', 'degradationReason'],
+  ROLE_RESERVED: ['scope', 'roleSequence', 'role', 'reservationPath', 'reservationDigest', 'expectedReceiptPath', 'requestedModel', 'descriptorModel', 'degradationReason'],
   RESPONSE_CAPTURED: ['scope', 'roleSequence', 'responsePath', 'responseDigest', 'observedModel'],
   RESULT_ACCEPTED: ['scope', 'roleSequence', 'receiptPath', 'receiptDigest'],
-  REPAIR_RESERVED: ['scope', 'roleSequence', 'role', 'correctionOf', 'reservationPath', 'reservationDigest', 'requestedModel', 'descriptorModel', 'degradationReason'],
+  REPAIR_RESERVED: ['scope', 'roleSequence', 'role', 'correctionOf', 'reservationPath', 'reservationDigest', 'expectedReceiptPath', 'requestedModel', 'descriptorModel', 'degradationReason'],
   RECOVERY_IMPORTED: ['scope', 'importPath', 'importDigest'],
   RECONCILIATION_REQUIRED: ['scope', 'reason'],
   RUN_HALTED: ['reason'],
@@ -37,7 +38,7 @@ const positive = (value) => Number.isSafeInteger(value) && value > 0;
 const line = (value) => typeof value === 'string' && value.length > 0
   && value.trim() === value && !/[\u0000-\u001f]/u.test(value);
 const bytesOf = (value) => Buffer.isBuffer(value) ? value : Buffer.from(value);
-const keyOf = (scope) => JSON.stringify(scope);
+const keyOf = (scope) => JSON.stringify([scope.phase, scope.attempt, scope.task, scope.iteration]);
 const paths = (dir) => ({ run: `${dir}/autopilot-run.json`, events: `${dir}/autopilot-events.jsonl`, status: `${dir}/autopilot-status.md` });
 
 function exact(value, names, label) {
@@ -54,8 +55,46 @@ function scopeOf(scope) {
   if (!PHASES.has(scope.phase) || !positive(scope.attempt) || !positive(scope.iteration)
     || !(scope.task === null || positive(scope.task))) fail('invalid phase/attempt/task/iteration scope');
   if (['plan', 'final-review'].includes(scope.phase) && scope.task !== null) fail('whole-branch phase requires null task');
-  if (['implement', 'review'].includes(scope.phase) && scope.task === null) fail('task phase requires task identity');
   return Object.freeze({ ...scope });
+}
+
+function roleReceipt(dir, scope, role, path, roleSequence) {
+  const runName = dir.split('/').at(-1);
+  let family;
+  let expected;
+  let source = null;
+  if (role === 'plan') {
+    if (scope.phase !== 'plan' || scope.task !== null) fail('plan role scope mismatch');
+    if (!positive(roleSequence)) fail('plan receipt requires role sequence');
+    family = 'role-receipt'; expected = `${dir}/role-${roleSequence}-receipt.json`;
+    source = { path: `.apex/work/plans/${runName}.md`, family: 'plan' };
+  } else if (role === 'review') {
+    if (scope.phase !== 'review' || scope.task !== null) fail('review phase role scope mismatch');
+    if (!positive(roleSequence)) fail('review receipt requires role sequence');
+    family = 'role-receipt'; expected = `${dir}/role-${roleSequence}-receipt.json`;
+    source = { path: `${dir}/review-report.md`, family: 'review-report' };
+  } else if (role === 'implementer' || role === 'fix') {
+    if (scope.phase !== 'implement' || !positive(scope.task)) fail('writer role scope mismatch');
+    family = 'task-result';
+    const prefix = `${dir}/task-${scope.task}-execution-`;
+    if (role === 'implementer') expected = `${prefix}1-result.json`;
+    else if (typeof path === 'string' && path.startsWith(prefix) && /^\d+-result\.json$/u.test(path.slice(prefix.length))) {
+      const execution = Number(path.slice(prefix.length, -'-result.json'.length));
+      if (!Number.isSafeInteger(execution) || execution < 2 || String(execution) !== path.slice(prefix.length, -'-result.json'.length)) fail('fix execution identity mismatch');
+      expected = path;
+    } else fail('fix requires a task execution receipt path');
+  } else {
+    const final = role === 'final-review' || role === 'final-review-correction';
+    const correction = role === 'task-review-correction' || role === 'final-review-correction';
+    if (final ? scope.phase !== 'final-review' || scope.task !== null
+      : scope.phase !== 'review' || !positive(scope.task)) fail('reviewer role scope mismatch');
+    family = 'review-guard';
+    const stem = final ? 'final' : `task-${scope.task}`;
+    expected = `${dir}/${stem}-review-guard-attempt-${scope.attempt}-iteration-${scope.iteration}-${correction ? 'corrected' : 'original'}.json`;
+  }
+  if (path !== undefined && path !== expected) fail('receipt path does not bind this role invocation');
+  parseWorkPath(expected, 'work-output', family);
+  return Object.freeze({ family, path: expected, source });
 }
 
 function runtimeOf(runtime) {
@@ -77,7 +116,7 @@ function runtimeOf(runtime) {
 }
 
 function eventOf(candidate) {
-  normalizeWorkflowEnvelope(candidate);
+  normalizeWorkflowEnvelope(candidate, { schemaVersion: AUTOPILOT_EVENT_SCHEMA_VERSION });
   const fields = SCHEMAS[candidate.event];
   if (!fields) fail(`unknown Gear 3 event ${String(candidate.event)}`);
   exact(candidate, [...COMMON, ...fields], candidate.event);
@@ -91,6 +130,13 @@ function eventOf(candidate) {
   if (['ROLE_RESERVED', 'REPAIR_RESERVED'].includes(candidate.event)) {
     if (!ROLES.has(candidate.role)) fail('unknown role');
     if (!line(candidate.reservationPath)) fail('invalid reservation path');
+    parseWorkPath(candidate.reservationPath, 'work-output', 'role-reservation');
+    const dir = candidate.reservationPath.slice(0, candidate.reservationPath.lastIndexOf('/'));
+    if (candidate.reservationPath !== `${dir}/role-${candidate.roleSequence}-reservation.json`) fail('reservation path identity mismatch');
+    roleReceipt(dir, candidate.scope, candidate.role, candidate.expectedReceiptPath, candidate.roleSequence);
+    if (candidate.event === 'REPAIR_RESERVED'
+      ? !['task-review-correction', 'final-review-correction'].includes(candidate.role)
+      : ['task-review-correction', 'final-review-correction'].includes(candidate.role)) fail('correction role requires its matching event');
     digest(candidate.reservationDigest, 'reservation digest');
     optionalModel(candidate.requestedModel, 'requested model');
     optionalModel(candidate.descriptorModel, 'descriptor model');
@@ -186,12 +232,17 @@ export function reduceAutopilotEvent(current, candidate) {
       if (event.event === 'REPAIR_RESERVED') {
         if (!active || active.roleSequence !== event.correctionOf || !active.responseCaptured
           || current.roles.some((item) => item.correctionOf === event.correctionOf)) fail('repair target has no single captured response');
+        if (keyOf(event.scope) !== keyOf(active.scope)) fail('correction scope does not match the captured review');
+        const expectedRole = active.role === 'task-reviewer' ? 'task-review-correction'
+          : active.role === 'final-review' ? 'final-review-correction' : null;
+        if (event.role !== expectedRole) fail('correction role does not match the captured review');
       }
       const priorRoles = event.event === 'REPAIR_RESERVED'
         ? current.roles.map((item) => item === active ? { ...item, superseded: true } : item)
         : current.roles;
       next.roles = [...priorRoles, { scope: event.scope, roleSequence: event.roleSequence,
         role: event.role, reservationPath: event.reservationPath, reservationDigest: event.reservationDigest,
+        expectedReceiptPath: event.expectedReceiptPath,
         responseCaptured: false, accepted: false, correctionOf: event.correctionOf ?? null }];
       break;
     }
@@ -201,7 +252,8 @@ export function reduceAutopilotEvent(current, candidate) {
         responsePath: event.responsePath, responseDigest: event.responseDigest, observedModel: event.observedModel } : item);
       break;
     case 'RESULT_ACCEPTED':
-      if (!role || !role.responseCaptured || role.accepted || keyOf(role.scope) !== scoped) fail('result requires a captured response');
+      if (!role || !role.responseCaptured || role.accepted || role.superseded || keyOf(role.scope) !== scoped) fail('result requires a captured, unsuperseded response');
+      if (event.receiptPath !== role.expectedReceiptPath) fail('receipt does not match reserved invocation');
       next.roles = current.roles.map((item) => item === role ? { ...item, accepted: true,
         receiptPath: event.receiptPath, receiptDigest: event.receiptDigest } : item);
       break;
@@ -278,9 +330,10 @@ function readRun(root, dir, { engineRoot, allowOrphanReservation = false } = {})
       if (event.reservationPath !== expectedPath) fail('reservation path mismatch');
       const reservationBytes = verifyBytes(root, expectedPath, 'role-reservation', event.reservationDigest);
       const reservation = parseJson(reservationBytes, 'role reservation');
-      exact(reservation, ['schemaVersion', 'runId', 'roleSequence', 'scope', 'role', 'prefixBytes', 'prefixDigest', 'runtimeFingerprint', 'requestedModel', 'descriptorModel', 'degradationReason', 'correctionOf'], 'role reservation');
-      if (reservation.schemaVersion !== 1 || reservation.runId !== run.runId || reservation.roleSequence !== event.roleSequence
+      exact(reservation, ['schemaVersion', 'runId', 'roleSequence', 'scope', 'role', 'prefixBytes', 'prefixDigest', 'runtimeFingerprint', 'expectedReceiptPath', 'requestedModel', 'descriptorModel', 'degradationReason', 'correctionOf'], 'role reservation');
+      if (reservation.schemaVersion !== AUTOPILOT_RESERVATION_SCHEMA_VERSION || reservation.runId !== run.runId || reservation.roleSequence !== event.roleSequence
         || keyOf(reservation.scope) !== keyOf(event.scope) || reservation.role !== event.role
+        || reservation.expectedReceiptPath !== event.expectedReceiptPath
         || reservation.prefixBytes !== entry.start || reservation.prefixDigest !== sha(journalBytes.subarray(0, entry.start))
         || reservation.runtimeFingerprint !== run.runtime.fingerprint
         || reservation.requestedModel !== event.requestedModel || reservation.descriptorModel !== event.descriptorModel
@@ -293,8 +346,22 @@ function readRun(root, dir, { engineRoot, allowOrphanReservation = false } = {})
       verifyBytes(root, event.responsePath, 'role-response', event.responseDigest);
     }
     if (event.event === 'RESULT_ACCEPTED') {
-      if (!event.receiptPath.startsWith(`${dir}/`)) fail('receipt is outside this run');
-      verifyBytes(root, event.receiptPath, 'task-result', event.receiptDigest);
+      const role = state.roles.find((item) => item.roleSequence === event.roleSequence);
+      if (!role) fail('result has no reserved role');
+      const receipt = roleReceipt(dir, role.scope, role.role, event.receiptPath, role.roleSequence);
+      if (event.receiptPath !== role.expectedReceiptPath) fail('result receipt mismatches reservation');
+      const receiptBytes = verifyBytes(root, event.receiptPath, receipt.family, event.receiptDigest);
+      if (receipt.source !== null) {
+        const proof = parseJson(receiptBytes, 'phase receipt');
+        exact(proof, ['schemaVersion', 'runId', 'roleSequence', 'role', 'scope', 'responseDigest',
+          'receiptPath', 'receiptDigest', 'sourcePath', 'sourceDigest', 'runtimeFingerprint', 'accepted'], 'phase receipt');
+        if (proof.schemaVersion !== 1 || proof.runId !== run.runId || proof.roleSequence !== role.roleSequence
+          || proof.role !== role.role || keyOf(proof.scope) !== keyOf(role.scope)
+          || proof.responseDigest !== role.responseDigest || proof.receiptPath !== event.receiptPath
+          || proof.receiptDigest !== null || proof.sourcePath !== receipt.source.path
+          || proof.runtimeFingerprint !== run.runtime.fingerprint || proof.accepted !== true) fail('phase receipt invocation mismatch');
+        digest(proof.sourceDigest, 'historical DRAFT digest');
+      }
     }
     if (event.event === 'RECOVERY_IMPORTED') {
       if (event.importPath !== `${dir}/task-${event.scope.task}-import.json`) fail('recovery import path mismatch');
@@ -324,7 +391,7 @@ export function reconcileAutopilotStart(root, dir, engineRoot) {
   const p = paths(dir);
   if (optionalRead(root, p.events, 'autopilot-events') !== null) return resumeAutopilotRun(root, dir, engineRoot);
   if (optionalRead(root, `${dir}/role-1-reservation.json`, 'role-reservation') !== null) fail('role reservation exists without a journal');
-  const first = eventOf({ schemaVersion: 1, sequence: 1, runId: run.runId, timestamp: new Date().toISOString(),
+  const first = eventOf({ schemaVersion: AUTOPILOT_EVENT_SCHEMA_VERSION, sequence: 1, runId: run.runId, timestamp: new Date().toISOString(),
     event: 'RUN_STARTED', branch: run.branch, baseline: run.baseline, runtimeFingerprint: run.runtime.fingerprint });
   writeWorkPath(root, p.events, `${JSON.stringify(first)}\n`, { createOnly: true, family: 'autopilot-events' });
   const state = reduceAutopilotEvents([first]);
@@ -340,8 +407,8 @@ export function reconcileAutopilotReservation(root, dir, options = {}) {
   });
   if (orphanReservation === null) fail('no orphan reservation to reconcile');
   const reservation = parseJson(orphanReservation, 'orphan role reservation');
-  exact(reservation, ['schemaVersion', 'runId', 'roleSequence', 'scope', 'role', 'prefixBytes', 'prefixDigest', 'runtimeFingerprint', 'requestedModel', 'descriptorModel', 'degradationReason', 'correctionOf'], 'orphan role reservation');
-  if (reservation.schemaVersion !== 1 || reservation.runId !== run.runId
+  exact(reservation, ['schemaVersion', 'runId', 'roleSequence', 'scope', 'role', 'prefixBytes', 'prefixDigest', 'runtimeFingerprint', 'expectedReceiptPath', 'requestedModel', 'descriptorModel', 'degradationReason', 'correctionOf'], 'orphan role reservation');
+  if (reservation.schemaVersion !== AUTOPILOT_RESERVATION_SCHEMA_VERSION || reservation.runId !== run.runId
     || reservation.roleSequence !== state.roles.length + 1
     || reservation.prefixBytes !== journalBytes.length || reservation.prefixDigest !== sha(journalBytes)
     || reservation.runtimeFingerprint !== run.runtime.fingerprint) fail('orphan reservation prefix or identity mismatch');
@@ -350,7 +417,7 @@ export function reconcileAutopilotReservation(root, dir, options = {}) {
   const event = eventFrom(state, { event: reservation.correctionOf === null ? 'ROLE_RESERVED' : 'REPAIR_RESERVED',
     scope: reservation.scope, roleSequence: reservation.roleSequence, role: reservation.role,
     ...(reservation.correctionOf === null ? {} : { correctionOf: reservation.correctionOf }),
-    reservationPath, reservationDigest: sha(orphanReservation),
+    reservationPath, reservationDigest: sha(orphanReservation), expectedReceiptPath: reservation.expectedReceiptPath,
     requestedModel: reservation.requestedModel, descriptorModel: reservation.descriptorModel,
     degradationReason: reservation.degradationReason });
   publishEvent(root, dir, state, event);
@@ -382,7 +449,7 @@ export function createAutopilotRun(root, dir, identity, { engineRoot } = {}) {
   const run = { schemaVersion: AUTOPILOT_RUN_SCHEMA_VERSION, controllerProtocol: AUTOPILOT_CONTROLLER_PROTOCOL, ...identity };
   const p = paths(dir);
   writeWorkPath(root, p.run, `${JSON.stringify(run)}\n`, { createOnly: true, family: 'autopilot-run' });
-  const first = eventOf({ schemaVersion: 1, sequence: 1, runId: run.runId, timestamp: new Date().toISOString(),
+  const first = eventOf({ schemaVersion: AUTOPILOT_EVENT_SCHEMA_VERSION, sequence: 1, runId: run.runId, timestamp: new Date().toISOString(),
     event: 'RUN_STARTED', branch: run.branch, baseline: run.baseline, runtimeFingerprint: run.runtime.fingerprint });
   writeWorkPath(root, p.events, `${JSON.stringify(first)}\n`, { createOnly: true, family: 'autopilot-events' });
   const state = reduceAutopilotEvents([first]);
@@ -405,21 +472,24 @@ export function appendAutopilotEvent(root, dir, fields, options = {}) {
 }
 
 export function reserveAutopilotRole(root, dir, {
-  scope, role, correctionOf = null, requestedModel = null, descriptorModel = null, degradationReason = null,
+  scope, role, correctionOf = null, expectedReceiptPath,
+  requestedModel = null, descriptorModel = null, degradationReason = null,
 }, options = {}) {
   scopeOf(scope);
   if (!ROLES.has(role)) fail('unknown role');
   const { run, state, journalBytes } = readAutopilotRun(root, dir, options);
   const roleSequence = state.roles.length + 1;
+  const receipt = roleReceipt(dir, scope, role, expectedReceiptPath, roleSequence);
   const reservationPath = `${dir}/role-${roleSequence}-reservation.json`;
-  const reservation = { schemaVersion: 1, runId: run.runId, roleSequence, scope, role,
+  const reservation = { schemaVersion: AUTOPILOT_RESERVATION_SCHEMA_VERSION, runId: run.runId, roleSequence, scope, role,
     prefixBytes: journalBytes.length, prefixDigest: sha(journalBytes),
-    runtimeFingerprint: run.runtime.fingerprint, requestedModel, descriptorModel,
+    runtimeFingerprint: run.runtime.fingerprint, expectedReceiptPath: receipt.path,
+    requestedModel, descriptorModel,
     degradationReason, correctionOf };
   const event = eventFrom(state, { event: correctionOf === null ? 'ROLE_RESERVED' : 'REPAIR_RESERVED',
     scope, roleSequence, role, ...(correctionOf === null ? {} : { correctionOf }), reservationPath,
     reservationDigest: sha(Buffer.from(`${JSON.stringify(reservation)}\n`)),
-    requestedModel, descriptorModel, degradationReason });
+    expectedReceiptPath: receipt.path, requestedModel, descriptorModel, degradationReason });
   // Validate the transition before publishing the create-only reservation.
   reduceAutopilotEvent(state, event);
   writeWorkPath(root, reservationPath, `${JSON.stringify(reservation)}\n`, { createOnly: true, family: 'role-reservation' });
@@ -448,13 +518,36 @@ export function acceptAutopilotResult(root, dir, roleSequence, receipt, { verify
   if (typeof verifyReceipt !== 'function') fail('receipt verifier is required before acceptance');
   const { state } = readAutopilotRun(root, dir, { engineRoot });
   const role = state.roles.find((item) => item.roleSequence === roleSequence);
-  if (!role || !role.responseCaptured || role.accepted) fail('result requires a captured, unaccepted response');
+  if (!role || !role.responseCaptured || role.accepted || role.superseded) fail('result requires a captured, unsuperseded response');
   exact(receipt, ['path', 'digest'], 'receipt reference');
   digest(receipt.digest, 'receipt digest');
-  const bytes = verifyBytes(root, receipt.path, 'task-result', receipt.digest);
-  if (verifyReceipt(bytes, receipt.path, role) !== true) fail('receipt verification rejected');
+  const rule = roleReceipt(dir, role.scope, role.role, role.expectedReceiptPath, roleSequence);
+  if (rule.source === null && receipt.path !== rule.path) fail('receipt does not match reserved invocation');
+  if (rule.source !== null && receipt.path !== rule.source.path) fail('DRAFT source does not match reserved invocation');
+  const bytes = verifyBytes(root, receipt.path, rule.source?.family ?? rule.family, receipt.digest);
+  const invocation = Object.freeze({ runId: state.runId, roleSequence, role: role.role,
+    scope: role.scope, responseDigest: role.responseDigest,
+    receiptPath: rule.path, receiptDigest: rule.source === null ? receipt.digest : null,
+    sourcePath: rule.source === null ? null : receipt.path,
+    sourceDigest: rule.source === null ? null : receipt.digest,
+    runtimeFingerprint: state.runtimeFingerprint });
+  const proof = verifyReceipt(bytes, receipt.path, invocation);
+  exact(proof, [...Object.keys(invocation), 'accepted'], 'receipt semantic proof');
+  if (proof.accepted !== true || Object.keys(invocation).some((key) => key === 'scope'
+    ? keyOf(proof.scope) !== keyOf(invocation.scope)
+    : JSON.stringify(proof[key]) !== JSON.stringify(invocation[key]))) {
+    fail('receipt semantic proof does not bind this invocation');
+  }
+  let resultDigest = receipt.digest;
+  if (rule.source !== null) {
+    const receiptBytes = Buffer.from(`${JSON.stringify({ schemaVersion: 1, ...proof })}\n`);
+    const previous = optionalRead(root, rule.path, 'role-receipt');
+    if (previous === null) writeWorkPath(root, rule.path, receiptBytes, { createOnly: true, family: 'role-receipt' });
+    else if (!previous.equals(receiptBytes)) fail('phase receipt collision');
+    resultDigest = sha(receiptBytes);
+  }
   const event = eventFrom(state, { event: 'RESULT_ACCEPTED', scope: role.scope, roleSequence,
-    receiptPath: receipt.path, receiptDigest: receipt.digest });
+    receiptPath: rule.path, receiptDigest: resultDigest });
   publishEvent(root, dir, state, event);
   return event;
 }

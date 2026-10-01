@@ -116,6 +116,7 @@ function classifyRest(rest, value) {
       if (/^task-[1-9]\d*-import\.json$/.test(rest[2])) return { type: 'work-output', family: 'task-import' };
       if (/^role-[1-9]\d*-reservation\.json$/.test(rest[2])) return { type: 'work-output', family: 'role-reservation' };
       if (/^role-[1-9]\d*-response\.json$/.test(rest[2])) return { type: 'work-output', family: 'role-response' };
+      if (/^role-[1-9]\d*-receipt\.json$/.test(rest[2])) return { type: 'work-output', family: 'role-receipt' };
       if (/^role-[1-9]\d*\.raw\.jsonl$/.test(rest[2])) return { type: 'work-output', family: 'role-raw' };
       if (/^role-[1-9]\d*\.log$/.test(rest[2])) return { type: 'work-output', family: 'role-log' };
       if (/^task-[1-9]\d*-execution-[1-9]\d*-(?:baseline|capture|result)\.json$/.test(rest[2])) return { type: 'work-output', family: 'task-result' };

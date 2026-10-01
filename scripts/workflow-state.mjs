@@ -308,12 +308,13 @@ export function selectBaseline(selectedBaseline, candidateBaseline, options = {}
 // domain-specific reducer runs. Unlike validateWorkflowEvent(), this boundary
 // intentionally leaves event-specific fields to the adapter/reducer and may
 // carry null run correlation for historical observational records.
-export function normalizeWorkflowEnvelope(candidate, { allowUncorrelated = false } = {}) {
+export function normalizeWorkflowEnvelope(candidate, { allowUncorrelated = false, schemaVersion = WORKFLOW_EVENT_SCHEMA_VERSION } = {}) {
   assertPlainObject(candidate, 'workflow envelope');
+  assertPositiveInteger(schemaVersion, 'expected schemaVersion');
   if (!Object.hasOwn(candidate, 'schemaVersion')) {
     fail('MISSING_FIELD', "missing field 'schemaVersion'");
   }
-  if (candidate.schemaVersion !== WORKFLOW_EVENT_SCHEMA_VERSION) {
+  if (candidate.schemaVersion !== schemaVersion) {
     fail('UNKNOWN_VERSION', `unsupported schemaVersion ${String(candidate.schemaVersion)}`);
   }
   if (!Object.hasOwn(candidate, 'sequence')) fail('MISSING_FIELD', "missing field 'sequence'");
