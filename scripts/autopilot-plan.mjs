@@ -1,6 +1,6 @@
 // Complete, controller-owned task contracts. The older planPhaseContext parser
 // remains the public compatibility boundary for historical runs.
-import { assertSafeLine, assertSafeRelPath } from './sanitize.mjs';
+import { LOCAL_AREA_NAMES, assertSafeLine, assertSafeRelPath } from './sanitize.mjs';
 import { parseStrictJson } from './inception-handoff.mjs';
 
 const FIELD_NAMES = [
@@ -12,7 +12,10 @@ const OPTIONAL_FIELDS = ['Standard paths', 'Routing reasons'];
 const ALL_FIELDS = new Set([...FIELD_NAMES, ...OPTIONAL_FIELDS]);
 const FIELD_LABEL = /^-[ \t]+\*\*([^*]+?)(?::\*\*|\*\*:)[ \t]*(.*)$/;
 const SPEC_REFERENCE = /\.apex\/work\/specs\/[A-Za-z0-9][A-Za-z0-9._-]*\.md#[A-Za-z0-9][A-Za-z0-9._-]*/g;
-const SPEC_PATH_MENTION = /\.apex\/work\/specs\/|\.\.\/specs\//g;
+// Any spelling that can name the work spec area, in any case: dot segments,
+// then optionally `.apex/work/` or `work/`, then `specs/<name>.md`. A deeper
+// ordinary path such as `docs/specs/x.md` is not a spec mention.
+const SPEC_PATH_MENTION = /(?<![A-Za-z0-9._/-])(?:\.\.?\/)*(?:(?:\.apex\/)?work\/)?specs\/[A-Za-z0-9._-]+\.md/gi;
 const PATH_RUN = /^(?:`[^`\n]+`(?:[ \t]*,[ \t]*`[^`\n]+`)*|[A-Za-z0-9._@/-]+(?:[ \t]*,[ \t]*[A-Za-z0-9._@/-]+)*)/;
 const ANNOTATION = /^(?:[ \t]+[—–-]|[ \t]*:)[ \t]+\S/;
 
@@ -37,16 +40,38 @@ function taskSections(text) {
   });
 }
 
+// A CommonMark code fence: 3+ backticks (no backtick in the info string) or 3+
+// tildes after at most 3 spaces, closed by the same character at least as long.
+function openingFence(line) {
+  const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+  if (!match || (match[1][0] === '`' && match[2].includes('`'))) return null;
+  return match[1];
+}
+
+function closesFence(line, fence) {
+  const match = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+  return Boolean(match) && match[1][0] === fence[0] && match[1].length >= fence.length;
+}
+
 // The fields form one leading list. A value continues on blank or indented
 // lines, so nested bullets stay inside their field. The first other line starts
 // the verbatim task notes, which run to the next H2. An unknown top-level bold
 // label and any canonical field after the notes are rejected rather than merged.
+// Fenced lines are verbatim content of their field or notes: a fenced H2 or
+// label is never a boundary.
 function fieldsOf({ task, body }) {
   const fields = new Map();
   const notes = [];
   let current = null;
+  let fence = null;
   for (const line of body.replace(/\r\n?/g, '\n').split('\n')) {
+    if (fence) {
+      (notes.length > 0 ? notes : fields.get(current)).push(line);
+      if (closesFence(line, fence)) fence = null;
+      continue;
+    }
     if (/^##[ \t]/.test(line)) break;
+    fence = openingFence(line);
     const label = FIELD_LABEL.exec(line);
     if (notes.length > 0) {
       if (label && ALL_FIELDS.has(label[1])) throw new Error(`Task ${task} field ${label[1]} follows task notes`);
@@ -113,8 +138,15 @@ function pathList(value, label, { annotated = false } = {}) {
   const seen = new Set();
   return paths.map((path) => {
     assertSafeRelPath(path, label);
-    if (path.split('/').some((part) => !part || part === '.') || path.endsWith('/')) {
+    const parts = path.split('/');
+    if (parts.some((part) => !part || part === '.') || path.endsWith('/')) {
       throw new Error(`${label} must contain canonical paths: ${path}`);
+    }
+    // Case-insensitive, because darwin storage is: these are outside source.
+    const [first, second] = parts.map((part) => part.toLowerCase());
+    if (first === '.git') throw new Error(`${label} must not name Git metadata: ${path}`);
+    if (first === '.apex' && LOCAL_AREA_NAMES.includes(second)) {
+      throw new Error(`${label} must not enter repository-local area .apex/${second}: ${path}`);
     }
     if (seen.has(path)) throw new Error(`${label} has duplicate path ${path}`);
     seen.add(path);
@@ -189,6 +221,12 @@ function specReferences(values, capabilities, task) {
   });
 }
 
+// A whole path token: `auth.md` is not mentioned by `web-auth.md`.
+function mentionsToken(text, token) {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![A-Za-z0-9._/-])${escaped}(?![A-Za-z0-9._/-])`).test(text);
+}
+
 function selectedStandards(fields, surface, route, registered) {
   if (!registered || typeof registered !== 'object' || Array.isArray(registered)
     || !Object.hasOwn(registered, surface)) throw new Error(`no standard path registered for surface ${surface}`);
@@ -214,7 +252,7 @@ function selectedStandards(fields, surface, route, registered) {
     if (at <= previous) throw new Error(`Standard paths leaves must follow routed order for ${surface}`);
     previous = at;
     const basename = path.split('/').at(-1);
-    if (!fields['Routing reasons'].includes(path) && !fields['Routing reasons'].includes(basename)) {
+    if (!mentionsToken(fields['Routing reasons'], path) && !mentionsToken(fields['Routing reasons'], basename)) {
       throw new Error(`Routing reasons must explain selected leaf ${basename}`);
     }
   }

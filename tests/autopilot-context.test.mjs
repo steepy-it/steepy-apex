@@ -1707,3 +1707,42 @@ test('controller v2 selects routed modular leaves from the core without reading 
   assert.ok(accesses.some(({ path }) => path.endsWith('web-core.md')), 'the recorder observes the core read');
   assert.deepEqual(accesses.filter(({ path }) => /web-(?:auth|data)\.md$/u.test(path)), []);
 });
+
+test('controller task manifests select the protocol explicitly and bind every supported task role', (t) => {
+  const repoRoot = materialize(t);
+  const dir = '.apex/work/tasks/context-efficient';
+  const planText = '# Plan\n\n## Task 2 — implement\n\n- **Requirements and deliverables:** Add parser behavior.\n- **Relevant global constraints:** Keep legacy entry points.\n- **Surface:** scripts\n- **Specialist agent:** scripts-agent\n- **Exact paths:** scripts/autopilot-plan.mjs\n- **Test command:** npm test\n- **Dependencies:** none\n- **Complexity:** design\n- **Success criteria:** SC1\n';
+  const binding = { controllerProtocol: 2, repoRoot, planText, taskId: '2', runId: base.runId, modelTier: 'standard',
+    routingText: '| `scripts` | [scripts](standards/scripts.md) | `scripts-agent` | — |\n',
+    standardsBySurface: { scripts: '.apex/standards/scripts.md' }, briefPath: `${dir}/task-2-brief.md` };
+  assert.throws(() => writeControllerTaskBrief({ ...binding, controllerProtocol: 1 }), /controllerProtocol 2/);
+  writeControllerTaskBrief(binding);
+  const reportPath = `${dir}/task-2-report.md`;
+  const taskDiffPath = `${dir}/task-2.diff`;
+  const issuePath = `${dir}/task-2-issues.md`;
+  for (const path of [reportPath, taskDiffPath, issuePath]) writeFileSync(join(repoRoot, path), 'evidence\n');
+
+  const reviewer = buildControllerTaskManifest('task-reviewer', { ...binding, reportPath, taskDiffPath });
+  assert.deepEqual(reviewer.required.map(({ path }) => path),
+    [binding.briefPath, reportPath, taskDiffPath, '.apex/standards/scripts.md']);
+  const fix = buildControllerTaskManifest('fix', { ...binding, issuePath, taskDiffPath });
+  assert.deepEqual(fix.required.map(({ path }) => path),
+    [binding.briefPath, issuePath, taskDiffPath, '.apex/standards/scripts.md']);
+  for (const manifest of [reviewer, fix]) {
+    assert.equal(manifest.scope.task, 2);
+    assert.equal(manifest.testCommand, 'npm test');
+    assert.deepEqual(manifest.criterionIds, ['SC1']);
+  }
+  assert.throws(() => buildControllerTaskManifest('final-review', binding), /does not support role final-review/);
+
+  for (const controllerProtocol of [3, '2', 0, null]) {
+    assert.throws(() => buildControllerTaskManifest('implementer', { ...binding, controllerProtocol }),
+      /controllerProtocol must be 1 or 2/, String(controllerProtocol));
+  }
+  const legacy = { ...base, repoRoot, task: 1, briefPath: `${dir}/task-1-brief.md`,
+    standardPaths: ['.apex/standards/scripts.md'] };
+  for (const controllerProtocol of [undefined, 1]) {
+    assert.deepEqual(buildControllerTaskManifest('implementer', { ...legacy, controllerProtocol }),
+      buildTaskManifest('implementer', legacy), String(controllerProtocol));
+  }
+});

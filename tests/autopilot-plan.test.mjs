@@ -146,3 +146,70 @@ test('fix targets are a strict declared mapping to known tasks and findings', ()
   assert.throws(() => parseFixTargets(issue.replace('steepy-fix-targets: v1', 'steepy-fix-targets: v2\n\nsteepy-fix-targets: v1'), options),
     /exactly one.*marker/i);
 });
+
+// Review fix — iteration 1.
+
+test('a fenced H2 in task notes stays in the brief while an unfenced global H2 stays out', () => {
+  const fenced = `${task(1)}\nNotes start.\n\n\`\`\`markdown\n## Testing\nnpm test\n\`\`\`\n\n~~~~\n## Inside tilde\n~~~\nstill fenced\n~~~~\n\nMUST ALSO DO: critical requirement after fence.\n\n## Notes\n\nHuman context remains outside the task.\n`;
+  const [parsed] = parse(fenced).tasks;
+  const brief = materializeTaskBrief(parsed);
+  assert.ok(brief.includes('```markdown\n## Testing\nnpm test\n```\n'), brief);
+  assert.ok(brief.includes('~~~~\n## Inside tilde\n~~~\nstill fenced\n~~~~\n'), brief);
+  assert.ok(brief.includes('MUST ALSO DO: critical requirement after fence.'), brief);
+  assert.doesNotMatch(brief, /Human context remains outside the task/);
+});
+
+test('exact paths refuse Git metadata and repository-local areas but keep stable hub paths', () => {
+  for (const path of ['.git', '.git/config', '.GIT/config', '.apex/work/plans/x.md', '.apex/inception/state.json', '.APEX/Work/x.md']) {
+    assert.throws(() => parse(task(1).replace('scripts/example.mjs', path)), /Exact paths/, path);
+  }
+  for (const path of ['.apex/standards/scripts.md', '.apex/_INDEX.md', '.github/workflows/ci.yml']) {
+    const [accepted] = parse(task(1).replace('scripts/example.mjs', path)).tasks;
+    assert.deepEqual(accepted.exactPaths, [path, 'tests/example.test.mjs'], path);
+  }
+});
+
+test('exact paths refuse absolute, non-canonical, and glob entries', () => {
+  for (const path of ['/etc/x', 'scripts//a.mjs', './scripts/a.mjs', 'scripts/', 'scripts/*.mjs']) {
+    assert.throws(() => parse(task(1).replace('scripts/example.mjs', path)), /Exact paths/, path);
+  }
+});
+
+test('any spelling that can name the work spec area needs an exact capability', () => {
+  for (const mention of ['.APEX/WORK/SPECS/x.md#a', 'work/specs/x.md#a', 'specs/x.md#a', '../../work/specs/x.md']) {
+    assert.throws(() => parse(task(1).replace('Implement the stated behavior.', `Apply \`${mention}\`.`)),
+      /spec.*capability/i, mention);
+  }
+  const reference = '.apex/work/specs/x.md#a';
+  const [resolved] = parse(task(1).replace('Implement the stated behavior.', `Apply \`${reference}\`.`),
+    { specCapabilities: [{ reference, text: 'Exact section text.' }] }).tasks;
+  assert.deepEqual(resolved.resolvedSpecSections, [{ reference, text: 'Exact section text.' }]);
+  const [ordinary] = parse(task(1).replace('scripts/example.mjs', 'docs/specs/guide.md')).tasks;
+  assert.deepEqual(ordinary.exactPaths, ['docs/specs/guide.md', 'tests/example.test.mjs']);
+});
+
+test('routing reasons must name a selected leaf as a whole token', () => {
+  const leaves = { ...standardsBySurface, web: { core: '.apex/standards/web/web-core.md', leaves: [
+    '.apex/standards/web/auth.md', '.apex/standards/web/web-auth.md',
+  ] } };
+  const web = task(1).replace('`scripts`', '`web`').replace('`scripts-agent`', '`web-agent`');
+  const select = (reasons) => `${web}- **Standard paths:** \`.apex/standards/web/web-core.md\`, \`.apex/standards/web/auth.md\`\n- **Routing reasons:** ${reasons}\n`;
+  assert.throws(() => parse(select('`web-auth.md` covers sessions.'), { standardsBySurface: leaves }),
+    /Routing reasons must explain selected leaf auth\.md/);
+  for (const reasons of ['`auth.md` covers sessions.', 'See .apex/standards/web/auth.md for sessions.']) {
+    assert.deepEqual(parse(select(reasons), { standardsBySurface: leaves }).tasks[0].standardPaths,
+      ['.apex/standards/web/web-core.md', '.apex/standards/web/auth.md'], reasons);
+  }
+});
+
+test('fix targets refuse omitted findings, missing markers, numeric tasks, empty issues, and repeated tasks', () => {
+  const issue = (rows) => `# Findings\n\nsteepy-fix-targets: v1\n\`\`\`json\n${rows}\n\`\`\`\n`;
+  const options = { taskIds: ['1', '2'], findingIds: ['F1', 'F2'] };
+  assert.throws(() => parseFixTargets(issue('[{"task":"1","issueIds":["F1"]}]'), options), /omit finding F2/);
+  assert.throws(() => parseFixTargets('# Findings\n\nNo mapping.\n', options), /exactly one.*marker/i);
+  assert.throws(() => parseFixTargets(issue('[{"task":1,"issueIds":["F1","F2"]}]'), options), /unknown task/i);
+  assert.throws(() => parseFixTargets(issue('[{"task":"1","issueIds":[]},{"task":"2","issueIds":["F1","F2"]}]'), options),
+    /need issueIds/i);
+  assert.throws(() => parseFixTargets(issue('[{"task":"1","issueIds":["F1"]},{"task":"1","issueIds":["F2"]}]'), options),
+    /duplicate task/i);
+});

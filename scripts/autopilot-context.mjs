@@ -285,8 +285,10 @@ function controllerBriefPath(path, task) {
   return briefPath;
 }
 
+// A historical run has no controllerProtocol field; it keeps the legacy path.
 export function buildControllerTaskManifest(role, input) {
-  if (input.controllerProtocol !== 2) return buildTaskManifest(role, input);
+  if (input.controllerProtocol === undefined || input.controllerProtocol === 1) return buildTaskManifest(role, input);
+  if (input.controllerProtocol !== 2) throw new Error('controllerProtocol must be 1 or 2');
   if (!['implementer', 'task-reviewer', 'fix'].includes(role)) {
     throw new Error(`controller task manifest does not support role ${role}`);
   }
