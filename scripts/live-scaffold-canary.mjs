@@ -194,6 +194,49 @@ function promptFor(harness) {
   ].join(' ');
 }
 
+function optionalGitText(path) {
+  try {
+    return readFileSync(path, 'utf8').trim();
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function localSourceRevision() {
+  const dotGit = join(PACKAGE_ROOT, '.git');
+  const gitEntry = lstatSync(dotGit);
+  let gitDir;
+  if (gitEntry.isDirectory()) {
+    gitDir = dotGit;
+  } else if (gitEntry.isFile()) {
+    const pointer = /^gitdir: (.+)$/u.exec(readFileSync(dotGit, 'utf8').trim());
+    if (!pointer) return '';
+    gitDir = resolve(PACKAGE_ROOT, pointer[1]);
+  } else {
+    return '';
+  }
+  const commonPointer = optionalGitText(join(gitDir, 'commondir'));
+  const commonDir = commonPointer === null ? gitDir : resolve(gitDir, commonPointer);
+  const head = readFileSync(join(gitDir, 'HEAD'), 'utf8').trim();
+  const ref = /^ref: (refs\/[A-Za-z0-9._/-]+)$/u.exec(head)?.[1];
+  if (ref === undefined || ref.split('/').some((part) => part === '' || part === '.' || part === '..')) {
+    return head;
+  }
+  for (const root of new Set([gitDir, commonDir])) {
+    const loose = optionalGitText(join(root, ...ref.split('/')));
+    if (loose !== null) return loose;
+  }
+  const packed = optionalGitText(join(commonDir, 'packed-refs'));
+  if (packed !== null) {
+    for (const line of packed.split('\n')) {
+      const entry = /^([a-f0-9]{40}) (refs\/[A-Za-z0-9._/-]+)$/u.exec(line.trim());
+      if (entry?.[2] === ref) return entry[1];
+    }
+  }
+  return '';
+}
+
 function productIdentity() {
   const revision = spawnSync('git', ['-C', PACKAGE_ROOT, 'rev-parse', '--verify', 'HEAD'], {
     encoding: 'utf8',
@@ -202,15 +245,9 @@ function productIdentity() {
   let sourceRevision = String(revision.stdout ?? '').trim();
   if (revision.error || revision.status !== 0) {
     // Test and constrained host PATHs may intentionally expose only the harness binary.
-    // A normal checkout's HEAD/ref is an equivalent local source identity fallback.
+    // Git's local HEAD/ref metadata provides the same identity for ordinary and linked worktrees.
     try {
-      const head = readFileSync(join(PACKAGE_ROOT, '.git', 'HEAD'), 'utf8').trim();
-      const ref = /^ref: (refs\/[A-Za-z0-9._/-]+)$/u.exec(head)?.[1];
-      if (ref === undefined || ref.split('/').some((part) => part === '' || part === '.' || part === '..')) {
-        sourceRevision = head;
-      } else {
-        sourceRevision = readFileSync(join(PACKAGE_ROOT, '.git', ...ref.split('/')), 'utf8').trim();
-      }
+      sourceRevision = localSourceRevision();
     } catch {
       // The validation below is the single diagnostic for every unavailable identity route.
     }
