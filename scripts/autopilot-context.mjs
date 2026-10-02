@@ -13,7 +13,7 @@ import {
   stableReadError,
 } from './stable-paths.mjs';
 import { parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
-import { parseTaskResultProjection } from './task-results.mjs';
+import { inspectTaskImport, parseTaskResultProjection } from './task-results.mjs';
 import { inspectCorrectionEvidence } from './reviewer-response.mjs';
 import { materializeTaskBrief, parseExecutablePlan } from './autopilot-plan.mjs';
 
@@ -72,6 +72,7 @@ const PURPOSES = Object.freeze({
   standard: 'implicated surface standard',
   brief: 'task contract',
   report: 'implementer report',
+  imported: 'imported task evidence',
   issue: 'reviewer issue artifact',
   taskDiff: 'current task diff',
   branchDiff: 'aggregate branch diff',
@@ -326,12 +327,22 @@ export function buildControllerTaskManifest(role, input) {
   // A missing brief stays the builder's required-input error.
   const bytes = existingBrief(input.repoRoot, briefPath);
   if (bytes !== null) assertBriefBytes(context.task.task, briefPath, bytes, context.brief);
+  // A task reviewer names its evidence type. Imported evidence is verified
+  // before any manifest grants it, and its frozen source report is the report.
+  if (input.importPath !== undefined) {
+    if (role !== 'task-reviewer') throw new Error('only a task reviewer binds imported evidence');
+    const imported = inspectTaskImport(safeRoot(input.repoRoot), input.importPath);
+    if (imported.task !== context.task.task || imported.runId !== input.runId) throw new Error('imported evidence does not bind this task review');
+    if (input.reportPath !== imported.report.path) throw new Error('imported task review must read the imported report');
+  }
   return buildTaskManifest(role, {
     ...input,
     task: Number(context.task.task),
     standardPaths: context.standardPaths,
     testCommand: context.testCommand,
     criterionIds: context.criterionIds,
+    ...(role === 'task-reviewer'
+      ? { contract: { ...(input.contract ?? {}), reviewedEvidence: input.importPath === undefined ? 'execution' : 'import' } } : {}),
   });
 }
 
@@ -763,6 +774,7 @@ export function buildTaskReviewerManifest(input) {
     requiredInputs: (root) => [
       required(root, input.briefPath, PURPOSES.brief),
       required(root, input.reportPath, PURPOSES.report),
+      ...(input.importPath === undefined ? [] : [required(root, input.importPath, PURPOSES.imported)]),
       required(root, input.taskDiffPath, PURPOSES.taskDiff),
       ...standards.map((path) => required(root, path, 'owning standard')),
     ],

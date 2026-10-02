@@ -25,16 +25,19 @@ import {
   specPhaseContext, standardsBySurfaceFromRouting, writeContextManifest,
 } from './autopilot-context.mjs';
 import { parseFixTargets } from './autopilot-plan.mjs';
+import { inspectRecovery, loadRecoveryInput, recoveryCopies } from './autopilot-recovery.mjs';
 import {
-  beginTask, inspectTaskResult, projectTaskResults, recordTaskResult, resumeTaskResult, verifyTaskResults,
+  beginTask, importTaskResult, inspectTaskImport, inspectTaskResult, projectTaskResults, recordTaskResult, resumeTaskResult,
+  verifyTaskResults,
 } from './task-results.mjs';
 import { beginReview, checkReview, inspectReview, reserveRepair, setReviewReference } from './reviewer-response.mjs';
 import { readStableDocument } from './stable-paths.mjs';
 import { mkdirWorkPath, parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
 
 export const CONTROLLER_PROTOCOL = 2;
-// Versions are selected once per run and pinned in every role manifest. The
-// writer-only index stays on protocol 2 until imported evidence is supported.
+// Versions are selected once per run and pinned in every role manifest. A
+// recovery run (started from its exact recovery input) selects index protocol
+// 3, which also projects verified imports; every other run keeps protocol 2.
 export const CONTROLLER_CONTRACT = Object.freeze({
   controllerProtocol: CONTROLLER_PROTOCOL,
   taskResultProtocol: 2,
@@ -80,6 +83,7 @@ export function controllerPaths(specName) {
     evidence: `${dir}/evidence-report.md`, finalReport: `${dir}/final-review.md`,
     finalIssues: `${dir}/final-review-issues.md`, run: `${dir}/autopilot-run.json`,
     events: `${dir}/autopilot-events.jsonl`, status: `${dir}/autopilot-status.md`,
+    recoveryInput: `${dir}/recovery-input.json`,
   });
 }
 
@@ -261,10 +265,11 @@ const scopeOf = (phase, task = null, iteration = 1) => ({ phase, attempt: 1, tas
 const describe = (entry) => `role ${entry.roleSequence} ${entry.role}${entry.scope.task === null ? '' : ` Task ${entry.scope.task}`} iteration ${entry.scope.iteration}`;
 const lineOf = (value) => String(value).replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim() || 'unspecified';
 
-function createContext({ repoRoot, specName, contract, runId, engineRoot = ENGINE_ROOT, services = {} }) {
+function createContext({ repoRoot, specName, contract, runId, recoveryInput, engineRoot = ENGINE_ROOT, services = {} }) {
   if (typeof services.runner?.prepare !== 'function') throw new TypeError('controller requires an injected role runner');
   return {
-    root: repoRoot, specName, contract, requestedRunId: runId, engineRoot,
+    root: repoRoot, specName, contract, requestedRunId: runId, requestedRecovery: recoveryInput ?? null, engineRoot,
+    recovery: false, recoveryDigest: null, indexProtocol: CONTROLLER_CONTRACT.taskResultIndexProtocol,
     paths: controllerPaths(specName),
     runner: services.runner,
     git: services.git ?? createGitService(),
@@ -337,7 +342,8 @@ function contractFor(ctx, roleSequence) {
   return {
     verdict: contract.verdict, gear: contract.gear, drive: contract.drive, branch: contract.branch,
     commitAuth: contract.commitAuth, harness: contract.harness, blastRadius: contract.blastRadius,
-    logMode: contract.logMode, ...CONTROLLER_CONTRACT, roleSequence, responseFormat: 'text',
+    logMode: contract.logMode, ...CONTROLLER_CONTRACT, taskResultIndexProtocol: ctx.indexProtocol,
+    ...(ctx.recovery ? { recoveryInputDigest: ctx.recoveryDigest } : {}), roleSequence, responseFormat: 'text',
   };
 }
 
@@ -616,9 +622,22 @@ function ensureIndex(ctx) {
   }
 }
 
+const importOf = (ctx, task) => ctx.state.imports.find((item) => item.scope.task === Number(task)) ?? null;
+
+// Each task's current evidence: its latest accepted execution, otherwise its import.
+function indexEvidence(ctx, plan) {
+  const states = [];
+  const imports = [];
+  for (const task of plan.tasks) {
+    const writer = latestAcceptedWriter(ctx, task.task);
+    if (writer) states.push(stateOf(writer));
+    else if (importOf(ctx, task.task)) imports.push(importOf(ctx, task.task).path);
+  }
+  return { states, imports, protocol: ctx.indexProtocol };
+}
+
 function projectIndex(ctx, plan) {
-  const states = plan.tasks.map((task) => latestAcceptedWriter(ctx, task.task)).filter(Boolean).map(stateOf);
-  gate(ctx, 'task-result projection', () => projectTaskResults(ctx.root, { indexPath: ctx.paths.index, states }),
+  gate(ctx, 'task-result projection', () => projectTaskResults(ctx.root, { indexPath: ctx.paths.index, ...indexEvidence(ctx, plan) }),
     { reconciliation: true });
 }
 
@@ -631,15 +650,23 @@ function taskBinding(ctx, plan, task, roleSequence, modelTier) {
   };
 }
 
+// The task diff starts where the task started: its first execution, or the
+// historical task baseline its verified import carries.
 function writeTaskDiff(ctx, task) {
+  const imported = importOf(ctx, task);
   const first = `${ctx.paths.dir}/task-${task}-execution-1-baseline.json`;
-  const base = JSON.parse(readWorkPath(ctx.root, first, { family: 'task-result' }).toString('utf8')).taskBefore.head;
+  const base = imported ? inspectTaskImport(ctx.root, imported.path).taskBefore.head
+    : JSON.parse(readWorkPath(ctx.root, first, { family: 'task-result' }).toString('utf8')).taskBefore.head;
   return captureBranchDiff({ cwd: ctx.root, baseline: base, outputPath: `${ctx.paths.dir}/task-${task}-diff.txt`, family: 'task-diff' }).path;
 }
 
+// An imported task's import is its first evidence: its first fix is
+// execution 2 and continues the import through a digest-bound link.
 async function dispatchWriter(ctx, plan, task, role, iteration, fix = null) {
   const { root, paths } = ctx;
-  const execution = writerRoles(ctx, task.task).length + 1;
+  const imported = importOf(ctx, task.task);
+  const prior = writerRoles(ctx, task.task).length;
+  const execution = prior + (imported ? 2 : 1);
   const state = `${paths.dir}/task-${task.task}-execution-${execution}`;
   const parent = latestAcceptedWriter(ctx);
   const modelTier = TIER[task.complexity];
@@ -651,7 +678,8 @@ async function dispatchWriter(ctx, plan, task, role, iteration, fix = null) {
     effects: () => beginTask(root, state, {
       runId: ctx.state.runId, attempt: 1, task: task.task, execution, role,
       report: `${paths.dir}/task-${task.task}-report.md`, planPath: paths.plan,
-      previousState: execution === 1 ? null : `${paths.dir}/task-${task.task}-execution-${execution - 1}`,
+      previousState: prior === 0 ? null : `${paths.dir}/task-${task.task}-execution-${execution - 1}`,
+      ...(imported && prior === 0 ? { previousImport: imported.path } : {}),
       parentState: parent === null ? null : stateOf(parent), format: 'text',
     }),
     manifest: (roleSequence) => buildControllerTaskManifest(role, {
@@ -801,9 +829,12 @@ async function settleReview(ctx, reviewer, correctionManifest) {
   return result.status;
 }
 
-async function reviewTask(ctx, plan, task, writer) {
+// Reviews the task's current evidence: the latest accepted execution, or (with
+// no execution yet) the verified import, which is never approval by itself.
+async function reviewTask(ctx, plan, task, writer, iteration) {
   const { root, paths } = ctx;
-  const scope = scopeOf('review', Number(task.task), writer.scope.iteration);
+  const imported = writer === null ? importOf(ctx, task.task) : null;
+  const scope = scopeOf('review', Number(task.task), iteration);
   const guard = guardOf(ctx, scope);
   const report = `${paths.dir}/task-${task.task}-review.md`;
   const issues = `${paths.dir}/task-${task.task}-issues.md`;
@@ -813,16 +844,22 @@ async function reviewTask(ctx, plan, task, writer) {
   });
   let reviewer = roleIn(ctx, scope, 'task-reviewer');
   if (!reviewer) {
+    // An imported task is reviewed before any writer has published its brief.
+    gate(ctx, `Task ${task.task} brief`, () => ensureControllerTaskBrief(taskBinding(ctx, plan, task, 0, TIER[task.complexity])),
+      { reconciliation: true });
     const taskDiffPath = gate(ctx, `Task ${task.task} diff`, () => writeTaskDiff(ctx, task.task), { reconciliation: true });
+    const importReport = imported && gate(ctx, `Task ${task.task} import`, () => inspectTaskImport(root, imported.path).report.path,
+      { reconciliation: true });
     reviewer = await dispatchRole(ctx, {
       scope, role: 'task-reviewer', modelTier: taskReviewerTier(task),
       effects: () => beginReview(root, guard, {
         runId: ctx.state.runId, attempt: 1, iteration: scope.iteration, task: task.task, report, issues,
-        format: 'text', execution: stateOf(writer), reviewerResponseProtocol: 3,
+        format: 'text', ...(imported ? { import: imported.path } : { execution: stateOf(writer) }), reviewerResponseProtocol: 3,
       }),
       manifest: (roleSequence) => buildControllerTaskManifest('task-reviewer', {
         ...taskBinding(ctx, plan, task, roleSequence, taskReviewerTier(task)),
-        reportPath: `${paths.dir}/task-${task.task}-report.md`, taskDiffPath, outputs: [report, issues],
+        reportPath: imported ? importReport : `${paths.dir}/task-${task.task}-report.md`,
+        ...(imported ? { importPath: imported.path } : {}), taskDiffPath, outputs: [report, issues],
       }),
     });
   }
@@ -831,36 +868,46 @@ async function reviewTask(ctx, plan, task, writer) {
   return verdict;
 }
 
-// Writer → review → fix until the task's latest execution is approved. A
+// Writer → review → fix until the task's latest evidence is approved. A
 // whole-branch fix (`after` the final review that requested it) re-enters the
-// same loop; a mechanical task keeps its review waiver.
+// same loop; a mechanical task keeps its review waiver unless its evidence is,
+// or continues, an import, which no review of this run has approved yet. An
+// imported task never gets an implementer: its import is iteration 1.
 async function settleTask(ctx, plan, task, wholeBranch = null) {
+  const imported = importOf(ctx, task.task) !== null;
   for (;;) {
     const writers = writerRoles(ctx, task.task);
-    const writer = writers.at(-1);
-    if (!writer) { await dispatchWriter(ctx, plan, task, 'implementer', 1); continue; }
-    if (!writer.accepted) { await settleWriter(ctx, plan, task, writer); continue; }
-    if (wholeBranch !== null && writer.roleSequence < wholeBranch.after) {
-      await dispatchWriter(ctx, plan, task, 'fix', writer.scope.iteration + 1,
+    const writer = writers.at(-1) ?? null;
+    if (!writer && !imported) { await dispatchWriter(ctx, plan, task, 'implementer', 1); continue; }
+    if (writer && !writer.accepted) { await settleWriter(ctx, plan, task, writer); continue; }
+    const iteration = writer?.scope.iteration ?? 1;
+    if (wholeBranch !== null && (writer === null || writer.roleSequence < wholeBranch.after)) {
+      await dispatchWriter(ctx, plan, task, 'fix', iteration + 1,
         { issuePath: ctx.paths.finalIssues, diffPath: () => ctx.paths.branchDiff });
       continue;
     }
-    if (task.complexity === 'mechanical') return;
-    const verdict = await reviewTask(ctx, plan, task, writer);
+    if (task.complexity === 'mechanical' && !imported) return;
+    const verdict = await reviewTask(ctx, plan, task, writer, iteration);
     if (verdict === 'APPROVED') return;
-    await dispatchWriter(ctx, plan, task, 'fix', writer.scope.iteration + 1, {
+    await dispatchWriter(ctx, plan, task, 'fix', iteration + 1, {
       issuePath: `${ctx.paths.dir}/task-${task.task}-issues.md`,
       diffPath: () => writeTaskDiff(ctx, task.task),
     });
   }
 }
 
+// A recovery run's branch diff starts where the imported lineage started, so
+// whole-branch review covers imported and new work alike.
+function branchBase(ctx) {
+  if (ctx.state.imports.length === 0) return ctx.run.baseline;
+  return inspectTaskImport(ctx.root, ctx.state.imports[0].path).chainBase;
+}
+
 function materializeReviewInputs(ctx, plan) {
   gate(ctx, 'review inputs', () => {
     materializeSuccessCriteria({ repoRoot: ctx.root, specPath: ctx.paths.spec, outputPath: ctx.paths.criteria });
-    projectTaskResults(ctx.root, { indexPath: ctx.paths.index,
-      states: plan.tasks.map((task) => stateOf(latestAcceptedWriter(ctx, task.task))) });
-    captureBranchDiff({ cwd: ctx.root, baseline: ctx.run.baseline, outputPath: ctx.paths.branchDiff });
+    projectTaskResults(ctx.root, { indexPath: ctx.paths.index, ...indexEvidence(ctx, plan) });
+    captureBranchDiff({ cwd: ctx.root, baseline: branchBase(ctx), outputPath: ctx.paths.branchDiff });
   }, { reconciliation: true });
 }
 
@@ -926,6 +973,7 @@ function finalTargets(ctx, plan) {
 async function implementPhase(ctx) {
   const scope = scopeOf('implement');
   if (ensurePhase(ctx, scope)) return;
+  if (ctx.recovery) assertRecoveryPlan(ctx, readText(ctx, ctx.paths.plan, 'plan'));
   const plan = loadPlan(ctx);
   ensureIndex(ctx);
   for (const task of plan.tasks) await settleTask(ctx, plan, task);
@@ -958,7 +1006,13 @@ function acceptImplement(ctx, plan) {
   const writers = new Map(ctx.state.roles.filter((entry) => ['implementer', 'fix'].includes(entry.role))
     .map((entry) => [entry.expectedReceiptPath, entry]));
   gate(ctx, 'implement acceptance', () => {
-    const verified = verifyTaskResults(root, { indexPath: paths.index, expectedTasks: plan.tasks.map((task) => task.task) });
+    const verified = verifyTaskResults(root, { indexPath: paths.index, expectedTasks: plan.tasks.map((task) => task.task),
+      protocol: ctx.indexProtocol });
+    for (const imported of verified.imports) {
+      if (!ctx.state.imports.some((item) => item.path === imported.receipt && item.digest === imported.digest)) {
+        throw new Error(`task import ${imported.receipt} lacks recovery registration provenance`);
+      }
+    }
     for (const execution of verified.executions) {
       const entry = writers.get(`${execution.state}-result.json`);
       if (!entry?.accepted || execution.config.runId !== ctx.state.runId || execution.config.attempt !== 1
@@ -967,15 +1021,18 @@ function acceptImplement(ctx, plan) {
       }
       const manifest = JSON.parse(readWorkPath(root, `${paths.dir}/context/role-${entry.roleSequence}.json`, { family: 'manifest' }).toString('utf8'));
       if (manifest.contract?.controllerProtocol !== CONTROLLER_PROTOCOL || manifest.contract.roleSequence !== entry.roleSequence
-        || manifest.contract.taskResultProtocol !== 2) throw new Error(`task execution ${execution.state} manifest provenance mismatch`);
+        || manifest.contract.taskResultProtocol !== 2 || manifest.contract.taskResultIndexProtocol !== ctx.indexProtocol) {
+        throw new Error(`task execution ${execution.state} manifest provenance mismatch`);
+      }
     }
     const final = finalRoles(ctx).at(-1);
     const result = inspectReview(root, guardOf(ctx, final.scope));
     if (!result.accepted || result.status !== 'APPROVED') throw new Error('final reviewer gate is not approved');
   }, { reconciliation: true });
-  const planEntry = roleIn(ctx, scopeOf('plan'), 'plan');
   const planText = readText(ctx, paths.plan, 'plan');
-  const planHeader = assertPublished(ctx, 'plan', planText, planEntry, { status: 'DRAFT', 'consumed-by': 'none' });
+  // A recovery plan has no plan role: it is bound by re-deriving the prepared copy.
+  const planHeader = ctx.recovery ? assertRecoveryPlan(ctx, planText)
+    : assertPublished(ctx, 'plan', planText, roleIn(ctx, scopeOf('plan'), 'plan'), { status: 'DRAFT', 'consumed-by': 'none' });
   const index = readText(ctx, paths.index, 'task-result-index');
   if (publishedHeader(ctx, 'task-result index', index).status === 'DRAFT') {
     writeWorkPath(root, paths.index, withLifecycle(index, { status: 'READY' }), { family: 'task-result-index' });
@@ -1069,7 +1126,7 @@ async function reviewPhase(ctx) {
     const verdict = gate(ctx, `${describe(entry)} response rejected`, () => decodePhaseResponse(record.payload, 'review'));
     if (verdict.status !== 'READY_FOR_PR') halt(ctx, `${describe(entry)} returned ${verdict.status} (signals: ${verdict.signals})`);
     const draft = gate(ctx, 'review evidence rejected', () => {
-      verifyTaskResults(root, { indexPath: paths.index, expectedTasks: plan.tasks.map((task) => task.task) });
+      verifyTaskResults(root, { indexPath: paths.index, expectedTasks: plan.tasks.map((task) => task.task), protocol: ctx.indexProtocol });
       const bytes = readWorkPath(root, paths.reviewReport, { family: 'review-report' });
       const header = lifecycleOf(bytes.toString('utf8'));
       if (!header || header.phase !== 'review' || header.status !== 'DRAFT' || header.next !== 'none'
@@ -1104,14 +1161,113 @@ async function reviewPhase(ctx) {
   acceptPhase(ctx, scope);
 }
 
+// ---- Recovery runs --------------------------------------------------------
+// The prepared plan, bound by re-derivation from the digest-bound source plan
+// and recovery input; only its READY/CONSUMED lifecycle values may change.
+function assertRecoveryPlan(ctx, planText) {
+  const header = publishedHeader(ctx, 'plan', planText);
+  const expected = gate(ctx, 'plan publication drift', () => recoveryCopies(ctx.root, ctx.paths.recoveryInput).plan, { reconciliation: true });
+  if (withLifecycle(planText, { status: 'READY', 'consumed-by': 'none' }) !== expected) {
+    halt(ctx, 'plan publication drift: the plan no longer matches the prepared recovery copy', { reconciliation: true });
+  }
+  return header;
+}
+
+// Pre-effect: a READY inspection, prepared copies on disk byte-equal to their
+// re-derivation, and the accepted branch equal to the contract branch.
+function verifyRecoveryStart(ctx) {
+  const inspection = inspectRecovery(ctx.root, ctx.paths.recoveryInput);
+  if (inspection.status !== 'READY') throw new Error(`recovery requires reconciliation: ${inspection.reconciliation.join('; ')}`);
+  for (const [path, text, family] of [[ctx.paths.spec, inspection.copies.spec, 'spec'], [ctx.paths.plan, inspection.copies.plan, 'plan']]) {
+    const bytes = optionalWork(ctx.root, path, family);
+    if (bytes === null || !bytes.equals(Buffer.from(text))) {
+      throw new Error(`${path} is not the prepared recovery copy; run scripts/autopilot-recovery.mjs prepare first`);
+    }
+  }
+  if (inspection.input.current.branch !== ctx.contract.branch) throw new Error('the accepted recovery branch is not the contract branch');
+  return inspection;
+}
+
+// Registration records one RECOVERY_IMPORTED event per reused task, before any
+// other run event. An interrupted registration completes from the same exact
+// input and byte-reproducible receipts; anything else needs reconciliation.
+function registerRecovery(ctx) {
+  const { root, paths } = ctx;
+  const { input } = gate(ctx, 'recovery input', () => loadRecoveryInput(root, paths.recoveryInput), { reconciliation: true });
+  const registered = ctx.state.imports.map((item) => String(item.scope.task));
+  if (JSON.stringify(registered) !== JSON.stringify(input.reuse.slice(0, registered.length))) {
+    halt(ctx, 'recovery imports do not follow the recovery input', { reconciliation: true });
+  }
+  if (registered.length === input.reuse.length) return;
+  if (ctx.events.slice(1).some((event) => event.event !== 'RECOVERY_IMPORTED')) {
+    halt(ctx, 'recovery registration was interrupted by other run events', { reconciliation: true });
+  }
+  const inspection = ctx.recoveryStart ?? gate(ctx, 'recovery input', () => {
+    const current = inspectRecovery(root, paths.recoveryInput);
+    if (current.status !== 'READY') throw new Error(`recovery requires reconciliation: ${current.reconciliation.join('; ')}`);
+    return current;
+  }, { reconciliation: true });
+  for (const task of input.reuse.slice(registered.length)) {
+    const scope = scopeOf('implement', Number(task));
+    const importPath = `${paths.dir}/task-${task}-import.json`;
+    const receipt = input.source.receipts.find((item) => item.task === task);
+    const imported = gate(ctx, `Task ${task} recovery import`, () => importTaskResult(root, importPath, {
+      runId: ctx.state.runId, task, sourceState: receipt.path.slice(0, -'-result.json'.length), sourceHead: inspection.source.head,
+      manifests: input.source.manifests, explainedDelta: input.current.delta,
+    }), { reconciliation: true, scope });
+    appendAutopilotEvent(root, paths.dir, { event: 'RECOVERY_IMPORTED', scope, importPath, importDigest: imported.digest });
+    refresh(ctx);
+    ctx.crash('recovery-imported', { task });
+  }
+}
+
+function useRecovery(ctx, bytes) {
+  ctx.recovery = true;
+  ctx.recoveryDigest = sha(bytes);
+  ctx.indexProtocol = 3;
+}
+
+// A fresh run starts as a recovery run only from its explicit exact input.
+function selectFreshRecovery(ctx) {
+  const present = optionalWork(ctx.root, ctx.paths.recoveryInput, 'recovery-input');
+  if (ctx.requestedRecovery === null) {
+    if (present !== null) throw new ControllerRefusal(`a recovery input exists at ${ctx.paths.recoveryInput}; start it explicitly with --recovery-input`);
+    return;
+  }
+  if (ctx.requestedRecovery !== ctx.paths.recoveryInput) throw new ControllerRefusal(`recovery input must be exactly ${ctx.paths.recoveryInput}`);
+  if (present === null) throw new ControllerRefusal(`recovery input is missing: ${ctx.paths.recoveryInput}`);
+  useRecovery(ctx, present);
+}
+
+// A resumed run keeps the kind its journal shows: a recovery run registers its
+// imports right after RUN_STARTED. A stray input never converts a run.
+function selectResumedRecovery(ctx) {
+  const present = optionalWork(ctx.root, ctx.paths.recoveryInput, 'recovery-input');
+  const second = ctx.events[1];
+  if (present === null) {
+    if (ctx.state.imports.length > 0) halt(ctx, 'recovery imports exist without their recovery input', { reconciliation: true });
+    return;
+  }
+  if (second !== undefined && second.event !== 'RECOVERY_IMPORTED') {
+    throw new ControllerRefusal(`a recovery input beside a run that did not start from it is refused: ${ctx.paths.recoveryInput}`);
+  }
+  useRecovery(ctx, present);
+}
+
 // Drives (or resumes) one controller-protocol-2 run under the caller's lease.
 // Returns { code, reason, halted }: `halted` is true only for a halt recorded in
 // the journal; a refusal before any effect journals nothing and stays resumable.
 export async function runController(options) {
   const ctx = createContext(options);
   try {
-    // A fresh run validates its spec inputs before creating any run identity.
-    if (optionalWork(ctx.root, ctx.paths.run, 'autopilot-run') === null) planInputs(ctx);
+    const fresh = optionalWork(ctx.root, ctx.paths.run, 'autopilot-run') === null;
+    if (!fresh && ctx.requestedRecovery !== null) {
+      throw new ControllerRefusal('--recovery-input starts a new recovery run; the existing run resumes from its journal without it');
+    }
+    // A fresh run validates its inputs before creating any run identity.
+    if (fresh) selectFreshRecovery(ctx);
+    if (fresh && ctx.recovery) ctx.recoveryStart = refusing('recovery input', () => verifyRecoveryStart(ctx));
+    else if (fresh) planInputs(ctx);
     startOrResume(ctx);
     projectAutopilotStatus(ctx.root, ctx.paths.dir);
     if (ctx.state.status === 'HALTED') return { code: 1, reason: `controller run halted: ${ctx.state.reason}`, halted: true };
@@ -1119,7 +1275,9 @@ export async function runController(options) {
     if (ctx.run.branch !== ctx.contract.branch || ctx.git.branch(ctx.root) !== ctx.run.branch) {
       throw new ControllerRefusal(`controller run belongs to branch "${ctx.run.branch}"; refusing to drive it from "${ctx.git.branch(ctx.root)}"`);
     }
-    await planPhase(ctx);
+    if (!fresh) selectResumedRecovery(ctx);
+    if (ctx.recovery) registerRecovery(ctx);
+    else await planPhase(ctx);
     await implementPhase(ctx);
     await reviewPhase(ctx);
     appendAutopilotEvent(ctx.root, ctx.paths.dir, { event: 'RUN_COMPLETED' });

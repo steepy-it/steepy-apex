@@ -4,8 +4,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { beginReview, checkReview, reserveRepair, inspectReview, parseReviewerResponse, verifyImplementReviews, captureRetainedApproval, setReviewReference } from '../scripts/reviewer-response.mjs';
-import { beginTask, recordTaskResult, projectTaskResults } from '../scripts/task-results.mjs';
+import { beginTask, recordTaskResult, projectTaskResults, importTaskResult } from '../scripts/task-results.mjs';
 
 function fixture(fn) {
   const root = mkdtempSync(join(tmpdir(), 'steepy-reviewer-response-'));
@@ -535,4 +536,83 @@ test('reference binding creates exactly one reference and preserves CRLF on repl
   const text = readFileSync(join(root, indexPath), 'utf8');
   assert.ok(text.includes(`Reviewer gate final: ${next}\r\n`));
   assert.equal(text.replace(/\r\n/g, '').includes('\n'), false);
+}));
+
+// A recovery run directory (the fixture's topic run) importing Task 4 from a
+// legacy source run. The plan is mechanical so an import can never take the
+// mechanical review waiver.
+function importFixture(fn) {
+  fixture((ctx) => {
+    const { root, dir, put, git } = ctx;
+    const source = '.apex/work/tasks/old', sourcePlan = '.apex/work/plans/old.md', planPath = '.apex/work/plans/topic.md';
+    const plan = (spec) => `<!-- steepy-workflow: v1\nphase: plan\nstatus: READY\nnext: implement\nsource: ${spec}\nconsumed-by: none\n-->\n# Plan\n\n## Task 4\n- **Surface:** scripts\n- **Complexity:** mechanical\n- **Success criteria:** SC1\n- **Requirements and deliverables:** Preserve ordering.\n- **Exact paths:** code.js\n- **Dependencies:** none\n`;
+    for (const path of ['.apex/work/plans', `${source}/context`, `${dir}/context`]) mkdirSync(join(root, path), { recursive: true });
+    put(sourcePlan, plan('.apex/work/specs/old.md'));
+    const sourceState = `${source}/task-4-execution-1`, sourceReport = `${source}/task-4-report.md`;
+    beginTask(root, sourceState, { runId: 'legacy-run', attempt: 1, task: '4', execution: 1, role: 'implementer', report: sourceReport, planPath: sourcePlan });
+    put('code.js', 'imported implementation\n'); put(sourceReport, 'Imported report.\n');
+    git('add', 'code.js'); git('commit', '-m', 'legacy task 4');
+    recordTaskResult(root, sourceState, `status: DONE\nartifact: ${sourceReport}\nsignals: none\n`);
+    const manifestPath = `${source}/context/phase-implement-attempt-1.json`;
+    put(manifestPath, `${JSON.stringify({ runId: 'legacy-run', attempt: 1, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } })}\n`);
+    put(planPath, plan('.apex/work/specs/topic.md'));
+    put(`${dir}/recovery-input.json`, '{"recovery":true}\n');
+    const importPath = `${dir}/task-4-import.json`;
+    const imported = importTaskResult(root, importPath, { runId: ctx.config.runId, task: '4', sourceState, sourceHead: sourceState,
+      manifests: [{ path: manifestPath, sha256: createHash('sha256').update(readFileSync(join(root, manifestPath))).digest('hex') }], explainedDelta: [] });
+    fn({ ...ctx, importPath, imported, planPath, sourceState, indexPath: `${dir}/task-result-index.md` });
+  });
+}
+const v3Approval = 'status: APPROVED\nsignals: none\n';
+
+test('an imported task review binds the verified import digest, never an execution', () => importFixture(({ root, state, config, put, report, importPath, imported, sourceState }) => {
+  const v3 = { ...config, reviewerResponseProtocol: 3 };
+  assert.throws(() => beginReview(root, state, { ...config, import: importPath }), /import-bound review requires reviewer response protocol 3/);
+  assert.throws(() => beginReview(root, state, { ...v3, import: importPath, execution: sourceState }), /exactly one of execution or import/);
+  assert.throws(() => beginReview(root, state, { ...v3, import: `${config.report.slice(0, config.report.lastIndexOf('/'))}/task-5-import.json` }), /wrong task import binding/);
+  beginReview(root, state, { ...v3, import: importPath });
+  const baseline = JSON.parse(readFileSync(join(root, `${state}-baseline.json`), 'utf8'));
+  assert.deepEqual([baseline.version, baseline.implementation, baseline.config.import, baseline.config.taskResultProtocol], [6, imported.digest, importPath, 2]);
+  assert.equal(Object.hasOwn(baseline.config, 'execution'), false);
+  put(report, 'Approved imported evidence.\n');
+  assert.equal(checkReview(root, state, v3Approval).accepted, true);
+  assert.equal(inspectReview(root, state).accepted, true);
+  const receipt = JSON.parse(readFileSync(join(root, importPath), 'utf8'));
+  writeFileSync(join(root, importPath), `${JSON.stringify({ ...receipt, delta: ['code.js'] })}\n`);
+  assert.deepEqual([inspectReview(root, state).status, inspectReview(root, state).reason], ['BLOCKED', 'review evidence drift on resume']);
+}));
+
+test('the final gate requires an import-bound approval for every imported task, even a mechanical one', () => importFixture(({ root, dir, state, config, put, report, importPath, planPath, indexPath }) => {
+  const finalState = `${dir}/final-review-guard-attempt-3-iteration-1`;
+  const finalConfig = { ...config, reviewerResponseProtocol: 3, task: 'final', iteration: 1, report: `${dir}/final-review.md`,
+    issues: `${dir}/final-review-issues.md`, plan: planPath, index: indexPath };
+  put(indexPath, `# Results\nReviewer gate final: ${finalState}\n`);
+  projectTaskResults(root, { indexPath, states: [], imports: [importPath], protocol: 3 });
+  assert.throws(() => beginReview(root, finalState, finalConfig), /missing reviewer gate for Task 4/);
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3, import: importPath });
+  put(report, 'Approved imported evidence.\n');
+  checkReview(root, state, v3Approval);
+  setReviewReference(root, { indexPath, state });
+  beginReview(root, finalState, finalConfig);
+  put(finalConfig.report, 'Approved branch.\n');
+  assert.equal(checkReview(root, finalState, v3Approval).accepted, true);
+  assert.equal(inspectReview(root, finalState).accepted, true);
+}));
+
+test('an execution-bound approval cannot approve an imported task', () => importFixture(({ root, dir, state, config, put, report, importPath, planPath, indexPath }) => {
+  const execution = `${dir}/task-4-execution-2`, taskReport = `${dir}/task-4-report.md`;
+  // A real (report-only) fix continues the import; approving that execution never approves the import entry.
+  beginTask(root, execution, { runId: config.runId, attempt: 1, task: '4', execution: 2, role: 'fix', report: taskReport, planPath, previousImport: importPath });
+  put(taskReport, 'Fix report: no source change was needed.\n');
+  recordTaskResult(root, execution, `status: DONE\nartifact: ${taskReport}\nsignals: none\n`);
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3, execution });
+  put(report, 'Approved the fix.\n');
+  checkReview(root, state, v3Approval);
+  const finalState = `${dir}/final-review-guard-attempt-3-iteration-1`;
+  put(indexPath, `# Results\nReviewer gate Task 4: ${state}\nReviewer gate final: ${finalState}\n`);
+  const finalConfig = { ...config, reviewerResponseProtocol: 3, task: 'final', iteration: 1, report: `${dir}/final-review.md`,
+    issues: `${dir}/final-review-issues.md`, plan: planPath, index: indexPath };
+  writeFileSync(join(root, indexPath), `# Results\nReviewer gate Task 4: ${state}\nReviewer gate final: ${finalState}\n<!-- steepy-task-results: v3 -->\n\`\`\`json\n${JSON.stringify([{ task: '4', kind: 'import', status: 'IMPORTED',
+    artifact: `.apex/work/tasks/old/task-4-execution-1-report.md`, changedPaths: ['code.js'], signals: [], receipt: importPath }], null, 2)}\n\`\`\`\n<!-- /steepy-task-results -->\n`);
+  assert.throws(() => beginReview(root, finalState, finalConfig), /task review does not approve current import for Task 4/);
 }));

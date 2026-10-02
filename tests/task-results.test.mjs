@@ -4,7 +4,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync, 
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { beginTask, recordTaskResult, inspectTaskResult, projectTaskResults, verifyTaskResults, parseTaskResultProjection } from '../scripts/task-results.mjs';
+import { createHash } from 'node:crypto';
+import { beginTask, recordTaskResult, inspectTaskResult, projectTaskResults, verifyTaskResults, parseTaskResultProjection, importTaskResult, inspectTaskImport } from '../scripts/task-results.mjs';
 
 const dir = '.apex/work/tasks/run';
 const indexPath = `${dir}/task-result-index.md`;
@@ -308,4 +309,148 @@ test('a semantic non-success is captured, retryable, and keeps its own status', 
   beginTask(root, state, config); put(config.report, 'Needs the missing context.');
   const pending = recordTaskResult(root, state, response.replace('DONE', 'NEEDS_CONTEXT'));
   assert.deepEqual([pending.status, pending.accepted, pending.retryable], ['NEEDS_CONTEXT', false, true]);
+}));
+
+// A legacy source run (phase manifests, task result protocol 2) and a new
+// recovery run directory that imports its accepted evidence.
+const SOURCE = '.apex/work/tasks/old';
+const TARGET = '.apex/work/tasks/new';
+const OLD_PLAN = '.apex/work/plans/old.md';
+const NEW_PLAN = '.apex/work/plans/new.md';
+const sourceManifest = `${SOURCE}/context/phase-implement-attempt-1.json`;
+const lifecyclePlan = (spec) => `<!-- steepy-workflow: v1\nphase: plan\nstatus: READY\nnext: implement\nsource: ${spec}\nconsumed-by: none\n-->\n# Plan\n\n## Task 1 — one\n`;
+const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+function recovery(fn, { protocol = 2, manifestRunId = 'legacy-run' } = {}) {
+  return fixture((repo) => {
+    const { root, git, put } = repo;
+    put(OLD_PLAN, lifecyclePlan('.apex/work/specs/old.md'));
+    const source = `${SOURCE}/task-1-execution-1`;
+    const sourceConfig = { runId: 'legacy-run', attempt: 1, task: '1', execution: 1, role: 'implementer', report: `${SOURCE}/task-1-report.md`, planPath: OLD_PLAN };
+    beginTask(root, source, sourceConfig);
+    put('source', 'task one'); put(sourceConfig.report, 'Task 1 report: RED then GREEN.');
+    git('add', '-A', '--', '.'); git('commit', '-qm', 'task 1');
+    recordTaskResult(root, source, `status: DONE\nartifact: ${sourceConfig.report}\nsignals: tdd:red-green`);
+    put(sourceManifest, `${JSON.stringify({ schemaVersion: 1, runId: manifestRunId, attempt: 1, scope: { phase: 'implement', role: 'implement' },
+      contract: protocol === null ? {} : { taskResultProtocol: protocol } })}\n`);
+    put(NEW_PLAN, lifecyclePlan('.apex/work/specs/new.md'));
+    put(`${TARGET}/recovery-input.json`, '{"declared":"recovery"}\n');
+    const manifests = [{ path: sourceManifest, sha256: sha(readFileSync(join(root, sourceManifest))) }];
+    const importInput = { runId: 'recovery-run', task: '1', sourceState: source, sourceHead: source, manifests, explainedDelta: [] };
+    return fn({ ...repo, source, sourceConfig, manifests, importInput });
+  });
+}
+const importPath = `${TARGET}/task-1-import.json`;
+const targetIndex = `${TARGET}/task-result-index.md`;
+
+test('an import receipt binds verified historical evidence, the present observation, and the explained delta', () => recovery(({ root, source, importInput }) => {
+  const facts = importTaskResult(root, importPath, importInput);
+  assert.equal(facts.kind, 'import');
+  assert.equal(facts.digest, sha(readFileSync(join(root, importPath))));
+  const receipt = JSON.parse(readFileSync(join(root, importPath), 'utf8'));
+  assert.deepEqual(Object.keys(receipt).sort(), ['delta', 'kind', 'observation', 'planDigest', 'planPath', 'recoveryInput', 'runId', 'source', 'task', 'version']);
+  assert.equal(receipt.source.state, source);
+  assert.deepEqual(receipt.delta, []);
+  assert.equal(Object.hasOwn(receipt, 'response'), false, 'an import never serializes a writer response');
+  assert.equal(Object.hasOwn(receipt, 'status'), false, 'an import never claims a completion status');
+  assert.deepEqual(importTaskResult(root, importPath, importInput), facts, 'an identical import is an exact replay');
+  assert.equal(inspectTaskImport(root, importPath).digest, facts.digest);
+  projectTaskResults(root, { indexPath: targetIndex, states: [], imports: [importPath], protocol: 3 });
+  const index = readFileSync(join(root, targetIndex), 'utf8');
+  assert.match(index, /^<!-- steepy-task-results: v3 -->$/m);
+  assert.deepEqual(parseTaskResultProjection(index), [{ task: '1', kind: 'import', status: 'IMPORTED', artifact: `${source}-report.md`,
+    changedPaths: ['source'], signals: ['tdd:red-green'], receipt: importPath }]);
+  const verified = verifyTaskResults(root, { indexPath: targetIndex, expectedTasks: ['1'], protocol: 3 });
+  assert.deepEqual(verified.imports.map(({ receipt: path }) => path), [importPath]);
+  assert.deepEqual(verified.executions, []);
+  assert.throws(() => verifyTaskResults(root, { indexPath: targetIndex, protocol: 2 }), /task result index protocol 3 does not match required protocol 2/);
+}));
+
+test('an unexplained delta requires reconciliation and writes no import', () => recovery(({ root, git, put, importInput }) => {
+  put('source', 'edited after the source run'); git('commit', '-qam', 'later edit');
+  assert.throws(() => importTaskResult(root, importPath, importInput), /unexplained source delta requires reconciliation: source/);
+  assert.throws(() => readFileSync(join(root, importPath)), /ENOENT/);
+  const facts = importTaskResult(root, importPath, { ...importInput, explainedDelta: ['source'] });
+  assert.deepEqual(facts.delta, ['source']);
+}));
+
+const tamperResult = ({ root, put, source }) => {
+  const value = JSON.parse(readFileSync(join(root, `${source}-result.json`), 'utf8'));
+  value.signals = ['invented'];
+  put(`${source}-result.json`, `${JSON.stringify(value)}\n`);
+};
+const insideTarget = (input) => ({ ...input, sourceState: `${TARGET}/task-1-execution-1`, sourceHead: `${TARGET}/task-1-execution-1` });
+for (const [label, options, mutate, reason, adjust = (input) => input] of [
+  ['a drifted source receipt', {}, tamperResult, /task result replay mismatch/],
+  ['a drifted declared manifest', {}, ({ put }) => put(sourceManifest, '{}\n'), /source manifest digest mismatch/],
+  ['a manifest from another run', { manifestRunId: 'foreign-run' }, () => {}, /source attempt 1 manifest does not bind run legacy-run/],
+  ['a protocol 1 source', { protocol: 1 }, () => {}, /source attempt 1 is not task result protocol 2; refusing implicit conversion/],
+  ['a source without a task result protocol', { protocol: null }, () => {}, /source attempt 1 is not task result protocol 2; refusing implicit conversion/],
+  ['a source state inside the recovery run', {}, () => {}, /import source must belong to another run/, insideTarget],
+]) {
+  test(`an import refuses ${label}`, () => recovery((repo) => {
+    mutate(repo);
+    assert.throws(() => importTaskResult(repo.root, importPath, adjust(repo.importInput)), reason);
+    assert.throws(() => readFileSync(join(repo.root, importPath)), /ENOENT/);
+  }, options));
+}
+
+test('a v2 index never carries an import and the selected protocol is never converted', () => recovery(({ root, importInput }) => {
+  importTaskResult(root, importPath, importInput);
+  assert.throws(() => projectTaskResults(root, { indexPath: targetIndex, states: [], imports: [importPath] }), /imports require task result index protocol 3/);
+  projectTaskResults(root, { indexPath: targetIndex, states: [], imports: [importPath], protocol: 3 });
+  const v3 = readFileSync(join(root, targetIndex), 'utf8');
+  assert.throws(() => projectTaskResults(root, { indexPath: targetIndex, states: [] }), /task result index protocol 3 does not match required protocol 2/);
+  writeFileSync(join(root, targetIndex), v3.replace('v3 -->', 'v2 -->'));
+  assert.throws(() => verifyTaskResults(root, { indexPath: targetIndex }), /projection/);
+}));
+
+test('a fix after an import is a real execution linked to the import digest', () => recovery(({ root, put, importInput }) => {
+  const imported = importTaskResult(root, importPath, importInput);
+  const fix = `${TARGET}/task-1-execution-2`;
+  const fixConfig = { runId: 'recovery-run', attempt: 1, task: '1', execution: 2, role: 'fix', report: `${TARGET}/task-1-report.md`, planPath: NEW_PLAN, previousImport: importPath };
+  assert.throws(() => beginTask(root, fix, { ...fixConfig, role: 'implementer' }), /import lineage/);
+  assert.throws(() => beginTask(root, `${TARGET}/task-1-execution-1`, { ...fixConfig, execution: 1 }), /import lineage/);
+  assert.throws(() => beginTask(root, fix, { ...fixConfig, previousImport: `${TARGET}/task-2-import.json` }), /import lineage/);
+  beginTask(root, fix, fixConfig);
+  const baseline = JSON.parse(readFileSync(join(root, `${fix}-baseline.json`), 'utf8'));
+  assert.equal(baseline.version, 3);
+  assert.equal(baseline.previousDigest, imported.digest);
+  assert.deepEqual(baseline.taskBefore, imported.taskBefore);
+  put('fixed', 'fix'); put(fixConfig.report, 'Fix report: RED then GREEN.');
+  const done = recordTaskResult(root, fix, `status: DONE\nartifact: ${fixConfig.report}\nsignals: tdd:red-green`);
+  assert.equal(done.accepted, true);
+  assert.deepEqual(done.changedPaths, ['fixed', 'source'], 'cumulative task paths continue from the imported evidence');
+  assert.deepEqual(done.executionChangedPaths, ['fixed']);
+  projectTaskResults(root, { indexPath: targetIndex, states: [fix], imports: [], protocol: 3 });
+  const verified = verifyTaskResults(root, { indexPath: targetIndex, expectedTasks: ['1'], protocol: 3 });
+  assert.deepEqual(verified.entries.map(({ kind, receipt }) => [kind, receipt]), [['execution', fix]]);
+  assert.deepEqual(verified.imports.map(({ receipt }) => receipt), [importPath], 'the import ancestor is verified with the execution');
+  const tampered = JSON.parse(readFileSync(join(root, importPath), 'utf8'));
+  tampered.delta = ['invented'];
+  writeFileSync(join(root, importPath), `${JSON.stringify(tampered)}\n`);
+  assert.throws(() => verifyTaskResults(root, { indexPath: targetIndex, protocol: 3 }), /import/);
+}));
+
+test('a residual task after an import starts from the import observation', () => recovery(({ root, put, importInput }) => {
+  importTaskResult(root, importPath, importInput);
+  const second = `${TARGET}/task-2-execution-1`;
+  const secondConfig = { runId: 'recovery-run', attempt: 1, task: '2', execution: 1, role: 'implementer', report: `${TARGET}/task-2-report.md`, planPath: NEW_PLAN };
+  beginTask(root, second, secondConfig);
+  put('second', 'two'); put(secondConfig.report, 'Task 2 report.');
+  recordTaskResult(root, second, `status: DONE\nartifact: ${secondConfig.report}\nsignals: none`);
+  projectTaskResults(root, { indexPath: targetIndex, states: [second], imports: [importPath], protocol: 3 });
+  const verified = verifyTaskResults(root, { indexPath: targetIndex, expectedTasks: ['1', '2'], protocol: 3 });
+  assert.deepEqual(verified.entries.map(({ task, kind }) => [task, kind]), [['1', 'import'], ['2', 'execution']]);
+  assert.throws(() => projectTaskResults(root, { indexPath: targetIndex, states: [second], imports: [importPath, importPath], protocol: 3 }), /states/);
+}));
+
+test('a fix after an import refuses source drift since the import observation', () => recovery(({ root, git, put, importInput }) => {
+  importTaskResult(root, importPath, importInput);
+  put('source', 'edited after the import'); git('commit', '-qam', 'unrecorded edit');
+  const fix = `${TARGET}/task-1-execution-2`;
+  assert.throws(() => beginTask(root, fix, { runId: 'recovery-run', attempt: 1, task: '1', execution: 2, role: 'fix',
+    report: `${TARGET}/task-1-report.md`, planPath: NEW_PLAN, previousImport: importPath }), /task import source drift/);
+  assert.throws(() => inspectTaskImport(root, importPath, { checkCurrent: true }), /task import source snapshot drift/);
+  assert.throws(() => beginTask(root, fix, { runId: 'other-run', attempt: 1, task: '1', execution: 2, role: 'fix',
+    report: `${TARGET}/task-1-report.md`, planPath: NEW_PLAN, previousImport: importPath }), /task import lineage mismatch/);
 }));

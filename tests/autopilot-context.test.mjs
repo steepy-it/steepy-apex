@@ -37,6 +37,8 @@ import {
 } from '../scripts/autopilot-context.mjs';
 import { phasePrompt } from '../scripts/autopilot.mjs';
 import { beginReview, checkReview, reserveRepair } from '../scripts/reviewer-response.mjs';
+import { beginTask, importTaskResult, recordTaskResult } from '../scripts/task-results.mjs';
+import { createHash } from 'node:crypto';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const scriptPath = join(here, '..', 'scripts', 'autopilot-context.mjs');
@@ -1745,4 +1747,68 @@ test('controller task manifests select the protocol explicitly and bind every su
     assert.deepEqual(buildControllerTaskManifest('implementer', { ...legacy, controllerProtocol }),
       buildTaskManifest('implementer', legacy), String(controllerProtocol));
   }
+});
+
+test('review routing reads v3 projections whose entries name execution or import kinds', () => {
+  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** web\n- **Complexity:** mechanical\n- **Success criteria:** SC1\n\n## Task 2\n\n- **Surface:** web\n- **Complexity:** integration\n- **Success criteria:** SC2\n';
+  const entries = [
+    { task: '1', kind: 'import', status: 'IMPORTED', artifact: '.apex/work/tasks/old/task-1-execution-1-report.md',
+      changedPaths: ['src/one.ts'], signals: [], receipt: '.apex/work/tasks/topic/task-1-import.json' },
+    { task: '2', kind: 'execution', status: 'DONE', artifact: '.apex/work/tasks/topic/task-2-report.md',
+      changedPaths: ['src/two.ts'], signals: [], receipt: '.apex/work/tasks/topic/task-2-execution-1' },
+  ];
+  const index = (value) => `# Results\n<!-- steepy-task-results: v3 -->\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\`\n<!-- /steepy-task-results -->\n`;
+  assert.deepEqual(reviewPhaseContext(plan, index(entries)).tasks.map(({ task }) => task), ['1', '2']);
+  assert.throws(() => reviewPhaseContext(plan, index([{ ...entries[0], status: 'DONE' }, entries[1]])), /projection entry/);
+  assert.throws(() => reviewPhaseContext(plan, index([{ ...entries[0], kind: 'replay' }, entries[1]])), /projection entry kind/);
+  assert.throws(() => reviewPhaseContext(plan, index([{ ...entries[0], artifact: '.apex/work/tasks/topic/task-1-execution-1-report.md' }, entries[1]])), /correlation mismatch/);
+});
+
+test('an imported task reviewer manifest names the verified import receipt and its frozen source report', (t) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'steepy-import-context-'));
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  const put = (path, text) => { mkdirSync(dirname(join(repoRoot, path)), { recursive: true }); writeFileSync(join(repoRoot, path), text); };
+  git('init'); git('config', 'user.email', 'test@example.com'); git('config', 'user.name', 'Test');
+  put('.gitignore', '.apex/work/\n'); put('code.js', 'base\n'); put('.apex/standards/scripts.md', '# Scripts\n');
+  git('add', '.'); git('commit', '-m', 'base');
+  const task = '## Task 1 — one\n\n- **Requirements and deliverables:** Update code.\n- **Relevant global constraints:** None.\n- **Surface:** scripts\n- **Specialist agent:** scripts-agent\n- **Exact paths:** code.js\n- **Test command:** npm test\n- **Dependencies:** none\n- **Complexity:** mechanical\n- **Success criteria:** SC1\n';
+  const plan = (spec) => `<!-- steepy-workflow: v1\nphase: plan\nstatus: READY\nnext: implement\nsource: ${spec}\nconsumed-by: none\n-->\n# Plan\n\n${task}`;
+  const source = '.apex/work/tasks/old', dir = '.apex/work/tasks/topic';
+  put('.apex/work/plans/old.md', plan('.apex/work/specs/old.md'));
+  const sourceState = `${source}/task-1-execution-1`;
+  beginTask(repoRoot, sourceState, { runId: 'legacy-run', attempt: 1, task: '1', execution: 1, role: 'implementer', report: `${source}/task-1-report.md`, planPath: '.apex/work/plans/old.md' });
+  put('code.js', 'imported\n'); put(`${source}/task-1-report.md`, 'Imported report.\n'); git('commit', '-qam', 'legacy');
+  recordTaskResult(repoRoot, sourceState, `status: DONE\nartifact: ${source}/task-1-report.md\nsignals: none\n`);
+  const manifestPath = `${source}/context/phase-implement-attempt-1.json`;
+  put(manifestPath, `${JSON.stringify({ runId: 'legacy-run', attempt: 1, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } })}\n`);
+  put('.apex/work/plans/topic.md', plan('.apex/work/specs/topic.md'));
+  put(`${dir}/recovery-input.json`, '{}\n');
+  const importPath = `${dir}/task-1-import.json`;
+  const imported = importTaskResult(repoRoot, importPath, { runId: base.runId, task: '1', sourceState, sourceHead: sourceState,
+    manifests: [{ path: manifestPath, sha256: createHash('sha256').update(readFileSync(join(repoRoot, manifestPath))).digest('hex') }], explainedDelta: [] });
+  const binding = { controllerProtocol: 2, repoRoot, planText: plan('.apex/work/specs/topic.md'), taskId: '1',
+    routingText: '| `scripts` | [scripts](standards/scripts.md) | `scripts-agent` | — |\n',
+    standardsBySurface: { scripts: '.apex/standards/scripts.md' }, briefPath: `${dir}/task-1-brief.md`,
+    runId: base.runId, modelTier: 'standard', attempt: 1, outputs: [`${dir}/task-1-review.md`, `${dir}/task-1-issues.md`],
+    taskDiffPath: `${dir}/task-1-diff.txt`, contract: { controllerProtocol: 2, taskResultIndexProtocol: 3 } };
+  writeControllerTaskBrief(binding);
+  put(binding.taskDiffPath, 'diff\n');
+  const manifest = buildControllerTaskManifest('task-reviewer', { ...binding, importPath, reportPath: imported.report.path });
+  assert.deepEqual(manifest.required.map(({ path, purpose }) => [path, purpose]), [
+    [binding.briefPath, 'task contract'], [`${sourceState}-report.md`, 'implementer report'], [importPath, 'imported task evidence'],
+    [binding.taskDiffPath, 'current task diff'], ['.apex/standards/scripts.md', 'owning standard']]);
+  assert.equal(manifest.contract.reviewedEvidence, 'import');
+  assert.equal(buildControllerTaskManifest('task-reviewer', { ...binding, reportPath: imported.report.path }).contract.reviewedEvidence, 'execution');
+  assert.throws(() => buildControllerTaskManifest('task-reviewer', { ...binding, importPath, reportPath: `${dir}/task-1-report.md` }),
+    /imported task review must read the imported report/);
+  assert.throws(() => buildControllerTaskManifest('task-reviewer', { ...binding, runId: 'other-run', importPath, reportPath: imported.report.path }),
+    /imported evidence does not bind this task review/);
+  assert.throws(() => buildControllerTaskManifest('fix', { ...binding, importPath, issuePath: `${dir}/task-1-issues.md` }),
+    /only a task reviewer binds imported evidence/);
+  put(importPath, readFileSync(join(repoRoot, importPath), 'utf8').replace('"delta":[]', '"delta":["code.js"]'));
+  assert.throws(() => buildControllerTaskManifest('task-reviewer', { ...binding, importPath, reportPath: imported.report.path }), /task import delta mismatch/);
 });

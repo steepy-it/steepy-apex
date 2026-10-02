@@ -1879,7 +1879,16 @@ function physicalRelative(cwd, absPath) {
 function selectRunProtocol(cwd, specName, statusText, opts) {
   const controller = inspectControllerState(cwd, specName);
   const existing = controller !== null ? controller.controllerProtocol : statusText === '' ? null : 1;
-  const requested = opts.controllerProtocol;
+  // A recovery run is a new controller run started only by its exact, explicit
+  // input; it is never a resume, and a resume never needs the input again.
+  const recoveryPath = `.apex/work/tasks/${specName}/recovery-input.json`;
+  if (opts.recoveryInput !== undefined) {
+    if (opts.recoveryInput !== recoveryPath) throw new Error(`recovery input must be exactly ${recoveryPath}`);
+    if (existing !== null) throw new Error('--recovery-input starts a new recovery run; the existing run resumes from its journal without it');
+  } else if (existing === null && readOptionalWork(cwd, recoveryPath, 'recovery-input') !== null) {
+    throw new Error(`a recovery input exists at ${recoveryPath}; start it explicitly with --recovery-input`);
+  }
+  const requested = opts.recoveryInput === undefined ? opts.controllerProtocol : 2;
   if (existing !== null && requested !== undefined && requested !== existing) {
     throw new Error(`the existing run uses controller protocol ${existing}; refusing incompatible controller protocol ${requested}`);
   }
@@ -1888,6 +1897,13 @@ function selectRunProtocol(cwd, specName, statusText, opts) {
     throw new Error('explicit resume inputs belong to the legacy implement phase; controller protocol 2 resumes from its own journal');
   }
   return { protocol, existing: existing !== null };
+}
+
+function readOptionalWork(cwd, path, family) {
+  try { return readWorkPath(cwd, path, { family }); } catch (error) {
+    if (/^work path: missing (?:work artifact|ancestor directory)/.test(error.message)) return null;
+    throw error;
+  }
 }
 
 // The production role runner: the adapter's descriptor for the abstract tier,
@@ -1938,6 +1954,12 @@ export async function runConductor(specPath, opts = {}) {
   // Our own CLI selection for a fresh run, never a flag forwarded to a harness.
   if (![undefined, 1, 2].includes(opts.controllerProtocol)) {
     console.error(`autopilot: refusing to drive ${absSpec}: controller protocol must be 1 or 2`);
+    return 1;
+  }
+  if (opts.recoveryInput !== undefined && (opts.controllerProtocol === 1 || (opts.resumeInputs ?? []).length > 0)) {
+    console.error(`autopilot: refusing to drive ${absSpec}: ${opts.controllerProtocol === 1
+      ? 'a recovery run requires controller protocol 2'
+      : 'explicit resume inputs belong to the legacy implement phase; a recovery run starts from its recovery input'}`);
     return 1;
   }
 
@@ -2072,7 +2094,7 @@ export async function runConductor(specPath, opts = {}) {
         console.log(`autopilot: LOCK_RECOVERED quarantine=${relative(cwd, recovered.quarantine)} pid=${recovered.pid}`);
       }
       const outcome = await runController({
-        repoRoot: cwd, specName, contract, runId,
+        repoRoot: cwd, specName, contract, runId, recoveryInput: opts.recoveryInput,
         services: {
           runner: opts.controllerServices?.runner ?? controllerRoleRunner(cwd, contract, opts),
           ...(opts.controllerServices?.crash === undefined ? {} : { crash: opts.controllerServices.crash }),
@@ -2546,6 +2568,7 @@ export async function main(argv = process.argv.slice(2), opts = {}) {
       options: {
         'resume-input': { type: 'string', multiple: true },
         'controller-protocol': { type: 'string' },
+        'recovery-input': { type: 'string' },
       },
     });
     if (parsed.positionals.length !== 1) throw new Error('expected exactly one spec-path argument');
@@ -2554,7 +2577,7 @@ export async function main(argv = process.argv.slice(2), opts = {}) {
     }
   } catch (err) {
     console.error(`autopilot: ${err.message}`);
-    console.error('usage: node scripts/autopilot.mjs <spec-path> [--resume-input <exact-path>]... [--controller-protocol <1|2>]');
+    console.error('usage: node scripts/autopilot.mjs <spec-path> [--resume-input <exact-path>]... [--controller-protocol <1|2>] [--recovery-input <exact recovery-input.json>]');
     return 1;
   }
   const [specPath] = parsed.positionals;
@@ -2573,6 +2596,7 @@ export async function main(argv = process.argv.slice(2), opts = {}) {
     ? opts.controllerProtocol : Number(parsed.values['controller-protocol']);
   return runConductor(absSpec, {
     ...opts, cwd, resumeInputs: parsed.values['resume-input'] ?? opts.resumeInputs, controllerProtocol,
+    recoveryInput: parsed.values['recovery-input'] ?? opts.recoveryInput,
   });
 }
 

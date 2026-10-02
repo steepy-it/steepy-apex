@@ -851,3 +851,35 @@ test('a genuinely failing evidence collection is refused with its specific exit 
   assert.deepEqual([result.code, result.halted], [1, true]);
   assert.match(result.reason, /review evidence rejected: surface-test exited 1 \(signal none, spawn error none\)/);
 });
+
+test('a recovery input never converts a run: a fresh run refuses it unless explicitly started, an existing run refuses the start', async (t) => {
+  const repo = repository(t);
+  repo.put(`${DIR}/recovery-input.json`, '{}\n');
+  const stray = scriptedRunner(repo);
+  const refused = await control(repo, stray.runner);
+  assert.deepEqual([refused.code, refused.halted], [1, false]);
+  assert.match(refused.reason, /a recovery input exists at \.apex\/work\/tasks\/topic\/recovery-input\.json; start it explicitly with --recovery-input/);
+  assert.equal(existsSync(join(repo.root, `${DIR}/autopilot-run.json`)), false);
+  const malformed = await runController({ repoRoot: repo.root, specName: 'topic', contract, runId: RUN_ID, recoveryInput: `${DIR}/recovery-input.json`,
+    services: { runner: stray.runner, log: () => {} } });
+  assert.deepEqual([malformed.code, malformed.halted], [1, false]);
+  assert.match(malformed.reason, /^recovery input: recovery input fields must be closed/);
+  assert.equal(existsSync(join(repo.root, `${DIR}/autopilot-run.json`)), false, 'a refused recovery creates no run identity');
+  assert.deepEqual(stray.calls, []);
+
+  rmSync(join(repo.root, `${DIR}/recovery-input.json`));
+  await assert.rejects(control(repo, scriptedRunner(repo).runner, { crash: crashAt('phase-accepted', { phase: 'plan' }) }), /simulated crash/);
+  const events = repo.read(`${DIR}/autopilot-events.jsonl`);
+  const started = await runController({ repoRoot: repo.root, specName: 'topic', contract, runId: RUN_ID, recoveryInput: `${DIR}/recovery-input.json`,
+    services: { runner: scriptedRunner(repo).runner, log: () => {} } });
+  assert.deepEqual([started.code, started.halted], [1, false]);
+  assert.match(started.reason, /--recovery-input starts a new recovery run; the existing run resumes from its journal without it/);
+  assert.equal(repo.read(`${DIR}/autopilot-events.jsonl`), events);
+  repo.put(`${DIR}/recovery-input.json`, '{}\n');
+  const converted = await control(repo, scriptedRunner(repo).runner);
+  assert.deepEqual([converted.code, converted.halted], [1, false], 'a stray input beside a plan-phase run is refused, never a conversion');
+  assert.match(converted.reason, /a recovery input beside a run that did not start from it is refused/);
+  assert.equal(repo.read(`${DIR}/autopilot-events.jsonl`), events);
+  rmSync(join(repo.root, `${DIR}/recovery-input.json`));
+  assert.equal((await control(repo, scriptedRunner(repo).runner)).code, 0, 'without the stray input the run resumes normally');
+});

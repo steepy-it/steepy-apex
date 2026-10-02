@@ -9,7 +9,7 @@ import { decodeReviewerResponse } from '../adapters/reviewer-response.mjs';
 import { reviewPhaseContext } from './autopilot-context.mjs';
 import { assertSafeRelPath } from './sanitize.mjs';
 import { writeAllSync } from './write-all.mjs';
-import { inspectTaskResult, parseTaskResultProjection, verifyTaskResults } from './task-results.mjs';
+import { inspectTaskImport, inspectTaskResult, parseTaskResultProjection, verifyTaskResults } from './task-results.mjs';
 import { observeSource } from './source-observation.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -72,6 +72,10 @@ function artifacts(root, config) {
 }
 function exclusions(state, config) { return [config.report, config.issues, ...stages.map((stage) => pathFor(state, stage))]; }
 const VERSION = 3;
+// Baseline versions: 3 legacy, 4 task result protocol 2, 5 reviewer response
+// protocol 3, 6 a protocol-3 review bound to an imported task receipt.
+const IMPORT_BOUND = 6;
+const responseV3 = (baseline) => baseline.version >= 5;
 const digestPattern = /^[a-f0-9]{64}$/;
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function keys(value, expected, label) {
@@ -81,11 +85,14 @@ function keys(value, expected, label) {
 function validateConfig(state, config) {
   keys(config, ['runId', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'index',
     ...(Object.hasOwn(config, 'execution') ? ['execution'] : []),
+    ...(Object.hasOwn(config, 'import') ? ['import'] : []),
     ...(Object.hasOwn(config, 'taskResultProtocol') ? ['taskResultProtocol'] : []),
     ...(Object.hasOwn(config, 'reviewerResponseProtocol') ? ['reviewerResponseProtocol'] : [])], 'review correlation');
   if (Object.hasOwn(config, 'taskResultProtocol') && config.taskResultProtocol !== 2) throw new Error('invalid reviewer task result protocol');
   if (Object.hasOwn(config, 'reviewerResponseProtocol') && config.reviewerResponseProtocol !== 3) throw new Error('invalid reviewer response protocol');
-  if (config.taskResultProtocol === 2 && config.task !== 'final' && !Object.hasOwn(config, 'execution')) throw new Error('v2 task review requires an execution receipt');
+  if (Object.hasOwn(config, 'execution') && Object.hasOwn(config, 'import')) throw new Error('task review binds exactly one of execution or import');
+  if (Object.hasOwn(config, 'import') && config.reviewerResponseProtocol !== 3) throw new Error('import-bound review requires reviewer response protocol 3');
+  if (config.taskResultProtocol === 2 && config.task !== 'final' && !Object.hasOwn(config, 'execution') && !Object.hasOwn(config, 'import')) throw new Error('v2 task review requires an execution receipt');
   if (typeof config.runId !== 'string' || !/^[A-Za-z0-9-]+$/.test(config.runId)
     || !Number.isSafeInteger(config.attempt) || config.attempt < 1
     || !Number.isSafeInteger(config.iteration) || config.iteration < 1
@@ -102,6 +109,10 @@ function validateConfig(state, config) {
       || !config.execution.startsWith(`${dir}/task-${config.task}-execution-`)) throw new Error('wrong task execution binding');
     parseWorkPath(`${config.execution}-result.json`, 'work-output', 'task-result');
   }
+  if (Object.hasOwn(config, 'import')) {
+    if (config.task === 'final' || config.import !== `${dir}/task-${config.task}-import.json`) throw new Error('wrong task import binding');
+    parseWorkPath(config.import, 'work-output', 'task-import');
+  }
   if (config.plan !== null || config.index !== null) {
     if (config.task !== 'final' || config.plan !== `.apex/work/plans/${dir.split('/').at(-1)}.md`
       || config.index !== `${dir}/task-result-index.md`) throw new Error('invalid review handoff paths');
@@ -109,28 +120,39 @@ function validateConfig(state, config) {
 }
 function baselineFor(root, state) {
   const baseline = load(root, state, 'baseline');
-  keys(baseline, ['version', 'config', 'snapshot', 'handoff', ...([4, 5].includes(baseline.version) && baseline.config.taskResultProtocol === 2 ? ['implementation'] : [])], 'review baseline');
-  if (![VERSION, 4, 5].includes(baseline.version) || !digestPattern.test(baseline.snapshot)
+  keys(baseline, ['version', 'config', 'snapshot', 'handoff', ...([4, 5, IMPORT_BOUND].includes(baseline.version) && baseline.config.taskResultProtocol === 2 ? ['implementation'] : [])], 'review baseline');
+  if (![VERSION, 4, 5, IMPORT_BOUND].includes(baseline.version) || !digestPattern.test(baseline.snapshot)
     || !(baseline.handoff === null || digestPattern.test(baseline.handoff))) throw new Error('invalid review baseline evidence');
   validateConfig(state, baseline.config);
-  if (baseline.version !== (baseline.config.reviewerResponseProtocol === 3 ? 5 : baseline.config.taskResultProtocol === 2 ? 4 : VERSION)) throw new Error('invalid review execution version');
+  if (baseline.version !== versionFor(baseline.config)) throw new Error('invalid review execution version');
   if (baseline.config.taskResultProtocol === 2 && (baseline.config.task === 'final' ? baseline.implementation !== null : !digestPattern.test(baseline.implementation))) throw new Error('invalid review execution digest');
   if ((baseline.config.plan === null) !== (baseline.handoff === null)) throw new Error('invalid handoff evidence');
   return baseline;
 }
+function versionFor(config) {
+  if (Object.hasOwn(config, 'import')) return IMPORT_BOUND;
+  return config.reviewerResponseProtocol === 3 ? 5 : config.taskResultProtocol === 2 ? 4 : VERSION;
+}
+// The verified digest of the evidence a task review binds: an accepted
+// execution of this task, or this run's verified import of it.
+function reviewedEvidence(root, config) {
+  if (config.import !== undefined) {
+    const imported = inspectTaskImport(root, config.import);
+    if (imported.task !== config.task || imported.runId !== config.runId) throw new Error('task import is not ready for review');
+    return imported.digest;
+  }
+  const execution = inspectTaskResult(root, config.execution);
+  if (!execution.accepted || execution.config.task !== config.task) throw new Error('task execution is not ready for review');
+  return execution.digest;
+}
 export function beginReview(root, state, input) {
   const config = { ...input, format: input.format ?? 'text', plan: input.plan ?? null, index: input.index ?? null };
-  if (config.execution !== undefined || config.index !== null
+  if (config.execution !== undefined || config.import !== undefined || config.index !== null
     && parseTaskResultProjection(readWorkPath(root, config.index, { encoding: 'utf8' })) !== null) config.taskResultProtocol = 2;
   validateConfig(state, config);
   const handoff = config.plan === null ? null : handoffDetails(root, config.plan, config.index, state).digest;
-  let implementation;
-  if (config.execution !== undefined) {
-    const execution = inspectTaskResult(root, config.execution);
-    if (!execution.accepted || execution.config.task !== config.task) throw new Error('task execution is not ready for review');
-    implementation = execution.digest;
-  }
-  return save(root, state, 'baseline', { version: config.reviewerResponseProtocol === 3 ? 5 : config.taskResultProtocol === 2 ? 4 : VERSION,
+  const implementation = config.execution !== undefined || config.import !== undefined ? reviewedEvidence(root, config) : undefined;
+  return save(root, state, 'baseline', { version: versionFor(config),
     config, snapshot: snapshot(root, exclusions(state, config), config.taskResultProtocol), handoff,
     ...(config.taskResultProtocol === 2 ? { implementation: implementation ?? null } : {}) });
 }
@@ -175,14 +197,14 @@ function outcome(response, baseline, observation, original = null) {
   const blocked = (reason) => ({ status: 'BLOCKED', accepted: false, reason });
   if (observation.error !== null) return blocked(observation.error);
   if (observation.snapshot !== baseline.snapshot) return blocked('unauthorized repository change during review');
-  if (baseline.version !== 5 && observation.artifacts[baseline.config.report] === null) return blocked('missing or empty review report');
+  if (!responseV3(baseline) && observation.artifacts[baseline.config.report] === null) return blocked('missing or empty review report');
   if (original && !equal(observation.artifacts, original.observation.artifacts)) return blocked('review artifacts changed during response-only correction');
   let candidate;
   try { candidate = candidateResponse(response, baseline.config, { allowRepair: original === null }); }
   catch (error) { return blocked(error.message); }
-  if (baseline.version === 5 && ['APPROVED', 'ISSUES_FOUND'].includes(candidate.status)
+  if (responseV3(baseline) && ['APPROVED', 'ISSUES_FOUND'].includes(candidate.status)
     && observation.artifacts[baseline.config.report] === null) return blocked('missing or empty review report');
-  if ((baseline.version !== 5 || ['APPROVED', 'ISSUES_FOUND'].includes(candidate.status))
+  if ((!responseV3(baseline) || ['APPROVED', 'ISSUES_FOUND'].includes(candidate.status))
     && observation.artifacts[candidate.artifact] === null) return blocked('missing or empty reviewer artifact');
   if (original && !equal(identity(candidate), original.repairIdentity)) return blocked('response-only correction changed verdict, artifact, or signals');
   if (candidate.formatRepair) {
@@ -200,10 +222,8 @@ function outcome(response, baseline, observation, original = null) {
 }
 function observe(root, state, baseline) {
   try {
-    if (baseline.config.execution !== undefined) {
-      const execution = inspectTaskResult(root, baseline.config.execution);
-      if (!execution.accepted || execution.digest !== baseline.implementation) throw new Error('task execution changed during review');
-    }
+    if ((baseline.config.execution !== undefined || baseline.config.import !== undefined)
+      && reviewedEvidence(root, baseline.config) !== baseline.implementation) throw new Error('task evidence changed during review');
     return { snapshot: snapshot(root, exclusions(state, baseline.config), baseline.config.taskResultProtocol), artifacts: artifacts(root, baseline.config), error: null };
   } catch { return { snapshot: null, artifacts: null, error: 'cannot safely observe review repository or artifacts' }; }
 }
@@ -247,7 +267,7 @@ function readEvidence(root, state) {
 // context manifest grants the role any read capability.
 export function inspectCorrectionEvidence(root, state) {
   const evidence = readEvidence(root, state);
-  if (evidence.baseline.version !== 5 || evidence.original.status !== 'REPAIRABLE'
+  if (!responseV3(evidence.baseline) || evidence.original.status !== 'REPAIRABLE'
     || evidence.reserved === null) throw new Error('v3 correction requires a consumed gate reservation');
   if (!equal(observe(root, state, evidence.baseline), evidence.original.observation)) {
     throw new Error('review evidence changed before correction context');
@@ -282,10 +302,8 @@ export function inspectReview(root, state) {
   const evidence = readEvidence(root, state);
   if (evidence.reserved && !evidence.corrected) return { accepted: false, status: 'BLOCKED', reason: 'reserved correction has no result; do not redispatch' };
   if (!equal(observe(root, state, evidence.baseline), evidence.result.observation)) return { accepted: false, status: 'BLOCKED', reason: 'review evidence drift on resume' };
-  if (evidence.baseline.config.execution !== undefined) {
-    const execution = inspectTaskResult(root, evidence.baseline.config.execution);
-    if (!execution.accepted || execution.digest !== evidence.baseline.implementation) throw new Error('reviewed execution evidence changed');
-  }
+  if ((evidence.baseline.config.execution !== undefined || evidence.baseline.config.import !== undefined)
+    && reviewedEvidence(root, evidence.baseline.config) !== evidence.baseline.implementation) throw new Error('reviewed task evidence changed');
   if (evidence.baseline.handoff !== null && handoffDetails(root, evidence.baseline.config.plan, evidence.baseline.config.index, state).digest !== evidence.baseline.handoff) throw new Error('review handoff evidence mismatch');
   return evidence.result;
 }
@@ -358,20 +376,31 @@ function handoffDetails(root, planPath, indexPath, finalState) {
     refs.set(match[1], match[2]);
   }
   if (refs.get('final') !== finalState) throw new Error('missing or mismatched final reviewer gate');
+  // A task whose current evidence is, or continues, an import was never
+  // reviewed in this run, so it keeps no mechanical review waiver.
+  const imported = new Set([...(executions?.imports ?? []).map((item) => item.task),
+    ...(executions?.executions ?? []).filter((item) => item.config.previousImport !== undefined).map((item) => item.config.task)]);
   const proofs = [];
   for (const task of route.tasks) {
     const state = refs.get(`Task ${task.task}`);
     refs.delete(`Task ${task.task}`);
-    if (!state && task.complexity === 'mechanical') continue;
+    if (!state && task.complexity === 'mechanical' && !imported.has(task.task)) continue;
     if (!state) throw new Error(`missing reviewer gate for Task ${task.task}`);
     const proof = readEvidence(root, state);
     if (proof.baseline.config.task !== task.task || proof.result.status !== 'APPROVED' || !proof.result.accepted
       || proof.reserved && !proof.corrected || !equal(artifacts(root, proof.baseline.config), proof.result.observation.artifacts)) throw new Error(`invalid approval evidence for Task ${task.task}`);
     if (projection !== null) {
       const entry = projection.find((item) => item.task === task.task);
-      const execution = inspectTaskResult(root, entry.receipt, { checkCurrent: false });
-      if (proof.baseline.config.execution !== entry.receipt || proof.baseline.implementation !== execution.digest) {
-        throw new Error(`task review does not approve current execution for Task ${task.task}`);
+      if (entry.kind === 'import') {
+        // An import approval and an execution approval are never interchangeable.
+        if (proof.baseline.config.import !== entry.receipt || proof.baseline.implementation !== inspectTaskImport(root, entry.receipt).digest) {
+          throw new Error(`task review does not approve current import for Task ${task.task}`);
+        }
+      } else {
+        const execution = inspectTaskResult(root, entry.receipt, { checkCurrent: false });
+        if (proof.baseline.config.execution !== entry.receipt || proof.baseline.implementation !== execution.digest) {
+          throw new Error(`task review does not approve current execution for Task ${task.task}`);
+        }
       }
     }
     proofs.push({ task: task.task, state, config: proof.baseline.config, digest: hash(JSON.stringify(proof)) });
@@ -447,12 +476,13 @@ export function verifyImplementReviews(root, { planPath, indexPath, runId, attem
   return { state, runId, attempt, status: 'APPROVED', ...(sameAttempt ? {} : { retainedApproval }) };
 }
 export function main(argv) {
-  const { values } = parseArgs({ args: argv, options: Object.fromEntries(['repo-root', 'state', 'action', 'run-id', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'task-result-index', 'previous-state', 'resume-final', 'execution', 'reviewer-response-protocol'].map((name) => [name, { type: 'string' }])) });
+  const { values } = parseArgs({ args: argv, options: Object.fromEntries(['repo-root', 'state', 'action', 'run-id', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'task-result-index', 'previous-state', 'resume-final', 'execution', 'import', 'reviewer-response-protocol'].map((name) => [name, { type: 'string' }])) });
   const root = resolve(values['repo-root'] ?? '.');
   const state = values.state;
   let result;
   if (values.action === 'begin') result = beginReview(root, state, { runId: values['run-id'], attempt: Number(values.attempt), iteration: Number(values.iteration), task: values.task, report: values.report, issues: values.issues, format: values.format ?? 'text', plan: values.plan ?? null, index: values['task-result-index'] ?? null,
     ...(values.execution === undefined ? {} : { execution: values.execution }),
+    ...(values.import === undefined ? {} : { import: values.import }),
     ...(values['reviewer-response-protocol'] === undefined ? {} : { reviewerResponseProtocol: Number(values['reviewer-response-protocol']) }) });
   else if (values.action === 'inspect') result = inspectReview(root, state);
   else if (values.action === 'reserve') result = reserveRepair(root, state);
