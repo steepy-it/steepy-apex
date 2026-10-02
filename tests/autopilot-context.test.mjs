@@ -1749,7 +1749,7 @@ test('controller task manifests select the protocol explicitly and bind every su
   }
 });
 
-test('review routing reads v3 projections whose entries name execution or import kinds', () => {
+test('review routing reads v3 projections only when protocol 3 is selected explicitly', (t) => {
   const plan = '# Plan\n\n## Task 1\n\n- **Surface:** web\n- **Complexity:** mechanical\n- **Success criteria:** SC1\n\n## Task 2\n\n- **Surface:** web\n- **Complexity:** integration\n- **Success criteria:** SC2\n';
   const entries = [
     { task: '1', kind: 'import', status: 'IMPORTED', artifact: '.apex/work/tasks/old/task-1-execution-1-report.md',
@@ -1758,10 +1758,23 @@ test('review routing reads v3 projections whose entries name execution or import
       changedPaths: ['src/two.ts'], signals: [], receipt: '.apex/work/tasks/topic/task-2-execution-1' },
   ];
   const index = (value) => `# Results\n<!-- steepy-task-results: v3 -->\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\`\n<!-- /steepy-task-results -->\n`;
-  assert.deepEqual(reviewPhaseContext(plan, index(entries)).tasks.map(({ task }) => task), ['1', '2']);
-  assert.throws(() => reviewPhaseContext(plan, index([{ ...entries[0], status: 'DONE' }, entries[1]])), /projection entry/);
-  assert.throws(() => reviewPhaseContext(plan, index([{ ...entries[0], kind: 'replay' }, entries[1]])), /projection entry kind/);
-  assert.throws(() => reviewPhaseContext(plan, index([{ ...entries[0], artifact: '.apex/work/tasks/topic/task-1-execution-1-report.md' }, entries[1]])), /correlation mismatch/);
+  const selected = { taskResultIndexProtocol: 3 };
+  assert.throws(() => reviewPhaseContext(plan, index(entries)), /task result index protocol 3 does not match required protocol 2/,
+    'the legacy and manual routing never accept an unselected v3 index');
+  assert.deepEqual(reviewPhaseContext(plan, index(entries), selected).tasks.map(({ task }) => task), ['1', '2']);
+  assert.throws(() => reviewPhaseContext(plan, index([{ ...entries[0], status: 'DONE' }, entries[1]]), selected), /projection entry/);
+  assert.throws(() => reviewPhaseContext(plan, index([{ ...entries[0], kind: 'replay' }, entries[1]]), selected), /projection entry kind/);
+  assert.throws(() => reviewPhaseContext(plan, index([{ ...entries[0], artifact: '.apex/work/tasks/topic/task-1-execution-1-report.md' }, entries[1]]), selected), /correlation mismatch/);
+  const repoRoot = materialize(t);
+  const planPath = '.apex/work/plans/topic.md';
+  const indexPath = '.apex/work/tasks/topic/task-result-index.md';
+  for (const [path, text] of [[planPath, plan], [indexPath, index(entries)]]) {
+    mkdirSync(dirname(join(repoRoot, path)), { recursive: true });
+    writeFileSync(join(repoRoot, path), text);
+  }
+  const cli = spawnSync(process.execPath, [scriptPath, '--verify-handoff', '--repo-root', repoRoot, '--plan', planPath, '--task-result-index', indexPath], { encoding: 'utf8' });
+  assert.equal(cli.status, 1);
+  assert.match(cli.stderr, /handoff rejected: task result index protocol 3 does not match required protocol 2/);
 });
 
 test('an imported task reviewer manifest names the verified import receipt and its frozen source report', (t) => {
@@ -1786,7 +1799,8 @@ test('an imported task reviewer manifest names the verified import receipt and i
   const manifestPath = `${source}/context/phase-implement-attempt-1.json`;
   put(manifestPath, `${JSON.stringify({ runId: 'legacy-run', attempt: 1, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } })}\n`);
   put('.apex/work/plans/topic.md', plan('.apex/work/specs/topic.md'));
-  put(`${dir}/recovery-input.json`, '{}\n');
+  put(`${dir}/recovery-input.json`, `${JSON.stringify({ source: { run: source, receipts: [{ task: '1', path: `${sourceState}-result.json`,
+    sha256: createHash('sha256').update(readFileSync(join(repoRoot, `${sourceState}-result.json`))).digest('hex') }] } })}\n`);
   const importPath = `${dir}/task-1-import.json`;
   const imported = importTaskResult(repoRoot, importPath, { runId: base.runId, task: '1', sourceState, sourceHead: sourceState,
     manifests: [{ path: manifestPath, sha256: createHash('sha256').update(readFileSync(join(repoRoot, manifestPath))).digest('hex') }], explainedDelta: [] });

@@ -527,3 +527,31 @@ test('recovery registration interrupted by another event, or a downgraded role m
   assert.equal(result.code, 1);
   assert.match(result.err, /HALTED — implement acceptance: task execution \S+task-3-execution-1 manifest provenance mismatch/);
 });
+
+test('a recovery run keeps its bound kind: a missing or changed input fails closed, never converting to a planned run', async (t) => {
+  const repo = await recoveryRepo(t);
+  const input = repo.read(INPUT);
+  const crash = (at) => { if (at === 'run-created') throw new Error('simulated crash'); };
+  assert.equal((await conduct(repo, START, { controllerServices: { runner: roleRunner(repo).runner, crash } })).code, 1);
+  assert.equal(JSON.parse(repo.read(`${DEST}/autopilot-run.json`)).recovery.sha256, sha(input));
+  const journal = repo.read(`${DEST}/autopilot-events.jsonl`);
+  for (const [label, change, reason] of [
+    ['missing', () => rmSync(join(repo.root, INPUT)), /refused — this recovery run's input is missing: \.apex\/work\/tasks\/topic-recovery\/recovery-input\.json/],
+    ['changed', () => repo.put(INPUT, input.replace('"reuse"', '"reuse" ')), /refused — this recovery run's input changed since the run was created/],
+  ]) {
+    change();
+    const resumed = roleRunner(repo);
+    const result = await conduct(repo, [NEW_SPEC], { controllerServices: { runner: resumed.runner } });
+    assert.equal(result.code, 1, label);
+    assert.match(result.err, reason, label);
+    assert.deepEqual(resumed.calls, [], `${label}: no plan role and no writer`);
+    assert.equal(repo.read(`${DEST}/autopilot-events.jsonl`), journal, `${label}: the journal is unchanged`);
+  }
+  repo.put(INPUT, input);
+  const restored = roleRunner(repo);
+  const result = await conduct(repo, [NEW_SPEC], { controllerServices: { runner: restored.runner } });
+  assert.equal(result.code, 0, result.err);
+  assert.equal(restored.calls.includes('implementer:1@1'), false);
+  assert.equal(writerRoles(repo).length, 1);
+  assert.equal(events(repo).some(({ event, role }) => event === 'ROLE_RESERVED' && role === 'plan'), false);
+});

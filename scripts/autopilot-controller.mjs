@@ -315,9 +315,12 @@ function refusing(label, action) {
 function startOrResume(ctx) {
   const { root, paths } = ctx;
   if (optionalWork(root, paths.run, 'autopilot-run') === null) {
+    // The run kind is bound once, in the immutable identity: a recovery run
+    // records the exact input it was started from.
     createAutopilotRun(root, paths.dir, {
       runId: ctx.requestedRunId, branch: ctx.contract.branch, baseline: ctx.git.head(root),
       runtime: fingerprintAutopilotRuntime(ctx.engineRoot),
+      ...(ctx.recovery ? { recovery: { path: paths.recoveryInput, sha256: ctx.recoveryDigest } } : {}),
     }, { engineRoot: ctx.engineRoot });
     refresh(ctx);
     ctx.crash('run-created', {});
@@ -622,6 +625,9 @@ function ensureIndex(ctx) {
   }
 }
 
+// The run's index protocol selection, carried explicitly into each reviewer
+// correlation; an ordinary run adds nothing, so its baselines are unchanged.
+const indexSelection = (ctx) => (ctx.indexProtocol === 3 ? { taskResultIndexProtocol: 3 } : {});
 const importOf = (ctx, task) => ctx.state.imports.find((item) => item.scope.task === Number(task)) ?? null;
 
 // Each task's current evidence: its latest accepted execution, otherwise its import.
@@ -855,6 +861,7 @@ async function reviewTask(ctx, plan, task, writer, iteration) {
       effects: () => beginReview(root, guard, {
         runId: ctx.state.runId, attempt: 1, iteration: scope.iteration, task: task.task, report, issues,
         format: 'text', ...(imported ? { import: imported.path } : { execution: stateOf(writer) }), reviewerResponseProtocol: 3,
+        ...indexSelection(ctx),
       }),
       manifest: (roleSequence) => buildControllerTaskManifest('task-reviewer', {
         ...taskBinding(ctx, plan, task, roleSequence, taskReviewerTier(task)),
@@ -940,6 +947,7 @@ async function finalReview(ctx, plan, iteration) {
       beginReview(root, guard, {
         runId: ctx.state.runId, attempt: 1, iteration, task: 'final', report: paths.finalReport,
         issues: paths.finalIssues, format: 'text', plan: paths.plan, index: paths.index, reviewerResponseProtocol: 3,
+        ...indexSelection(ctx),
       });
     },
     manifest: (roleSequence) => buildFinalReviewManifest({
@@ -1105,7 +1113,8 @@ async function reviewPhase(ctx) {
   if (!entry) {
     materializeReviewInputs(ctx, plan);
     // The compact handoff parse still validates index coverage and the reviewer tier.
-    const route = gate(ctx, 'review context', () => reviewPhaseContext(plan.planText, readText(ctx, paths.index, 'task-result-index')));
+    const route = gate(ctx, 'review context', () => reviewPhaseContext(plan.planText, readText(ctx, paths.index, 'task-result-index'),
+      { taskResultIndexProtocol: ctx.indexProtocol }));
     const { testCommand, criterionIds } = branchContract(plan);
     entry = await dispatchRole(ctx, {
       scope, role: 'review', modelTier: route.modelTier,
@@ -1202,11 +1211,9 @@ function registerRecovery(ctx) {
   if (ctx.events.slice(1).some((event) => event.event !== 'RECOVERY_IMPORTED')) {
     halt(ctx, 'recovery registration was interrupted by other run events', { reconciliation: true });
   }
-  const inspection = ctx.recoveryStart ?? gate(ctx, 'recovery input', () => {
-    const current = inspectRecovery(root, paths.recoveryInput);
-    if (current.status !== 'READY') throw new Error(`recovery requires reconciliation: ${current.reconciliation.join('; ')}`);
-    return current;
-  }, { reconciliation: true });
+  // Completing an interrupted registration repeats every fresh-start gate; a
+  // failure is a refusal before any further effect.
+  const inspection = ctx.recoveryStart ?? refusing('recovery input', () => verifyRecoveryStart(ctx));
   for (const task of input.reuse.slice(registered.length)) {
     const scope = scopeOf('implement', Number(task));
     const importPath = `${paths.dir}/task-${task}-import.json`;
@@ -1239,18 +1246,20 @@ function selectFreshRecovery(ctx) {
   useRecovery(ctx, present);
 }
 
-// A resumed run keeps the kind its journal shows: a recovery run registers its
-// imports right after RUN_STARTED. A stray input never converts a run.
+// A resumed run keeps the kind bound in its immutable identity. The input file
+// never selects it: a recovery run whose input is missing or changed fails
+// closed, and a stray input beside any other run is refused, both without any
+// journal effect. Imports in a run not started from an input are reconciliation.
 function selectResumedRecovery(ctx) {
+  const binding = ctx.run.recovery ?? null;
   const present = optionalWork(ctx.root, ctx.paths.recoveryInput, 'recovery-input');
-  const second = ctx.events[1];
-  if (present === null) {
-    if (ctx.state.imports.length > 0) halt(ctx, 'recovery imports exist without their recovery input', { reconciliation: true });
+  if (binding === null) {
+    if (present !== null) throw new ControllerRefusal(`a recovery input beside a run that did not start from it is refused: ${ctx.paths.recoveryInput}`);
+    if (ctx.state.imports.length > 0) halt(ctx, 'recovery imports exist in a run that was not started from a recovery input', { reconciliation: true });
     return;
   }
-  if (second !== undefined && second.event !== 'RECOVERY_IMPORTED') {
-    throw new ControllerRefusal(`a recovery input beside a run that did not start from it is refused: ${ctx.paths.recoveryInput}`);
-  }
+  if (present === null) throw new ControllerRefusal(`this recovery run's input is missing: ${ctx.paths.recoveryInput}`);
+  if (sha(present) !== binding.sha256) throw new ControllerRefusal(`this recovery run's input changed since the run was created: ${ctx.paths.recoveryInput}`);
   useRecovery(ctx, present);
 }
 
@@ -1266,8 +1275,10 @@ export async function runController(options) {
     }
     // A fresh run validates its inputs before creating any run identity.
     if (fresh) selectFreshRecovery(ctx);
-    if (fresh && ctx.recovery) ctx.recoveryStart = refusing('recovery input', () => verifyRecoveryStart(ctx));
-    else if (fresh) planInputs(ctx);
+    if (fresh && ctx.recovery) {
+      ctx.recoveryStart = refusing('recovery input', () => verifyRecoveryStart(ctx));
+      if (ctx.recoveryStart.recoveryInput.sha256 !== ctx.recoveryDigest) throw new ControllerRefusal('the recovery input changed while the run was starting');
+    } else if (fresh) planInputs(ctx);
     startOrResume(ctx);
     projectAutopilotStatus(ctx.root, ctx.paths.dir);
     if (ctx.state.status === 'HALTED') return { code: 1, reason: `controller run halted: ${ctx.state.reason}`, halted: true };

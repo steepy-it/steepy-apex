@@ -883,3 +883,22 @@ test('a recovery input never converts a run: a fresh run refuses it unless expli
   rmSync(join(repo.root, `${DIR}/recovery-input.json`));
   assert.equal((await control(repo, scriptedRunner(repo).runner)).code, 0, 'without the stray input the run resumes normally');
 });
+
+for (const [label, stray] of [['malformed', '{}\n'], ['valid-looking', `${JSON.stringify({ schemaVersion: 1, source: {}, reuse: ['1'], current: {}, destination: {} })}\n`]]) {
+  test(`a ${label} stray recovery input beside a run crashed at creation is refused without any journal effect`, async (t) => {
+    const repo = repository(t);
+    await assert.rejects(control(repo, scriptedRunner(repo).runner, { crash: crashAt('run-created') }), /simulated crash/);
+    const events = repo.read(`${DIR}/autopilot-events.jsonl`);
+    repo.put(`${DIR}/recovery-input.json`, stray);
+    const resumed = scriptedRunner(repo);
+    const refused = await control(repo, resumed.runner);
+    assert.deepEqual([refused.code, refused.halted], [1, false]);
+    assert.match(refused.reason, /a recovery input beside a run that did not start from it is refused/);
+    assert.equal(repo.read(`${DIR}/autopilot-events.jsonl`), events, 'no RECONCILIATION_REQUIRED or RUN_HALTED');
+    assert.deepEqual(resumed.calls, []);
+    rmSync(join(repo.root, `${DIR}/recovery-input.json`));
+    const result = await control(repo, scriptedRunner(repo).runner);
+    assert.equal(result.code, 0, result.reason);
+    assert.equal(journal(repo).status, 'COMPLETED');
+  });
+}

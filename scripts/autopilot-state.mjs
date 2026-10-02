@@ -8,6 +8,9 @@ import { verifyAutopilotRuntime } from './autopilot-runtime.mjs';
 
 export const AUTOPILOT_EVENT_SCHEMA_VERSION = 2;
 export const AUTOPILOT_RUN_SCHEMA_VERSION = 1;
+// A recovery run binds its kind at creation: run identity schema 2 adds the
+// exact recovery input path and digest. Ordinary runs keep schema 1 bytes.
+export const AUTOPILOT_RECOVERY_RUN_SCHEMA_VERSION = 2;
 export const AUTOPILOT_RESERVATION_SCHEMA_VERSION = 2;
 export const AUTOPILOT_CONTROLLER_PROTOCOL = 2;
 export const AUTOPILOT_ROLES = Object.freeze([
@@ -305,10 +308,23 @@ function verifyBytes(root, path, family, expected) {
   return actual;
 }
 
+function recoveryOf(dir, recovery) {
+  if (recovery === null || typeof recovery !== 'object' || Array.isArray(recovery)
+    || Object.keys(recovery).sort().join(',') !== 'path,sha256'
+    || recovery.path !== `${dir}/recovery-input.json` || typeof recovery.sha256 !== 'string' || !SHA256.test(recovery.sha256)) {
+    fail('recovery input binding must name this run directory input and its SHA-256');
+  }
+  parseWorkPath(recovery.path, 'work-output', 'recovery-input');
+  return Object.freeze({ path: recovery.path, sha256: recovery.sha256 });
+}
+
 function readIdentity(root, dir, engineRoot) {
   const run = parseJson(readWorkPath(root, paths(dir).run, { family: 'autopilot-run' }), 'run identity');
-  exact(run, ['schemaVersion', 'controllerProtocol', 'runId', 'branch', 'baseline', 'runtime'], 'run identity');
-  if (run.schemaVersion !== AUTOPILOT_RUN_SCHEMA_VERSION || run.controllerProtocol !== AUTOPILOT_CONTROLLER_PROTOCOL
+  const recovery = run?.schemaVersion === AUTOPILOT_RECOVERY_RUN_SCHEMA_VERSION;
+  exact(run, ['schemaVersion', 'controllerProtocol', 'runId', 'branch', 'baseline', 'runtime', ...(recovery ? ['recovery'] : [])], 'run identity');
+  if (recovery) recoveryOf(dir, run.recovery);
+  if (![AUTOPILOT_RUN_SCHEMA_VERSION, AUTOPILOT_RECOVERY_RUN_SCHEMA_VERSION].includes(run.schemaVersion)
+    || run.controllerProtocol !== AUTOPILOT_CONTROLLER_PROTOCOL
     || !line(run.runId) || !line(run.branch) || !GIT_ID.test(run.baseline)) fail('invalid run identity');
   runtimeOf(run.runtime);
   if (engineRoot !== undefined) verifyAutopilotRuntime(engineRoot, run.runtime);
@@ -442,11 +458,14 @@ function publishEvent(root, dir, state, event) {
 }
 
 export function createAutopilotRun(root, dir, identity, { engineRoot } = {}) {
-  exact(identity, ['runId', 'branch', 'baseline', 'runtime'], 'start identity');
+  const recovery = Object.hasOwn(identity ?? {}, 'recovery');
+  exact(identity, ['runId', 'branch', 'baseline', 'runtime', ...(recovery ? ['recovery'] : [])], 'start identity');
   if (!line(identity.runId) || !line(identity.branch) || !GIT_ID.test(identity.baseline)) fail('invalid start identity');
   runtimeOf(identity.runtime);
+  if (recovery) recoveryOf(dir, identity.recovery);
   if (engineRoot !== undefined) verifyAutopilotRuntime(engineRoot, identity.runtime);
-  const run = { schemaVersion: AUTOPILOT_RUN_SCHEMA_VERSION, controllerProtocol: AUTOPILOT_CONTROLLER_PROTOCOL, ...identity };
+  const run = { schemaVersion: recovery ? AUTOPILOT_RECOVERY_RUN_SCHEMA_VERSION : AUTOPILOT_RUN_SCHEMA_VERSION,
+    controllerProtocol: AUTOPILOT_CONTROLLER_PROTOCOL, ...identity };
   const p = paths(dir);
   writeWorkPath(root, p.run, `${JSON.stringify(run)}\n`, { createOnly: true, family: 'autopilot-run' });
   const first = eventOf({ schemaVersion: AUTOPILOT_EVENT_SCHEMA_VERSION, sequence: 1, runId: run.runId, timestamp: new Date().toISOString(),

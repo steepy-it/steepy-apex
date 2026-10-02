@@ -232,8 +232,9 @@ test('versioned projection rejects duplicate, unknown, mixed and malformed block
   projectTaskResults(root, { indexPath, states: [state] });
   const good = readFileSync(join(root, indexPath), 'utf8');
   for (const text of [good + good, good.replace('v2 -->', 'v3 -->'), good + '- Task 1: DONE\n', good.replace('"changedPaths": []', '"changedPaths": null')]) {
-    assert.throws(() => parseTaskResultProjection(text), /projection/);
+    assert.throws(() => parseTaskResultProjection(text), /projection|task result index protocol 3 does not match required protocol 2/);
   }
+  assert.throws(() => parseTaskResultProjection(good.replace('v2 -->', 'v3 -->'), { protocol: 3 }), /projection entry schema/);
 }));
 
 test('later conductor attempts may change run ID while same-attempt provenance cannot', () => fixture(({ root, put }) => {
@@ -320,6 +321,9 @@ const NEW_PLAN = '.apex/work/plans/new.md';
 const sourceManifest = `${SOURCE}/context/phase-implement-attempt-1.json`;
 const lifecyclePlan = (spec) => `<!-- steepy-workflow: v1\nphase: plan\nstatus: READY\nnext: implement\nsource: ${spec}\nconsumed-by: none\n-->\n# Plan\n\n## Task 1 — one\n`;
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+// Only the declared source content binds an import: the run and each receipt path with its digest.
+const declaredInput = (root, receipts, run = SOURCE) => `${JSON.stringify({ source: { run,
+  receipts: receipts.map((receipt) => ({ ...receipt, sha256: sha(readFileSync(join(root, receipt.path))) })) } })}\n`;
 function recovery(fn, { protocol = 2, manifestRunId = 'legacy-run' } = {}) {
   return fixture((repo) => {
     const { root, git, put } = repo;
@@ -333,7 +337,7 @@ function recovery(fn, { protocol = 2, manifestRunId = 'legacy-run' } = {}) {
     put(sourceManifest, `${JSON.stringify({ schemaVersion: 1, runId: manifestRunId, attempt: 1, scope: { phase: 'implement', role: 'implement' },
       contract: protocol === null ? {} : { taskResultProtocol: protocol } })}\n`);
     put(NEW_PLAN, lifecyclePlan('.apex/work/specs/new.md'));
-    put(`${TARGET}/recovery-input.json`, '{"declared":"recovery"}\n');
+    put(`${TARGET}/recovery-input.json`, declaredInput(root, [{ task: '1', path: `${source}-result.json` }]));
     const manifests = [{ path: sourceManifest, sha256: sha(readFileSync(join(root, sourceManifest))) }];
     const importInput = { runId: 'recovery-run', task: '1', sourceState: source, sourceHead: source, manifests, explainedDelta: [] };
     return fn({ ...repo, source, sourceConfig, manifests, importInput });
@@ -357,8 +361,15 @@ test('an import receipt binds verified historical evidence, the present observat
   projectTaskResults(root, { indexPath: targetIndex, states: [], imports: [importPath], protocol: 3 });
   const index = readFileSync(join(root, targetIndex), 'utf8');
   assert.match(index, /^<!-- steepy-task-results: v3 -->$/m);
-  assert.deepEqual(parseTaskResultProjection(index), [{ task: '1', kind: 'import', status: 'IMPORTED', artifact: `${source}-report.md`,
+  assert.deepEqual(parseTaskResultProjection(index, { protocol: 3 }), [{ task: '1', kind: 'import', status: 'IMPORTED', artifact: `${source}-report.md`,
     changedPaths: ['source'], signals: ['tdd:red-green'], receipt: importPath }]);
+  // An absent selection means protocol 2: no unpinned reader accepts a v3 index.
+  assert.throws(() => parseTaskResultProjection(index), /task result index protocol 3 does not match required protocol 2/);
+  assert.throws(() => verifyTaskResults(root, { indexPath: targetIndex, expectedTasks: ['1'] }), /task result index protocol 3 does not match required protocol 2/);
+  const cli = spawnSync(process.execPath, [new URL('../scripts/task-results.mjs', import.meta.url).pathname, '--repo-root', root,
+    '--action', 'verify', '--task-result-index', targetIndex, '--expected-tasks', '["1"]'], { encoding: 'utf8' });
+  assert.equal(cli.status, 1);
+  assert.match(cli.stderr, /task result index protocol 3 does not match required protocol 2/);
   const verified = verifyTaskResults(root, { indexPath: targetIndex, expectedTasks: ['1'], protocol: 3 });
   assert.deepEqual(verified.imports.map(({ receipt: path }) => path), [importPath]);
   assert.deepEqual(verified.executions, []);
@@ -380,7 +391,11 @@ const tamperResult = ({ root, put, source }) => {
 };
 const insideTarget = (input) => ({ ...input, sourceState: `${TARGET}/task-1-execution-1`, sourceHead: `${TARGET}/task-1-execution-1` });
 for (const [label, options, mutate, reason, adjust = (input) => input] of [
-  ['a drifted source receipt', {}, tamperResult, /task result replay mismatch/],
+  ['a drifted source receipt', {}, tamperResult, /task import source is not declared by the recovery input/],
+  ['a drifted receipt redeclared with its new digest', {}, (repo) => {
+    tamperResult(repo);
+    repo.put(`${TARGET}/recovery-input.json`, declaredInput(repo.root, [{ task: '1', path: `${repo.source}-result.json` }]));
+  }, /task result replay mismatch/],
   ['a drifted declared manifest', {}, ({ put }) => put(sourceManifest, '{}\n'), /source manifest digest mismatch/],
   ['a manifest from another run', { manifestRunId: 'foreign-run' }, () => {}, /source attempt 1 manifest does not bind run legacy-run/],
   ['a protocol 1 source', { protocol: 1 }, () => {}, /source attempt 1 is not task result protocol 2; refusing implicit conversion/],
@@ -393,6 +408,15 @@ for (const [label, options, mutate, reason, adjust = (input) => input] of [
     assert.throws(() => readFileSync(join(repo.root, importPath)), /ENOENT/);
   }, options));
 }
+
+test('an import refuses a source receipt the recovery input does not declare, or a foreign run', () => recovery(({ root, put, source, importInput }) => {
+  for (const content of ['{"anything":true}\n', declaredInput(root, [{ task: '1', path: `${source}-result.json` }], '.apex/work/tasks/other'),
+    declaredInput(root, [{ task: '2', path: `${source}-result.json` }])]) {
+    put(`${TARGET}/recovery-input.json`, content);
+    assert.throws(() => importTaskResult(root, importPath, importInput), /task import source is not declared by the recovery input/);
+    assert.throws(() => readFileSync(join(root, importPath)), /ENOENT/);
+  }
+}));
 
 test('a v2 index never carries an import and the selected protocol is never converted', () => recovery(({ root, importInput }) => {
   importTaskResult(root, importPath, importInput);

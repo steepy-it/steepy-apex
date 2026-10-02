@@ -73,7 +73,8 @@ function artifacts(root, config) {
 function exclusions(state, config) { return [config.report, config.issues, ...stages.map((stage) => pathFor(state, stage))]; }
 const VERSION = 3;
 // Baseline versions: 3 legacy, 4 task result protocol 2, 5 reviewer response
-// protocol 3, 6 a protocol-3 review bound to an imported task receipt.
+// protocol 3, 6 a protocol-3 review whose run selected task result index
+// protocol 3 (the only reviews that may bind an import or read a v3 index).
 const IMPORT_BOUND = 6;
 const responseV3 = (baseline) => baseline.version >= 5;
 const digestPattern = /^[a-f0-9]{64}$/;
@@ -86,12 +87,15 @@ function validateConfig(state, config) {
   keys(config, ['runId', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'index',
     ...(Object.hasOwn(config, 'execution') ? ['execution'] : []),
     ...(Object.hasOwn(config, 'import') ? ['import'] : []),
+    ...(Object.hasOwn(config, 'taskResultIndexProtocol') ? ['taskResultIndexProtocol'] : []),
     ...(Object.hasOwn(config, 'taskResultProtocol') ? ['taskResultProtocol'] : []),
     ...(Object.hasOwn(config, 'reviewerResponseProtocol') ? ['reviewerResponseProtocol'] : [])], 'review correlation');
   if (Object.hasOwn(config, 'taskResultProtocol') && config.taskResultProtocol !== 2) throw new Error('invalid reviewer task result protocol');
   if (Object.hasOwn(config, 'reviewerResponseProtocol') && config.reviewerResponseProtocol !== 3) throw new Error('invalid reviewer response protocol');
   if (Object.hasOwn(config, 'execution') && Object.hasOwn(config, 'import')) throw new Error('task review binds exactly one of execution or import');
-  if (Object.hasOwn(config, 'import') && config.reviewerResponseProtocol !== 3) throw new Error('import-bound review requires reviewer response protocol 3');
+  if (Object.hasOwn(config, 'taskResultIndexProtocol') && config.taskResultIndexProtocol !== 3) throw new Error('invalid reviewer task result index protocol');
+  if (config.taskResultIndexProtocol === 3 && config.reviewerResponseProtocol !== 3) throw new Error('task result index protocol 3 requires reviewer response protocol 3');
+  if (Object.hasOwn(config, 'import') && config.taskResultIndexProtocol !== 3) throw new Error('import-bound review requires task result index protocol 3');
   if (config.taskResultProtocol === 2 && config.task !== 'final' && !Object.hasOwn(config, 'execution') && !Object.hasOwn(config, 'import')) throw new Error('v2 task review requires an execution receipt');
   if (typeof config.runId !== 'string' || !/^[A-Za-z0-9-]+$/.test(config.runId)
     || !Number.isSafeInteger(config.attempt) || config.attempt < 1
@@ -129,8 +133,9 @@ function baselineFor(root, state) {
   if ((baseline.config.plan === null) !== (baseline.handoff === null)) throw new Error('invalid handoff evidence');
   return baseline;
 }
+const indexProtocolOf = (config) => config.taskResultIndexProtocol ?? 2;
 function versionFor(config) {
-  if (Object.hasOwn(config, 'import')) return IMPORT_BOUND;
+  if (config.taskResultIndexProtocol === 3) return IMPORT_BOUND;
   return config.reviewerResponseProtocol === 3 ? 5 : config.taskResultProtocol === 2 ? 4 : VERSION;
 }
 // The verified digest of the evidence a task review binds: an accepted
@@ -148,9 +153,9 @@ function reviewedEvidence(root, config) {
 export function beginReview(root, state, input) {
   const config = { ...input, format: input.format ?? 'text', plan: input.plan ?? null, index: input.index ?? null };
   if (config.execution !== undefined || config.import !== undefined || config.index !== null
-    && parseTaskResultProjection(readWorkPath(root, config.index, { encoding: 'utf8' })) !== null) config.taskResultProtocol = 2;
+    && parseTaskResultProjection(readWorkPath(root, config.index, { encoding: 'utf8' }), { protocol: indexProtocolOf(config) }) !== null) config.taskResultProtocol = 2;
   validateConfig(state, config);
-  const handoff = config.plan === null ? null : handoffDetails(root, config.plan, config.index, state).digest;
+  const handoff = config.plan === null ? null : handoffDetails(root, config.plan, config.index, state, indexProtocolOf(config)).digest;
   const implementation = config.execution !== undefined || config.import !== undefined ? reviewedEvidence(root, config) : undefined;
   return save(root, state, 'baseline', { version: versionFor(config),
     config, snapshot: snapshot(root, exclusions(state, config), config.taskResultProtocol), handoff,
@@ -273,7 +278,7 @@ export function inspectCorrectionEvidence(root, state) {
     throw new Error('review evidence changed before correction context');
   }
   if (evidence.baseline.handoff !== null && handoffDetails(root, evidence.baseline.config.plan,
-    evidence.baseline.config.index, state).digest !== evidence.baseline.handoff) {
+    evidence.baseline.config.index, state, indexProtocolOf(evidence.baseline.config)).digest !== evidence.baseline.handoff) {
     throw new Error('review handoff evidence changed before correction context');
   }
   return { config: evidence.baseline.config, captured: evidence.corrected !== null };
@@ -304,7 +309,8 @@ export function inspectReview(root, state) {
   if (!equal(observe(root, state, evidence.baseline), evidence.result.observation)) return { accepted: false, status: 'BLOCKED', reason: 'review evidence drift on resume' };
   if ((evidence.baseline.config.execution !== undefined || evidence.baseline.config.import !== undefined)
     && reviewedEvidence(root, evidence.baseline.config) !== evidence.baseline.implementation) throw new Error('reviewed task evidence changed');
-  if (evidence.baseline.handoff !== null && handoffDetails(root, evidence.baseline.config.plan, evidence.baseline.config.index, state).digest !== evidence.baseline.handoff) throw new Error('review handoff evidence mismatch');
+  if (evidence.baseline.handoff !== null && handoffDetails(root, evidence.baseline.config.plan, evidence.baseline.config.index, state,
+    indexProtocolOf(evidence.baseline.config)).digest !== evidence.baseline.handoff) throw new Error('review handoff evidence mismatch');
   return evidence.result;
 }
 
@@ -360,12 +366,14 @@ export function setReviewReference(root, { indexPath, state, previousState = nul
   return { indexPath, state, changed: true };
 }
 
-function handoffDetails(root, planPath, indexPath, finalState) {
+// `protocol` is the index protocol the review's own correlation selected; the
+// legacy and manual gates never select one, so they read protocol 2 only.
+function handoffDetails(root, planPath, indexPath, finalState, protocol = 2) {
   const plan = readWorkPath(root, planPath, { encoding: 'utf8' });
   const index = readWorkPath(root, indexPath, { encoding: 'utf8' });
-  const route = reviewPhaseContext(plan, index);
-  const projection = parseTaskResultProjection(index);
-  const executions = projection === null ? null : verifyTaskResults(root, { indexPath, expectedTasks: route.tasks });
+  const route = reviewPhaseContext(plan, index, { taskResultIndexProtocol: protocol });
+  const projection = parseTaskResultProjection(index, { protocol });
+  const executions = projection === null ? null : verifyTaskResults(root, { indexPath, expectedTasks: route.tasks, protocol });
   const refs = new Map();
   for (const line of index.split(/\r?\n/)) {
     if (!/^Reviewer gate\b/.test(line)) continue;
@@ -476,13 +484,12 @@ export function verifyImplementReviews(root, { planPath, indexPath, runId, attem
   return { state, runId, attempt, status: 'APPROVED', ...(sameAttempt ? {} : { retainedApproval }) };
 }
 export function main(argv) {
-  const { values } = parseArgs({ args: argv, options: Object.fromEntries(['repo-root', 'state', 'action', 'run-id', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'task-result-index', 'previous-state', 'resume-final', 'execution', 'import', 'reviewer-response-protocol'].map((name) => [name, { type: 'string' }])) });
+  const { values } = parseArgs({ args: argv, options: Object.fromEntries(['repo-root', 'state', 'action', 'run-id', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'task-result-index', 'previous-state', 'resume-final', 'execution', 'reviewer-response-protocol'].map((name) => [name, { type: 'string' }])) });
   const root = resolve(values['repo-root'] ?? '.');
   const state = values.state;
   let result;
   if (values.action === 'begin') result = beginReview(root, state, { runId: values['run-id'], attempt: Number(values.attempt), iteration: Number(values.iteration), task: values.task, report: values.report, issues: values.issues, format: values.format ?? 'text', plan: values.plan ?? null, index: values['task-result-index'] ?? null,
     ...(values.execution === undefined ? {} : { execution: values.execution }),
-    ...(values.import === undefined ? {} : { import: values.import }),
     ...(values['reviewer-response-protocol'] === undefined ? {} : { reviewerResponseProtocol: Number(values['reviewer-response-protocol']) }) });
   else if (values.action === 'inspect') result = inspectReview(root, state);
   else if (values.action === 'reserve') result = reserveRepair(root, state);

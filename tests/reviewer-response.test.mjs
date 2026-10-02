@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { beginReview, checkReview, reserveRepair, inspectReview, parseReviewerResponse, verifyImplementReviews, captureRetainedApproval, setReviewReference } from '../scripts/reviewer-response.mjs';
 import { beginTask, recordTaskResult, projectTaskResults, importTaskResult } from '../scripts/task-results.mjs';
@@ -556,7 +556,8 @@ function importFixture(fn) {
     const manifestPath = `${source}/context/phase-implement-attempt-1.json`;
     put(manifestPath, `${JSON.stringify({ runId: 'legacy-run', attempt: 1, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } })}\n`);
     put(planPath, plan('.apex/work/specs/topic.md'));
-    put(`${dir}/recovery-input.json`, '{"recovery":true}\n');
+    put(`${dir}/recovery-input.json`, `${JSON.stringify({ source: { run: source, receipts: [{ task: '4', path: `${sourceState}-result.json`,
+      sha256: createHash('sha256').update(readFileSync(join(root, `${sourceState}-result.json`))).digest('hex') }] } })}\n`);
     const importPath = `${dir}/task-4-import.json`;
     const imported = importTaskResult(root, importPath, { runId: ctx.config.runId, task: '4', sourceState, sourceHead: sourceState,
       manifests: [{ path: manifestPath, sha256: createHash('sha256').update(readFileSync(join(root, manifestPath))).digest('hex') }], explainedDelta: [] });
@@ -566,8 +567,9 @@ function importFixture(fn) {
 const v3Approval = 'status: APPROVED\nsignals: none\n';
 
 test('an imported task review binds the verified import digest, never an execution', () => importFixture(({ root, state, config, put, report, importPath, imported, sourceState }) => {
-  const v3 = { ...config, reviewerResponseProtocol: 3 };
-  assert.throws(() => beginReview(root, state, { ...config, import: importPath }), /import-bound review requires reviewer response protocol 3/);
+  const v3 = { ...config, reviewerResponseProtocol: 3, taskResultIndexProtocol: 3 };
+  assert.throws(() => beginReview(root, state, { ...config, reviewerResponseProtocol: 3, import: importPath }), /import-bound review requires task result index protocol 3/);
+  assert.throws(() => beginReview(root, state, { ...config, taskResultIndexProtocol: 3, import: importPath }), /task result index protocol 3 requires reviewer response protocol 3/);
   assert.throws(() => beginReview(root, state, { ...v3, import: importPath, execution: sourceState }), /exactly one of execution or import/);
   assert.throws(() => beginReview(root, state, { ...v3, import: `${config.report.slice(0, config.report.lastIndexOf('/'))}/task-5-import.json` }), /wrong task import binding/);
   beginReview(root, state, { ...v3, import: importPath });
@@ -584,12 +586,14 @@ test('an imported task review binds the verified import digest, never an executi
 
 test('the final gate requires an import-bound approval for every imported task, even a mechanical one', () => importFixture(({ root, dir, state, config, put, report, importPath, planPath, indexPath }) => {
   const finalState = `${dir}/final-review-guard-attempt-3-iteration-1`;
-  const finalConfig = { ...config, reviewerResponseProtocol: 3, task: 'final', iteration: 1, report: `${dir}/final-review.md`,
+  const finalConfig = { ...config, reviewerResponseProtocol: 3, taskResultIndexProtocol: 3, task: 'final', iteration: 1, report: `${dir}/final-review.md`,
     issues: `${dir}/final-review-issues.md`, plan: planPath, index: indexPath };
   put(indexPath, `# Results\nReviewer gate final: ${finalState}\n`);
   projectTaskResults(root, { indexPath, states: [], imports: [importPath], protocol: 3 });
+  assert.throws(() => beginReview(root, finalState, { ...finalConfig, taskResultIndexProtocol: undefined }),
+    /task result index protocol 3 does not match required protocol 2/, 'an unselected final gate refuses a v3 index');
   assert.throws(() => beginReview(root, finalState, finalConfig), /missing reviewer gate for Task 4/);
-  beginReview(root, state, { ...config, reviewerResponseProtocol: 3, import: importPath });
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3, taskResultIndexProtocol: 3, import: importPath });
   put(report, 'Approved imported evidence.\n');
   checkReview(root, state, v3Approval);
   setReviewReference(root, { indexPath, state });
@@ -605,14 +609,38 @@ test('an execution-bound approval cannot approve an imported task', () => import
   beginTask(root, execution, { runId: config.runId, attempt: 1, task: '4', execution: 2, role: 'fix', report: taskReport, planPath, previousImport: importPath });
   put(taskReport, 'Fix report: no source change was needed.\n');
   recordTaskResult(root, execution, `status: DONE\nartifact: ${taskReport}\nsignals: none\n`);
-  beginReview(root, state, { ...config, reviewerResponseProtocol: 3, execution });
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3, taskResultIndexProtocol: 3, execution });
   put(report, 'Approved the fix.\n');
   checkReview(root, state, v3Approval);
   const finalState = `${dir}/final-review-guard-attempt-3-iteration-1`;
   put(indexPath, `# Results\nReviewer gate Task 4: ${state}\nReviewer gate final: ${finalState}\n`);
-  const finalConfig = { ...config, reviewerResponseProtocol: 3, task: 'final', iteration: 1, report: `${dir}/final-review.md`,
+  const finalConfig = { ...config, reviewerResponseProtocol: 3, taskResultIndexProtocol: 3, task: 'final', iteration: 1, report: `${dir}/final-review.md`,
     issues: `${dir}/final-review-issues.md`, plan: planPath, index: indexPath };
   writeFileSync(join(root, indexPath), `# Results\nReviewer gate Task 4: ${state}\nReviewer gate final: ${finalState}\n<!-- steepy-task-results: v3 -->\n\`\`\`json\n${JSON.stringify([{ task: '4', kind: 'import', status: 'IMPORTED',
     artifact: `.apex/work/tasks/old/task-4-execution-1-report.md`, changedPaths: ['code.js'], signals: [], receipt: importPath }], null, 2)}\n\`\`\`\n<!-- /steepy-task-results -->\n`);
   assert.throws(() => beginReview(root, finalState, finalConfig), /task review does not approve current import for Task 4/);
 }));
+
+for (const mixed of [false, true]) {
+  test(`the legacy implement gate refuses a v3 index (${mixed ? 'mixed import and execution' : 'import only'}) with a protocol error`, () => importFixture(({ root, dir, state, config, put, report, importPath, indexPath }) => {
+    const planPath = '.apex/work/plans/topic.md';
+    put(`${dir}/context/phase-implement-attempt-3.json`, JSON.stringify({ runId: config.runId, attempt: 3, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } }));
+    beginReview(root, state, { ...config, reviewerResponseProtocol: 3, taskResultIndexProtocol: 3, import: importPath });
+    put(report, 'Approved imported evidence.\n');
+    checkReview(root, state, v3Approval);
+    const finalState = `${dir}/final-review-guard-attempt-3-iteration-1`;
+    const entries = [{ task: '4', kind: 'import', status: 'IMPORTED', artifact: '.apex/work/tasks/old/task-4-execution-1-report.md',
+      changedPaths: ['code.js'], signals: [], receipt: importPath }];
+    if (mixed) {
+      put(planPath, `${readFileSync(join(root, planPath), 'utf8')}\n## Task 5\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n`);
+      entries.push({ task: '5', kind: 'execution', status: 'DONE', artifact: `${dir}/task-5-report.md`, changedPaths: [], signals: [], receipt: `${dir}/task-5-execution-1` });
+    }
+    put(indexPath, `# Results\nReviewer gate Task 4: ${state}\nReviewer gate final: ${finalState}\n<!-- steepy-task-results: v3 -->\n\`\`\`json\n${JSON.stringify(entries, null, 2)}\n\`\`\`\n<!-- /steepy-task-results -->\n`);
+    assert.throws(() => verifyImplementReviews(root, { planPath, indexPath, runId: config.runId, attempt: 3 }),
+      /task result index protocol 3 does not match required protocol 2/);
+    const cli = spawnSync(process.execPath, [new URL('../scripts/reviewer-response.mjs', import.meta.url).pathname, '--repo-root', root,
+      '--action', 'verify-handoff', '--plan', planPath, '--task-result-index', indexPath, '--run-id', config.runId, '--attempt', '3'], { encoding: 'utf8' });
+    assert.equal(cli.status, 1);
+    assert.match(cli.stderr, /task result index protocol 3 does not match required protocol 2/);
+  }));
+}

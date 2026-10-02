@@ -366,6 +366,18 @@ function verifySourceManifests(root, sourceDir, history, manifests) {
     if (value.contract?.taskResultProtocol !== 2) throw new Error(`source attempt ${attempt} is not task result protocol 2; refusing implicit conversion`);
   });
 }
+// An import is bound to the recovery input's declared content, not only to its
+// digest: the source run and this task's exact receipt path and SHA-256.
+function assertDeclaredSource(root, targetDir, task, state) {
+  const bytes = readWorkPath(root, `${targetDir}/recovery-input.json`, { family: 'recovery-input' });
+  let input;
+  try { input = strictJson(bytes.toString('utf8')); } catch { throw new Error('invalid recovery input JSON'); }
+  const receipts = Array.isArray(input?.source?.receipts) ? input.source.receipts : [];
+  const declared = receipts.filter((receipt) => receipt?.task === task);
+  const resultPath = pathFor(state, 'result');
+  if (input?.source?.run !== dirname(state) || declared.length !== 1 || declared[0].path !== resultPath
+    || declared[0].sha256 !== hash(readWorkPath(root, resultPath))) throw new Error('task import source is not declared by the recovery input');
+}
 // Historical validation follows only the schema-authorized lineage links of
 // the source run; its HEAD is never equated with the present one.
 function sourceEvidence(root, targetDir, task, source) {
@@ -373,6 +385,7 @@ function sourceEvidence(root, targetDir, task, source) {
   const sourceDir = dirname(source.state);
   if (sourceDir === targetDir) throw new Error('import source must belong to another run');
   if (dirname(source.head) !== sourceDir) throw new Error('import source head must belong to the source run');
+  assertDeclaredSource(root, targetDir, task, source.state);
   const cache = new Map();
   const head = readEvidence(root, source.head, cache);
   const evidence = readEvidence(root, source.state, cache);
@@ -520,18 +533,17 @@ function parseBlock(block) {
   }
   return entries;
 }
-export function parseTaskResultProjection(text) {
-  const block = projectionBlock(text);
-  return block === null ? null : parseBlock(block);
-}
-// The selected index protocol of a projection (2 or 3), or null without one.
-export function taskResultIndexProtocol(text) {
-  return projectionBlock(text)?.protocol ?? null;
-}
+// The index protocol is selected by the caller, never inferred from the bytes:
+// an absent selection means protocol 2, which refuses a v3 block outright.
 function requireProtocol(actual, required) {
-  if (required !== undefined && actual !== required) {
-    throw new Error(`task result index protocol ${actual} does not match required protocol ${required}`);
-  }
+  if (![2, 3].includes(required)) throw new Error('task result index protocol must be 2 or 3');
+  if (actual !== required) throw new Error(`task result index protocol ${actual} does not match required protocol ${required}`);
+}
+export function parseTaskResultProjection(text, { protocol = 2 } = {}) {
+  const block = projectionBlock(text);
+  if (block === null) return null;
+  requireProtocol(block.protocol, protocol);
+  return parseBlock(block);
 }
 function entryFor(state, evidence) {
   const result = evidence.result;
@@ -567,7 +579,7 @@ export function projectTaskResults(root, { indexPath, states, imports = [], prot
   const entries = [...executions, ...imported].sort((a, b) => Number(a.task) - Number(b.task));
   if (new Set(entries.map((entry) => entry.task)).size !== entries.length) throw new Error('invalid task projection states');
   const block = `${START[protocol]}\n\`\`\`json\n${JSON.stringify(entries, null, 2)}\n\`\`\`\n${END}`;
-  parseTaskResultProjection(block);
+  parseTaskResultProjection(block, { protocol });
   const before = optional(root, indexPath)?.toString('utf8') ?? '';
   const old = projectionBlock(before);
   if (old !== null) requireProtocol(old.protocol, protocol);
@@ -576,7 +588,7 @@ export function projectTaskResults(root, { indexPath, states, imports = [], prot
   if (after !== before) writeWorkPath(root, indexPath, after);
   return { indexPath, entries, changed: after !== before };
 }
-export function verifyTaskResults(root, { indexPath, expectedTasks, checkCurrent = true, required = true, protocol }) {
+export function verifyTaskResults(root, { indexPath, expectedTasks, checkCurrent = true, required = true, protocol = 2 }) {
   parseWorkPath(indexPath, 'work-output', 'task-result-index');
   const block = projectionBlock(readWorkPath(root, indexPath, { encoding: 'utf8' }));
   if (block === null) {

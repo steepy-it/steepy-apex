@@ -248,3 +248,56 @@ test('final-review correction requires the final-review-correction role', () => 
   assert.throws(() => reserveAutopilotRole(root, DIR, { scope: finalScope, role: 'task-review-correction', correctionOf: 1,
     expectedReceiptPath: `${DIR}/final-review-guard-attempt-1-iteration-1-corrected.json` }), /correction|role/i);
 }));
+
+const recoveryBinding = { path: `${DIR}/recovery-input.json`, sha256: 'c'.repeat(64) };
+function startRecovery(root, recovery = recoveryBinding) {
+  const files = [{ path: 'package.json', sha256: HASH }];
+  return createAutopilotRun(root, DIR, {
+    runId: 'run-one', branch: 'feature/run-one', baseline: 'b'.repeat(40),
+    runtime: { fingerprint: sha(Buffer.from(JSON.stringify(files.map((file) => [file.path, file.sha256])))), files }, recovery,
+  });
+}
+
+test('the run kind is bound at creation: a recovery run records its input identity in the immutable run', () => fixture((root) => {
+  const created = startRecovery(root);
+  assert.deepEqual(created.run.recovery, recoveryBinding);
+  const run = JSON.parse(readFileSync(join(root, DIR, 'autopilot-run.json'), 'utf8'));
+  assert.equal(run.schemaVersion, 2);
+  assert.deepEqual(run.recovery, recoveryBinding);
+  assert.deepEqual(readAutopilotRun(root, DIR).run.recovery, recoveryBinding, 'replay exposes the bound kind');
+}));
+
+test('an ordinary run identity keeps schema 1 bytes and no recovery binding', () => fixture((root) => {
+  start(root);
+  const run = JSON.parse(readFileSync(join(root, DIR, 'autopilot-run.json'), 'utf8'));
+  assert.equal(run.schemaVersion, 1);
+  assert.equal(Object.hasOwn(run, 'recovery'), false);
+  assert.equal(readAutopilotRun(root, DIR).run.recovery ?? null, null);
+}));
+
+test('a recovery binding must name this run directory input with a digest', () => {
+  for (const [recovery, reason] of [
+    [{ path: '.apex/work/tasks/other/recovery-input.json', sha256: 'c'.repeat(64) }, /recovery input binding/],
+    [{ path: `${DIR}/recovery-input.json`, sha256: 'not-a-digest' }, /recovery input binding/],
+    [{ path: `${DIR}/recovery-input.json` }, /recovery input binding/],
+    [null, /recovery input binding/],
+  ]) fixture((root) => {
+    assert.throws(() => startRecovery(root, recovery), reason);
+  });
+});
+
+test('a tampered run identity cannot gain, lose, or change its recovery kind', () => fixture((root) => {
+  startRecovery(root);
+  const path = join(root, DIR, 'autopilot-run.json');
+  const run = JSON.parse(readFileSync(path, 'utf8'));
+  const write = (value) => writeWorkPath(root, `${DIR}/autopilot-run.json`, `${JSON.stringify(value)}\n`, { family: 'autopilot-run' });
+  const { recovery: ignored, ...withoutRecovery } = run;
+  for (const [value, reason] of [
+    [withoutRecovery, /run identity/],
+    [{ ...run, schemaVersion: 1 }, /run identity/],
+    [{ ...run, recovery: { ...run.recovery, path: '.apex/work/tasks/other/recovery-input.json' } }, /recovery input binding/],
+  ]) {
+    write(value);
+    assert.throws(() => readAutopilotRun(root, DIR), reason);
+  }
+}));

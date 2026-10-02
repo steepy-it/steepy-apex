@@ -346,7 +346,8 @@ export function buildControllerTaskManifest(role, input) {
   });
 }
 
-export function reviewPhaseContext(planText, resultIndexText) {
+// Index protocol 3 is read only when the caller's run selected it explicitly.
+export function reviewPhaseContext(planText, resultIndexText, { taskResultIndexProtocol = 2 } = {}) {
   const plan = planPhaseContext(planText);
   const planTasks = new Map();
   for (const task of plan.tasks) {
@@ -358,7 +359,7 @@ export function reviewPhaseContext(planText, resultIndexText) {
   const reviewedIds = [];
   const seen = new Set();
   const normalizedIndex = String(resultIndexText ?? '').replace(/\r\n?/g, '\n');
-  const projection = parseTaskResultProjection(normalizedIndex);
+  const projection = parseTaskResultProjection(normalizedIndex, { protocol: taskResultIndexProtocol });
   const recordId = (id) => {
     const key = id.toLowerCase();
     if (seen.has(key)) throw new Error(`duplicate reviewed task id '${id}'`);
