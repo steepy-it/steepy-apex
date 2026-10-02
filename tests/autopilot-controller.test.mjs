@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -163,6 +164,18 @@ const contract = {
   verdict: 'GAP', gear: 3, drive: 'autopilot', branch: 'gear3-topic', commitAuth: 'per-task',
   harness: 'claude', blastRadius: 'branch-only, no-push, stop-before-PR', logMode: 'safe',
 };
+// capture-review-evidence.mjs output shape: one section per command, then the collection result.
+function evidenceReport({ command = 'npm test', surfaceExit = 0, hubExit = 0, started = new Date().toISOString(), passed } = {}) {
+  const section = (label, display, exit) => {
+    const output = `${label} output\n`;
+    return `\n## ${label}\n\nCommand JSON: ${JSON.stringify(display)}\nStarted: ${started}\n\n--- combined stdout/stderr begin ---\n${output}`
+      + `\n--- combined stdout/stderr end ---\n\nExit code: ${exit}\nSignal: none\nSpawn error: none\nOutput bytes: ${Buffer.byteLength(output)}\n`
+      + `Output lines: 1\nOutput SHA-256: ${createHash('sha256').update(output).digest('hex')}\nFinished: ${started}\n`;
+  };
+  return `# Review evidence\n\nRun started: ${started}\nCapture: combined stdout/stderr bytes are persisted in arrival order.\n`
+    + section('surface-test', command, surfaceExit) + section('validate-hub', '"node" "scripts/validate-hub.mjs" .', hubExit)
+    + `## Collection result\n\nRun finished: ${started}\nAll commands passed: ${passed ?? (surfaceExit === 0 && hubExit === 0)}\n`;
+}
 const writerPayload = (task, status = 'DONE', signals = 'tdd:red-green') => `status: ${status}\nartifact: ${DIR}/task-${task}-report.md\nsignals: ${signals}`;
 const fixTargets = (rows) => `# Final issues\n\nFinding F1: value drift.\n\nsteepy-fix-targets: v1\n\`\`\`json\n${JSON.stringify(rows)}\n\`\`\`\n`;
 
@@ -186,22 +199,27 @@ function scriptedRunner(repo, { tasks = [taskSection(1)], script = {} } = {}) {
     'final-review': () => { repo.put(`${DIR}/final-review.md`, '# Final review\n\nApproved.\n'); return 'status: APPROVED\nsignals: none'; },
     review: () => {
       repo.put(`${DIR}/review-report.md`, `<!-- steepy-workflow: v1\nphase: review\nstatus: DRAFT\nnext: none\nsource: ${DIR}/task-result-index.md\nconsumed-by: none\n-->\n# Review report\n\nSC1 met.\n`);
-      repo.put(`${DIR}/evidence-report.md`, '# Review evidence\n\n## Collection result\n\nAll commands passed: true\n');
+      repo.put(`${DIR}/evidence-report.md`, evidenceReport());
       return 'status: READY_FOR_PR\nsignals: none';
     },
   };
   defaults.fix = defaults.implementer;
+  defaults['task-review-correction'] = () => 'status: APPROVED\nsignals: none';
+  defaults['final-review-correction'] = defaults['task-review-correction'];
   const runner = {
     prepare(request) {
       return {
         requestedModel: null, descriptorModel: null, degradationReason: 'injected test runner',
-        run: async () => {
+        run: async ({ rawPath }) => {
           const manifest = JSON.parse(repo.read(request.manifestPath));
           const task = manifest.scope.task === undefined ? null : String(manifest.scope.task);
-          calls.push({ role: request.role, roleSequence: request.roleSequence, task, iteration: request.scope.iteration });
+          calls.push({ role: request.role, roleSequence: request.roleSequence, task, iteration: request.scope.iteration, modelTier: request.modelTier });
           const step = queues[request.role]?.shift() ?? defaults[request.role];
           const outcome = step({ ...repo, manifest, request, task, defaults });
-          return typeof outcome === 'string' ? { payload: outcome, exit: { status: 0, signal: null } } : outcome;
+          const result = typeof outcome === 'string' ? { payload: outcome, exit: { status: 0, signal: null } } : outcome;
+          // The transport persists the child's complete stream after it exits.
+          repo.put(rawPath, `${JSON.stringify({ type: 'result', result: result.payload ?? null })}\n`);
+          return result;
         },
       };
     },
@@ -462,7 +480,7 @@ for (const failing of [false, true]) {
   });
 }
 
-test('a rewritten status projection is regenerated from the valid events', async (t) => {
+test('runController re-renders a child-rewritten projection and regenerates a forged one when it starts', async (t) => {
   const repo = repository(t);
   const { runner } = scriptedRunner(repo, { script: { implementer: [({ defaults, ...context }) => {
     repo.put(`${DIR}/autopilot-status.md`, '# Autopilot status\n\nStatus: COMPLETED\n');
@@ -614,9 +632,180 @@ for (const [label, spec] of [
     repo.put(SPEC, spec());
     const { runner, calls } = scriptedRunner(repo);
     const result = await control(repo, runner);
-    assert.equal(result.code, 1);
+    assert.deepEqual([result.code, result.halted], [1, false], 'a refusal before any effect is not a recorded halt');
     assert.match(result.reason, /spec lifecycle is not a READY brainstorm input for \.apex\/work\/plans\/topic\.md/);
     assert.deepEqual(calls, []);
-    assert.equal(journal(repo).roles.length, 0);
+    assert.equal(existsSync(join(repo.root, `${DIR}/autopilot-run.json`)), false, 'a refused spec creates no run identity');
+    repo.put(SPEC, headeredSpec());
+    assert.equal((await control(repo, scriptedRunner(repo).runner)).code, 0, 'the corrected spec then runs');
+  });
+}
+
+// A child that writes the controller's capture path, then fails its transport.
+const forgeCapture = (repo) => ({ task, defaults, ...context }) => {
+  defaults.implementer({ task, defaults, ...context });
+  const record = { schemaVersion: 1, roleSequence: 2, role: 'implementer', payload: writerPayload(task),
+    terminalReason: null, sessionId: null, exit: { status: 0, signal: null }, transportError: null,
+    capturePersisted: true, observedModel: null };
+  repo.put(`${DIR}/role-2-response.json`, `${JSON.stringify(record)}\n`);
+  return { payload: null, reason: 'missing-terminal', exit: { status: 1, signal: null }, capturePersisted: false };
+};
+const eventNames = (repo) => repo.read(`${DIR}/autopilot-events.jsonl`).trim().split('\n').map((line) => JSON.parse(line).event);
+
+test('a child-authored capture file during dispatch halts as forged controller state with the real diagnosis', async (t) => {
+  const repo = repository(t);
+  const result = await control(repo, scriptedRunner(repo, { script: { implementer: [forgeCapture(repo)] } }).runner);
+  assert.equal(result.code, 1);
+  assert.match(result.reason, /role 2 implementer Task 1 iteration 1: the child wrote controller capture \.apex\/work\/tasks\/topic\/role-2-response\.json; no terminal response \(missing-terminal\); child exited 1; raw capture was not persisted/);
+  assert.deepEqual(eventNames(repo).slice(-2), ['RECONCILIATION_REQUIRED', 'RUN_HALTED']);
+  const role = journal(repo).roles[1];
+  assert.deepEqual([role.responseCaptured, role.accepted], [false, false]);
+  const resumed = scriptedRunner(repo);
+  const again = await control(repo, resumed.runner);
+  assert.equal(again.code, 1);
+  assert.match(again.reason, /controller run halted: /);
+  assert.deepEqual(resumed.calls, []);
+});
+
+test('resume never adopts a foreign response file beside an uncaptured reservation', async (t) => {
+  const repo = repository(t);
+  await assert.rejects(control(repo, scriptedRunner(repo, { script: { implementer: [forgeCapture(repo)] } }).runner,
+    { crash: crashAt('runner-returned', { role: 'implementer' }) }), /simulated crash/);
+  const resumed = scriptedRunner(repo);
+  const result = await control(repo, resumed.runner);
+  assert.equal(result.code, 1);
+  assert.match(result.reason, /role 2 implementer Task 1 iteration 1 was reserved without a captured response; refusing to adopt an uncorroborated response file or dispatch it again/);
+  assert.deepEqual(resumed.calls, []);
+  assert.deepEqual(eventNames(repo).slice(-2), ['RECONCILIATION_REQUIRED', 'RUN_HALTED']);
+  assert.equal(journal(repo).roles[1].accepted, false);
+});
+
+for (const [complexity, reviewer, final] of [['design', 'most-capable', 'most-capable'], ['integration', 'standard', 'standard']]) {
+  test(`reviewer tiers for ${complexity} work: task reviewer ${reviewer}, final review ${final}, corrections standard`, async (t) => {
+    const repo = repository(t);
+    const reversed = ({ task, put }) => { put(`${DIR}/task-${task}-review.md`, '# Review\n'); return 'signals: none\nstatus: APPROVED'; };
+    const { runner, calls } = scriptedRunner(repo, {
+      tasks: [taskSection(1, { complexity })],
+      script: { 'task-reviewer': [reversed], 'task-review-correction': [() => 'status: APPROVED\nsignals: none'] },
+    });
+    assert.equal((await control(repo, runner)).code, 0);
+    const tiers = Object.fromEntries(calls.map(({ role, modelTier }) => [role, modelTier]));
+    assert.deepEqual([tiers['task-reviewer'], tiers['final-review'], tiers['task-review-correction']], [reviewer, final, 'standard']);
+    for (const role of journal(repo).roles) {
+      assert.equal(manifestOf(repo, role.roleSequence).modelTier, tiers[role.role], role.role);
+    }
+  });
+}
+
+for (const [label, evidence, reason] of [
+  ['a narrower surface test command', () => evidenceReport({ command: 'npm test -- tests/one.test.mjs' }),
+    /surface-test command .* is not the plan's exact surface test command/],
+  ['a failing surface test claimed as passing', () => evidenceReport({ surfaceExit: 1, passed: true }), /surface-test exited 1/],
+  ['a failing coherence gate claimed as passing', () => evidenceReport({ hubExit: 1, passed: true }), /validate-hub exited 1/],
+  ['stale evidence from before the review role', () => evidenceReport({ started: '2020-01-01T00:00:00.000Z' }),
+    /evidence predates the review role reservation/],
+  ['a truncated command section', () => evidenceReport().replace(/Output SHA-256: [0-9a-f]+\n/, 'Output SHA-256: 0\n'),
+    /evidence report is not one complete surface-test and validate-hub collection/],
+]) {
+  test(`the review evidence gate refuses ${label}`, async (t) => {
+    const repo = repository(t);
+    const { runner } = scriptedRunner(repo, { script: { review: [({ put, defaults }) => {
+      const payload = defaults.review();
+      put(`${DIR}/evidence-report.md`, evidence());
+      return payload;
+    }] } });
+    const result = await control(repo, runner);
+    assert.equal(result.code, 1);
+    assert.match(result.reason, /review evidence rejected: /);
+    assert.match(result.reason, reason);
+    assert.equal(journal(repo).roles.at(-1).accepted, false);
+  });
+}
+
+test('spec metadata errors are refused before any run identity is created', async (t) => {
+  const repo = repository(t);
+  repo.put(SPEC, specText.replace('- **Owning surface:** `scripts`\n', ''));
+  const result = await control(repo, scriptedRunner(repo).runner);
+  assert.deepEqual([result.code, result.halted], [1, false]);
+  assert.match(result.reason, /plan context: spec is missing Owning surface metadata/);
+  assert.equal(existsSync(join(repo.root, `${DIR}/autopilot-run.json`)), false);
+});
+
+test('a descriptor failure before the reservation is a refusal that leaves the run resumable', async (t) => {
+  const repo = repository(t);
+  const first = scriptedRunner(repo);
+  const prepare = first.runner.prepare;
+  first.runner.prepare = (request) => {
+    if (request.role === 'implementer') throw new Error('model mapping unavailable');
+    return prepare(request);
+  };
+  const refused = await control(repo, first.runner);
+  assert.deepEqual([refused.code, refused.halted], [1, false]);
+  assert.match(refused.reason, /role 2 implementer descriptor: model mapping unavailable/);
+  assert.equal(journal(repo).status, 'RUNNING');
+  assert.equal(journal(repo).roles.length, 1, 'no role was reserved for the refused dispatch');
+  const resumed = scriptedRunner(repo);
+  const result = await control(repo, resumed.runner);
+  assert.equal(result.code, 0, result.reason);
+  assert.equal(resumed.calls[0].role, 'implementer', 'the accepted plan is not redispatched');
+});
+
+test('post-effect gate halts stay terminal and say so', async (t) => {
+  const repo = repository(t);
+  const { runner } = scriptedRunner(repo, { script: { implementer: [({ task, put }) => {
+    put(`${DIR}/task-${task}-report.md`, '# Report\n');
+    return writerPayload(task, 'BLOCKED');
+  }] } });
+  const result = await control(repo, runner);
+  assert.deepEqual([result.code, result.halted], [1, true]);
+});
+
+const stripHeader = (text) => text.replace(/<!-- steepy-workflow: v1\n[\s\S]*?\n-->\n/, '');
+for (const [label, point, match, path, reason] of [
+  ['plan', 'plan-published', {}, PLAN, /plan publication drift: lifecycle header missing/],
+  ['review report', 'result-accepted', { role: 'review' }, `${DIR}/review-report.md`, /review report publication drift: lifecycle header missing/],
+]) {
+  test(`a ${label} that lost its lifecycle header after acceptance halts as named publication drift`, async (t) => {
+    const repo = repository(t);
+    await assert.rejects(control(repo, scriptedRunner(repo).runner, { crash: crashAt(point, match) }), /simulated crash/);
+    repo.put(path, stripHeader(repo.read(path)));
+    const result = await control(repo, scriptedRunner(repo).runner);
+    assert.deepEqual([result.code, result.halted], [1, true]);
+    assert.match(result.reason, reason);
+    assert.equal(journal(repo).status, 'HALTED');
+  });
+}
+
+const finalIssuesFor = (repo, task) => () => {
+  repo.put(`${DIR}/final-review.md`, '# Final review\n\nIssues found.\n');
+  repo.put(`${DIR}/final-review-issues.md`, fixTargets([{ task, issueIds: ['F1'] }]));
+  return 'status: ISSUES_FOUND\nsignals: none';
+};
+const reversedApproval = ({ task, put }) => { put(`${DIR}/task-${task}-review.md`, '# Review\n'); return 'signals: none\nstatus: APPROVED'; };
+for (const [flow, options, point, match, remaining] of [
+  ['whole-branch', (repo) => ({ tasks: [taskSection(1), taskSection(2)], script: { 'final-review': [finalIssuesFor(repo, '2')] } }),
+    'result-accepted', { role: 'final-review' }, ['fix:2@2', 'task-reviewer:2@2', 'final-review@2', 'review@1']],
+  ['whole-branch', (repo) => ({ tasks: [taskSection(1), taskSection(2)], script: { 'final-review': [finalIssuesFor(repo, '2')] } }),
+    'result-accepted', { role: 'fix' }, ['task-reviewer:2@2', 'final-review@2', 'review@1']],
+  ['whole-branch', (repo) => ({ tasks: [taskSection(1), taskSection(2)], script: { 'final-review': [finalIssuesFor(repo, '2')] } }),
+    'review-checked', { roleSequence: 8 }, ['final-review@2', 'review@1']],
+  ['correction', () => ({ script: { 'task-reviewer': [reversedApproval], 'task-review-correction': [() => 'status: APPROVED\nsignals: none'] } }),
+    'review-checked', { role: 'task-reviewer' }, ['task-review-correction:1@1', 'final-review@1', 'review@1']],
+  ['correction', () => ({ script: { 'task-reviewer': [reversedApproval], 'task-review-correction': [() => 'status: APPROVED\nsignals: none'] } }),
+    'response-captured', { role: 'task-review-correction' }, ['final-review@1', 'review@1']],
+  ['correction', () => ({ script: { 'task-reviewer': [reversedApproval], 'task-review-correction': [() => 'status: APPROVED\nsignals: none'] } }),
+    'review-checked', { role: 'task-review-correction' }, ['final-review@1', 'review@1']],
+  ['review-phase', () => ({}), 'response-captured', { role: 'review' }, []],
+  ['review-phase', () => ({}), 'result-accepted', { role: 'review' }, []],
+  ['review-phase', () => ({}), 'review-published', {}, []],
+]) {
+  test(`the ${flow} flow interrupted at ${point} ${JSON.stringify(match)} resumes without redispatching completed roles`, async (t) => {
+    const repo = repository(t);
+    await assert.rejects(control(repo, scriptedRunner(repo, options(repo)).runner, { crash: crashAt(point, match) }), /simulated crash/);
+    const resumed = scriptedRunner(repo, { tasks: options(repo).tasks });
+    const result = await control(repo, resumed.runner);
+    assert.equal(result.code, 0, result.reason);
+    assert.deepEqual(sequence(resumed.calls), remaining);
+    assert.equal(journal(repo).status, 'COMPLETED');
   });
 }

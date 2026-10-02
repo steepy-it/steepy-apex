@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -4549,6 +4550,20 @@ describe('controller protocol 2 routing (runConductor and main)', () => {
   const PLAN_PATH = '.apex/work/plans/topic.md';
   const CONTROLLER_PLAN = `<!-- steepy-workflow: v1\nphase: plan\nstatus: DRAFT\nnext: implement\nsource: ${SPEC_PATH}\nconsumed-by: none\n-->\n# Plan\n\n## Task 1 — update value\n\n- **Requirements and deliverables:** Set the value to 1.\n- **Relevant global constraints:** Node built-ins only.\n- **Surface:** \`scripts\`\n- **Specialist agent:** \`scripts-agent\`\n- **Exact paths:** \`src/value.mjs\`\n- **Test command:** \`npm test\`\n- **Dependencies:** none\n- **Complexity:** integration\n- **Success criteria:** SC1\n`;
 
+  // capture-review-evidence.mjs output for the plan's exact test command, collected now.
+  function evidenceReport() {
+    const started = new Date().toISOString();
+    const section = (label, display) => {
+      const output = `${label} output\n`;
+      return `\n## ${label}\n\nCommand JSON: ${JSON.stringify(display)}\nStarted: ${started}\n\n--- combined stdout/stderr begin ---\n${output}`
+        + `\n--- combined stdout/stderr end ---\n\nExit code: 0\nSignal: none\nSpawn error: none\nOutput bytes: ${Buffer.byteLength(output)}\n`
+        + `Output lines: 1\nOutput SHA-256: ${createHash('sha256').update(output).digest('hex')}\nFinished: ${started}\n`;
+    };
+    return `# Review evidence\n\nRun started: ${started}\nCapture: combined stdout/stderr bytes are persisted in arrival order.\n`
+      + section('surface-test', 'npm test') + section('validate-hub', 'validate-hub')
+      + `## Collection result\n\nRun finished: ${started}\nAll commands passed: true\n`;
+  }
+
   // A committed hub whose routing row binds the specialist agent, as v2 plans require.
   function controllerRepo(t) {
     const dir = mkdtempSync(join(tmpdir(), 'steepy-autopilot-controller-'));
@@ -4583,7 +4598,7 @@ describe('controller protocol 2 routing (runConductor and main)', () => {
       'final-review': () => { repo.put(`${TASKS}/final-review.md`, '# Final\n'); return 'status: APPROVED\nsignals: none'; },
       review: () => {
         repo.put(`${TASKS}/review-report.md`, `<!-- steepy-workflow: v1\nphase: review\nstatus: DRAFT\nnext: none\nsource: ${TASKS}/task-result-index.md\nconsumed-by: none\n-->\n# Review\n`);
-        repo.put(`${TASKS}/evidence-report.md`, '# Evidence\n\nAll commands passed: true\n');
+        repo.put(`${TASKS}/evidence-report.md`, evidenceReport());
         return 'status: READY_FOR_PR\nsignals: none';
       },
     };
@@ -4667,8 +4682,6 @@ describe('controller protocol 2 routing (runConductor and main)', () => {
   for (const [label, corrupt, reason] of [
     ['a missing run identity', (repo) => rmSync(join(repo.dir, `${TASKS}/autopilot-run.json`)), /without its immutable run identity; refusing legacy fallback/],
     ['an unreadable run identity', (repo) => repo.put(`${TASKS}/autopilot-run.json`, '{"schemaVersion":1}\n'), /run identity/],
-    ['a legacy status beside a controller identity', (repo) => repo.put(`${TASKS}/autopilot-status.md`, protocolLine),
-      /legacy status and controller run identity coexist/],
   ]) {
     it(`${label} never falls back to the legacy driver`, async (t) => {
       const repo = controllerRepo(t);
@@ -4683,6 +4696,27 @@ describe('controller protocol 2 routing (runConductor and main)', () => {
       assert.match(result.err, reason);
       assert.deepEqual(calls, []);
       assert.equal(repo.read(`${TASKS}/autopilot-status.md`), status, 'no legacy status protocol is appended');
+    });
+  }
+
+  for (const [label, forged, cli] of [
+    ['garbage bytes', 'forged\n', true],
+    ['a legacy-looking child marker', '2026-10-01T00:00:00.000Z — implement — DONE — run-id=x attempt=1\n', false],
+    ['a legacy protocol declaration', protocolLine, false],
+  ]) {
+    it(`a projection rewritten as ${label} beside a valid controller identity is regenerated and the run resumes${cli ? ' (CLI)' : ''}`, async (t) => {
+      const repo = controllerRepo(t);
+      const first = roleRunner(repo);
+      const crash = (point, detail) => { if (point === 'response-captured' && detail.role === 'implementer') throw new Error('simulated crash'); };
+      assert.equal((await conduct(repo, { controllerProtocol: 2, controllerServices: { runner: first.runner, crash } })).code, 1);
+      repo.put(`${TASKS}/autopilot-status.md`, forged);
+      const resumed = roleRunner(repo);
+      const result = await conduct(repo, { controllerServices: { runner: resumed.runner } }, cli ? [SPEC_PATH] : undefined);
+      assert.equal(result.code, 0, result.err);
+      assert.deepEqual(resumed.calls, ['task-reviewer', 'final-review', 'review'], 'the captured writer is not redispatched');
+      const status = repo.read(`${TASKS}/autopilot-status.md`);
+      assert.match(status, /^# Autopilot status\n\nRun: 1f1e1d1c-1b1a-4918-8716-151413121110\nStatus: COMPLETED\n/);
+      assert.doesNotMatch(status, /STATUS_PROTOCOL/);
     });
   }
 
@@ -4705,11 +4739,25 @@ describe('controller protocol 2 routing (runConductor and main)', () => {
     assert.match(unknown.err, /controller protocol must be 1 or 2/);
   });
 
+  it('a refusal before any controller effect gets a neutral label and creates no run identity', async (t) => {
+    const repo = controllerRepo(t);
+    repo.put(SPEC_PATH, repo.read(SPEC_PATH).replace('-->\n\n# Topic', '-->\n<!-- steepy-workflow: v1\nphase: brainstorm\nstatus: DRAFT\nnext: plan\nsource: none\nconsumed-by: none\n-->\n\n# Topic'));
+    const { runner, calls } = roleRunner(repo);
+    const result = await conduct(repo, { controllerProtocol: 2, controllerServices: { runner } });
+    assert.equal(result.code, 1);
+    assert.match(result.err, /autopilot: refused — spec lifecycle is not a READY brainstorm input/);
+    assert.doesNotMatch(result.err, /HALTED/);
+    assert.deepEqual(calls, []);
+    assert.equal(exists(repo, `${TASKS}/autopilot-run.json`), false);
+  });
+
   it('the default controller runner dispatches headless descriptors and records native model selection', async (t) => {
     const repo = controllerRepo(t);
     const child = join(repo.dir, '.apex', 'work', 'fake-role-child.mjs');
     repo.put('.apex/work/fake-role-child.mjs', `import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
+${evidenceReport.toString()}
 const prompt = process.argv[2];
 const manifest = JSON.parse(readFileSync(/Context manifest: (\\S+) \\(/.exec(prompt)[1], 'utf8'));
 const put = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
@@ -4719,7 +4767,7 @@ switch (manifest.scope.role) {
   case 'plan': put(first, ${JSON.stringify(CONTROLLER_PLAN)}); payload = 'status: DONE\\nsignals: none'; break;
   case 'implementer': put('src/value.mjs', 'export const value = 1;\\n'); put(first, '# Report\\n'); payload = \`status: DONE\\nartifact: \${first}\\nsignals: none\`; break;
   case 'task-reviewer': case 'final-review': put(first, '# Review\\n'); payload = 'status: APPROVED\\nsignals: none'; break;
-  case 'review': put(first, '# Evidence\\n\\nAll commands passed: true\\n'); put(second, '<!-- steepy-workflow: v1\\nphase: review\\nstatus: DRAFT\\nnext: none\\nsource: ${TASKS}/task-result-index.md\\nconsumed-by: none\\n-->\\n# Review\\n'); payload = 'status: READY_FOR_PR\\nsignals: none'; break;
+  case 'review': put(first, evidenceReport()); put(second, '<!-- steepy-workflow: v1\\nphase: review\\nstatus: DRAFT\\nnext: none\\nsource: ${TASKS}/task-result-index.md\\nconsumed-by: none\\n-->\\n# Review\\n'); payload = 'status: READY_FOR_PR\\nsignals: none'; break;
   default: process.exit(9);
 }
 console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'role-session' }));

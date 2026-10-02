@@ -2080,7 +2080,8 @@ export async function runConductor(specPath, opts = {}) {
           log: (line) => console.log(`autopilot: ${line}`),
         },
       });
-      if (outcome.code !== 0) console.error(`autopilot: HALTED — ${outcome.reason}`);
+      // Only a halt recorded in the journal is labeled HALTED.
+      if (outcome.code !== 0) console.error(`autopilot: ${outcome.halted ? 'HALTED' : 'refused'} — ${outcome.reason}`);
       result = outcome.code;
     } else {
       const existingStatus = readStatus(cwd, statusPath);

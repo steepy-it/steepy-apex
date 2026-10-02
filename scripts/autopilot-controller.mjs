@@ -45,7 +45,11 @@ const ENGINE_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const RESPONSE_SCHEMA_VERSION = 1;
 const STATUS_PROJECTION_HEADER = '# Autopilot status\n';
 const TIER = Object.freeze({ mechanical: 'cheap', integration: 'standard', design: 'most-capable' });
+// Reviewers keep the standard floor and rise to most-capable for design work;
+// response-only corrections stay at the floor.
 const REVIEWER_TIER = 'standard';
+const taskReviewerTier = (task) => (task.complexity === 'design' ? 'most-capable' : REVIEWER_TIER);
+const finalReviewerTier = (plan) => (plan.tasks.some((task) => task.complexity === 'design') ? 'most-capable' : REVIEWER_TIER);
 const SIGNALS = /^(?:none|[A-Za-z0-9][A-Za-z0-9:._-]*(?:, [A-Za-z0-9][A-Za-z0-9:._-]*)*)$/;
 const LIFECYCLE = /^((?:[ \t\r\n]*<!--(?!\s*steepy-workflow:)[\s\S]*?-->)*[ \t\r\n]*<!-- steepy-workflow: v1\r?\n)([\s\S]*?)(\r?\n-->)/;
 const LIFECYCLE_FIELDS = ['phase', 'status', 'next', 'source', 'consumed-by'];
@@ -63,6 +67,9 @@ const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 // A decided stop: recorded in the journal as RUN_HALTED before it unwinds.
 class ControllerHalt extends Error {}
+// A refusal before any effect of the step it guards: nothing is journaled, so
+// the run (or the absent run) stays resumable once the cause is fixed.
+class ControllerRefusal extends Error {}
 
 export function controllerPaths(specName) {
   const dir = `.apex/work/tasks/${specName}`;
@@ -83,29 +90,30 @@ function optionalWork(root, path, family) {
   }
 }
 
-// Exact controller-owned paths only: no work-area listing. A controller
-// marker without its immutable identity is corrupt new state, never legacy.
+// Exact controller-owned paths only: no work-area listing. A present run
+// identity imposes protocol 2 whatever the replaceable projection holds; the
+// controller validates the identity and regenerates the projection from events.
+// A controller marker without its immutable identity is corrupt new state,
+// never legacy.
 export function inspectControllerState(root, specName) {
   const paths = controllerPaths(specName);
-  const run = optionalWork(root, paths.run, 'autopilot-run');
+  if (optionalWork(root, paths.run, 'autopilot-run') !== null) {
+    return Object.freeze({ controllerProtocol: CONTROLLER_PROTOCOL });
+  }
   const status = optionalWork(root, paths.status, 'status');
-  const projection = status !== null && status.toString('utf8').startsWith(STATUS_PROJECTION_HEADER);
-  if (run === null) {
-    if (optionalWork(root, paths.events, 'autopilot-events') !== null
-      || optionalWork(root, `${paths.dir}/role-1-reservation.json`, 'role-reservation') !== null || projection) {
-      throw new Error('controller protocol 2 state exists without its immutable run identity; refusing legacy fallback');
-    }
-    return null;
+  if (optionalWork(root, paths.events, 'autopilot-events') !== null
+    || optionalWork(root, `${paths.dir}/role-1-reservation.json`, 'role-reservation') !== null
+    || (status !== null && status.toString('utf8').startsWith(STATUS_PROJECTION_HEADER))) {
+    throw new Error('controller protocol 2 state exists without its immutable run identity; refusing legacy fallback');
   }
-  if (status !== null && status.length > 0 && !projection) {
-    throw new Error('legacy status and controller run identity coexist; refusing to guess the run protocol');
-  }
-  return Object.freeze({ controllerProtocol: CONTROLLER_PROTOCOL });
+  return null;
 }
 
 // Captured transport is opaque to the journal; this closed record keeps the
-// specific diagnosis (terminal reason, exit, transport, raw persistence).
-function responseRecord(roleSequence, role, outcome) {
+// specific diagnosis (terminal reason, exit, transport, raw persistence). It is
+// written only by the controller after the child is gone, and binds the digest
+// of the complete raw capture, which a running child cannot know.
+function responseRecord(roleSequence, role, outcome, rawDigest) {
   const text = (value) => (typeof value === 'string' && value.length > 0 ? value : null);
   const model = text(outcome?.observedModel);
   return {
@@ -120,22 +128,23 @@ function responseRecord(roleSequence, role, outcome) {
     transportError: text(outcome?.transportError),
     capturePersisted: outcome?.capturePersisted !== false,
     observedModel: model !== null && model.trim() === model && !/[\u0000-\u001f]/.test(model) ? model : null,
+    rawDigest,
   };
 }
 
 function parseResponseRecord(bytes, entry) {
   const record = JSON.parse(bytes.toString('utf8'));
   const keys = ['schemaVersion', 'roleSequence', 'role', 'payload', 'terminalReason', 'sessionId', 'exit',
-    'transportError', 'capturePersisted', 'observedModel'];
+    'transportError', 'capturePersisted', 'observedModel', 'rawDigest'];
   if (!record || typeof record !== 'object' || Object.keys(record).sort().join() !== [...keys].sort().join()
     || record.schemaVersion !== RESPONSE_SCHEMA_VERSION || record.roleSequence !== entry.roleSequence
-    || record.role !== entry.role) {
+    || record.role !== entry.role || !(record.rawDigest === null || /^[0-9a-f]{64}$/.test(record.rawDigest))) {
     throw new Error(`captured response for role ${entry.roleSequence} does not bind its reservation`);
   }
   return record;
 }
 
-function transportDiagnosis(label, record) {
+function transportProblems(record) {
   const problems = [];
   if (record.payload === null) problems.push(`no terminal response (${record.terminalReason ?? 'missing-terminal'})`);
   else if (record.terminalReason !== null) problems.push(`terminal ${record.terminalReason}`);
@@ -143,6 +152,11 @@ function transportDiagnosis(label, record) {
   else if (record.exit.status !== 0) problems.push(`child exited ${record.exit.status ?? 'without a status'}`);
   if (record.transportError !== null) problems.push(`transport error: ${record.transportError}`);
   if (!record.capturePersisted) problems.push('raw capture was not persisted');
+  return problems;
+}
+
+function transportDiagnosis(label, record) {
+  const problems = transportProblems(record);
   return problems.length === 0 ? null : `${label}: ${problems.join('; ')}`;
 }
 
@@ -234,6 +248,7 @@ function lifecycleOf(text) {
 // Rewrites only lifecycle values inside the leading header; every other byte stays.
 function withLifecycle(text, changes) {
   const match = LIFECYCLE.exec(text);
+  if (!match) throw new Error('lifecycle header missing');
   let body = match[2];
   for (const [field, value] of Object.entries(changes)) {
     body = body.replace(new RegExp(`^${field}: [^\\r\\n]+(?=\\r?$)`, 'm'), `${field}: ${value}`);
@@ -264,6 +279,7 @@ function refresh(ctx) {
   const current = readAutopilotRun(ctx.root, ctx.paths.dir);
   ctx.run = current.run;
   ctx.state = current.state;
+  ctx.events = current.events;
   ctx.pending = current.pendingResponses;
 }
 
@@ -279,8 +295,15 @@ function halt(ctx, reason, { reconciliation = false, scope = null } = {}) {
 // helper's own diagnosis. Crash hooks are never called inside these regions.
 function gate(ctx, label, action, options) {
   try { return action(); } catch (error) {
-    if (error instanceof ControllerHalt) throw error;
-    return halt(ctx, `${label}: ${error.message}`, options);
+    if (error instanceof ControllerHalt || error instanceof ControllerRefusal) throw error;
+    return halt(ctx, label ? `${label}: ${error.message}` : error.message, options);
+  }
+}
+
+function refusing(label, action) {
+  try { return action(); } catch (error) {
+    if (error instanceof ControllerHalt || error instanceof ControllerRefusal) throw error;
+    throw new ControllerRefusal(lineOf(label ? `${label}: ${error.message}` : error.message));
   }
 }
 
@@ -346,7 +369,7 @@ async function dispatchRole(ctx, spec) {
   const prompt = rolePrompt(ctx, spec.role, roleSequence, spec.scope, manifestPath);
   const displayName = `steepy-${ctx.specName}-${spec.role}-r${roleSequence}-${ctx.state.runId.slice(0, 8).toLowerCase()}`;
   const label = `role ${roleSequence} ${spec.role}`;
-  const prepared = gate(ctx, `${label} descriptor`, () => ctx.runner.prepare({
+  const prepared = refusing(`${label} descriptor`, () => ctx.runner.prepare({
     role: spec.role, roleSequence, scope: spec.scope, prompt, manifestPath, modelTier: spec.modelTier, displayName,
     runId: ctx.state.runId,
   }));
@@ -376,7 +399,15 @@ async function dispatchRole(ctx, spec) {
   if (digestOf(ctx, paths.events, 'autopilot-events') !== guard.journal || digestOf(ctx, paths.run, 'autopilot-run') !== guard.run) {
     throw new Error(`autopilot journal or run identity changed while ${label} was in flight; refusing to repair it from the child's response`);
   }
-  const record = responseRecord(roleSequence, spec.role, outcome);
+  const record = responseRecord(roleSequence, spec.role, outcome, digestOf(ctx, `${paths.dir}/role-${roleSequence}.raw.jsonl`, 'role-raw'));
+  // Only the controller writes a role's capture and receipt. A child-authored
+  // one is never adopted: halt with it named beside the real transport outcome.
+  const forged = [[`${paths.dir}/role-${roleSequence}-response.json`, 'role-response'], [`${paths.dir}/role-${roleSequence}-receipt.json`, 'role-receipt']]
+    .filter(([path, family]) => optionalWork(root, path, family) !== null).map(([path]) => path);
+  if (forged.length > 0) {
+    halt(ctx, [`${describe(entry())}: the child wrote controller capture ${forged.join(', ')}`, ...transportProblems(record)].join('; '),
+      { reconciliation: true, scope: spec.scope });
+  }
   captureAutopilotResponse(root, paths.dir, roleSequence, `${JSON.stringify(record)}\n`, { observedModel: record.observedModel });
   refresh(ctx);
   ctx.crash('response-captured', { roleSequence, role: spec.role });
@@ -384,7 +415,9 @@ async function dispatchRole(ctx, spec) {
 }
 
 // The response recorded for a reserved role. A reservation without a captured
-// response never earns another dispatch: the child may already have acted.
+// response never earns another dispatch: the child may already have acted. A
+// response file whose capture event was lost is adopted only when it binds the
+// current controller-side raw capture; anything else may be child-authored.
 function capturedRecord(ctx, entry) {
   if (!entry.responseCaptured) {
     if (!ctx.pending.includes(entry.roleSequence)) {
@@ -392,7 +425,13 @@ function capturedRecord(ctx, entry) {
         { reconciliation: true, scope: entry.scope });
     }
     const bytes = readWorkPath(ctx.root, `${ctx.paths.dir}/role-${entry.roleSequence}-response.json`, { family: 'role-response' });
-    const pending = gate(ctx, describe(entry), () => parseResponseRecord(bytes, entry), { reconciliation: true, scope: entry.scope });
+    let pending = null;
+    try { pending = parseResponseRecord(bytes, entry); } catch { /* not a controller record */ }
+    if (pending === null || pending.rawDigest === null
+      || pending.rawDigest !== digestOf(ctx, `${ctx.paths.dir}/role-${entry.roleSequence}.raw.jsonl`, 'role-raw')) {
+      halt(ctx, `${describe(entry)} was reserved without a captured response; refusing to adopt an uncorroborated response file or dispatch it again`,
+        { reconciliation: true, scope: entry.scope });
+    }
     captureAutopilotResponse(ctx.root, ctx.paths.dir, entry.roleSequence, bytes, { observedModel: pending.observedModel });
     refresh(ctx);
   }
@@ -428,12 +467,25 @@ function roleReceipt(ctx, entry) {
   return JSON.parse(readWorkPath(ctx.root, entry.receiptPath, { family: 'role-receipt' }).toString('utf8'));
 }
 
+// The lifecycle header of an artifact the controller already accepted or
+// published; a missing or malformed header is named publication drift.
+function publishedHeader(ctx, label, text) {
+  let header = null;
+  try { header = lifecycleOf(text); } catch (error) {
+    halt(ctx, `${label} publication drift: ${error.message}`, { reconciliation: true });
+  }
+  if (header === null) halt(ctx, `${label} publication drift: lifecycle header missing`, { reconciliation: true });
+  return header;
+}
+
 // A published DRAFT-sourced artifact is bound by its receipt: restoring the
 // DRAFT lifecycle values must reproduce the accepted source digest exactly.
 function assertPublished(ctx, label, text, entry, draft) {
+  const header = publishedHeader(ctx, label, text);
   if (sha(Buffer.from(withLifecycle(text, draft))) !== roleReceipt(ctx, entry).sourceDigest) {
     halt(ctx, `${label} publication drift: its content no longer matches the accepted DRAFT receipt`, { reconciliation: true });
   }
+  return header;
 }
 
 function specRoute(ctx) {
@@ -448,16 +500,24 @@ function routing(ctx) {
 
 // A headered spec is the plan's brainstorm input: READY and unconsumed before
 // publication, or already consumed by exactly this plan. Headerless specs carry
-// no lifecycle. Checked before the plan role is dispatched and at publication.
-function specLifecycle(ctx) {
+// no lifecycle. Checked before the run or plan role exists (a refusal) and at
+// publication (a halt).
+function specInput(ctx) {
   const text = readWorkPath(ctx.root, ctx.paths.spec, { expect: 'spec', encoding: 'utf8' });
-  const header = gate(ctx, 'spec lifecycle', () => lifecycleOf(text));
+  const header = lifecycleOf(text);
   if (header !== null && (header.phase !== 'brainstorm' || header.next !== 'plan'
     || !(header.status === 'READY' && header['consumed-by'] === 'none'
       || header.status === 'CONSUMED' && header['consumed-by'] === ctx.paths.plan))) {
-    halt(ctx, `spec lifecycle is not a READY brainstorm input for ${ctx.paths.plan}`);
+    throw new Error(`spec lifecycle is not a READY brainstorm input for ${ctx.paths.plan}`);
   }
   return { text, header };
+}
+
+function planInputs(ctx) {
+  refusing(null, () => specInput(ctx));
+  const route = refusing('plan context', () => specRoute(ctx));
+  const { standardsBySurface } = refusing('plan context', () => routing(ctx));
+  return { route, standardsBySurface };
 }
 
 async function planPhase(ctx) {
@@ -466,9 +526,7 @@ async function planPhase(ctx) {
   const { paths, root } = ctx;
   let entry = roleIn(ctx, scope, 'plan');
   if (!entry) {
-    specLifecycle(ctx);
-    const route = gate(ctx, 'plan context', () => specRoute(ctx));
-    const { standardsBySurface } = gate(ctx, 'plan context', () => routing(ctx));
+    const { route, standardsBySurface } = planInputs(ctx);
     entry = await dispatchRole(ctx, {
       scope, role: 'plan', modelTier: route.modelTier,
       manifest: (roleSequence) => buildPlanManifest({
@@ -517,13 +575,12 @@ async function planPhase(ctx) {
 function publishPlan(ctx, entry) {
   const { paths, root } = ctx;
   const text = readText(ctx, paths.plan, 'plan');
-  const header = gate(ctx, 'plan publication', () => lifecycleOf(text));
-  assertPublished(ctx, 'plan', text, entry, { status: 'DRAFT', 'consumed-by': 'none' });
+  const header = assertPublished(ctx, 'plan', text, entry, { status: 'DRAFT', 'consumed-by': 'none' });
   if (header.status === 'DRAFT') {
     writeWorkPath(root, paths.plan, withLifecycle(text, { status: 'READY' }), { family: 'plan' });
     ctx.crash('plan-published', {});
   } else if (!['READY', 'CONSUMED'].includes(header.status)) halt(ctx, `plan publication has invalid status ${header.status}`, { reconciliation: true });
-  const spec = specLifecycle(ctx);
+  const spec = gate(ctx, null, () => specInput(ctx), { reconciliation: true });
   if (spec.header?.status === 'READY') {
     writeWorkPath(root, paths.spec, withLifecycle(spec.text, { status: 'CONSUMED', 'consumed-by': paths.plan }), { expect: 'spec' });
   }
@@ -758,13 +815,13 @@ async function reviewTask(ctx, plan, task, writer) {
   if (!reviewer) {
     const taskDiffPath = gate(ctx, `Task ${task.task} diff`, () => writeTaskDiff(ctx, task.task), { reconciliation: true });
     reviewer = await dispatchRole(ctx, {
-      scope, role: 'task-reviewer', modelTier: REVIEWER_TIER,
+      scope, role: 'task-reviewer', modelTier: taskReviewerTier(task),
       effects: () => beginReview(root, guard, {
         runId: ctx.state.runId, attempt: 1, iteration: scope.iteration, task: task.task, report, issues,
         format: 'text', execution: stateOf(writer), reviewerResponseProtocol: 3,
       }),
       manifest: (roleSequence) => buildControllerTaskManifest('task-reviewer', {
-        ...taskBinding(ctx, plan, task, roleSequence, REVIEWER_TIER),
+        ...taskBinding(ctx, plan, task, roleSequence, taskReviewerTier(task)),
         reportPath: `${paths.dir}/task-${task.task}-report.md`, taskDiffPath, outputs: [report, issues],
       }),
     });
@@ -817,7 +874,7 @@ async function finalReview(ctx, plan, iteration) {
   materializeReviewInputs(ctx, plan);
   const compact = plan.compact;
   return dispatchRole(ctx, {
-    scope, role: 'final-review', modelTier: REVIEWER_TIER,
+    scope, role: 'final-review', modelTier: finalReviewerTier(plan),
     effects: () => {
       bindReference(ctx, 'final', guard);
       beginReview(root, guard, {
@@ -826,7 +883,7 @@ async function finalReview(ctx, plan, iteration) {
       });
     },
     manifest: (roleSequence) => buildFinalReviewManifest({
-      repoRoot: root, runId: ctx.state.runId, attempt: 1, modelTier: REVIEWER_TIER,
+      repoRoot: root, runId: ctx.state.runId, attempt: 1, modelTier: finalReviewerTier(plan),
       criteriaPath: paths.criteria, taskResultIndexPath: paths.index, branchDiffPath: paths.branchDiff,
       standardPaths: standardUnion(plan), outputs: [paths.finalReport, paths.finalIssues],
       ...(compact.testCommand === undefined ? {} : { testCommand: compact.testCommand }),
@@ -906,19 +963,66 @@ function acceptImplement(ctx, plan) {
   }, { reconciliation: true });
   const planEntry = roleIn(ctx, scopeOf('plan'), 'plan');
   const planText = readText(ctx, paths.plan, 'plan');
-  assertPublished(ctx, 'plan', planText, planEntry, { status: 'DRAFT', 'consumed-by': 'none' });
+  const planHeader = assertPublished(ctx, 'plan', planText, planEntry, { status: 'DRAFT', 'consumed-by': 'none' });
   const index = readText(ctx, paths.index, 'task-result-index');
-  if (lifecycleOf(index).status === 'DRAFT') writeWorkPath(root, paths.index, withLifecycle(index, { status: 'READY' }), { family: 'task-result-index' });
-  if (lifecycleOf(planText).status === 'READY') {
+  if (publishedHeader(ctx, 'task-result index', index).status === 'DRAFT') {
+    writeWorkPath(root, paths.index, withLifecycle(index, { status: 'READY' }), { family: 'task-result-index' });
+  }
+  if (planHeader.status === 'READY') {
     writeWorkPath(root, paths.plan, withLifecycle(planText, { status: 'CONSUMED', 'consumed-by': paths.index }), { family: 'plan' });
   }
   acceptPhase(ctx, scopeOf('implement'));
 }
 
-function defaultReviewEvidenceGate({ root, evidencePath }) {
-  const text = readWorkPath(root, evidencePath, { family: 'evidence', encoding: 'utf8' });
-  const results = [...text.matchAll(/^All commands passed: (true|false)$/gm)];
-  if (results.length !== 1 || results[0][1] !== 'true') throw new Error('evidence report does not record one passing command collection');
+// Parses the exact capture-review-evidence.mjs layout: each command section is
+// located by its recorded output length and digest, so command output can
+// never forge a trailer, exit code, or collection result.
+function evidenceSections(bytes) {
+  const incomplete = () => { throw new Error('evidence report is not one complete surface-test and validate-hub collection'); };
+  const head = /^# Review evidence\n\nRun started: ([^\n]+)\nCapture: [^\n]*\n/.exec(bytes.toString('latin1'));
+  if (!head) incomplete();
+  let cursor = Buffer.byteLength(head[0], 'latin1');
+  const sections = {};
+  for (const label of ['surface-test', 'validate-hub']) {
+    const opening = new RegExp(`^\\n## ${label}\\n\\nCommand JSON: ([^\\n]*)\\nStarted: [^\\n]+\\n\\n--- combined stdout/stderr begin ---\\n`)
+      .exec(bytes.subarray(cursor).toString('latin1'));
+    if (!opening) incomplete();
+    const start = cursor + opening[0].length;
+    const closing = /\n--- combined stdout\/stderr end ---\n\nExit code: ([^\n]+)\nSignal: ([^\n]+)\nSpawn error: ([^\n]+)\nOutput bytes: (\d+)\nOutput lines: \d+\nOutput SHA-256: ([0-9a-f]{64})\nFinished: [^\n]+\n/g;
+    const tail = bytes.subarray(start).toString('latin1');
+    let match;
+    let section = null;
+    while ((match = closing.exec(tail)) !== null) {
+      const size = Number(match[4]);
+      const padded = size > 0 && bytes[start + size - 1] !== 0x0a ? 1 : 0;
+      if (match.index === size + padded && start + size <= bytes.length
+        && sha(bytes.subarray(start, start + size)) === match[5]) {
+        section = { command: JSON.parse(Buffer.from(opening[1], 'latin1').toString('utf8')), exit: match[1], signal: match[2],
+          spawnError: match[3] };
+        cursor = start + match.index + match[0].length;
+        break;
+      }
+    }
+    if (section === null) incomplete();
+    sections[label] = section;
+  }
+  if (!/^## Collection result\n\nRun finished: [^\n]+\nAll commands passed: true\n$/.test(bytes.subarray(cursor).toString('latin1'))) incomplete();
+  return { runStarted: head[1], sections };
+}
+
+// Fresh evidence for this review role: the plan's exact surface test command
+// and the coherence gate, both exiting 0, collected after the role was reserved.
+function defaultReviewEvidenceGate({ root, evidencePath, testCommands, notBefore }) {
+  const { runStarted, sections } = evidenceSections(readWorkPath(root, evidencePath, { family: 'evidence' }));
+  if (!(Date.parse(runStarted) >= Date.parse(notBefore))) throw new Error('evidence predates the review role reservation');
+  if (!testCommands.includes(sections['surface-test'].command)) {
+    throw new Error(`surface-test command ${JSON.stringify(sections['surface-test'].command)} is not the plan's exact surface test command`);
+  }
+  for (const [label, section] of Object.entries(sections)) {
+    if (section.exit !== '0' || section.signal !== 'none' || section.spawnError !== 'none') {
+      throw new Error(`${label} exited ${section.exit} (signal ${section.signal}, spawn error ${section.spawnError})`);
+    }
+  }
 }
 
 async function reviewPhase(ctx) {
@@ -957,7 +1061,9 @@ async function reviewPhase(ctx) {
         || header.source !== paths.index || header['consumed-by'] !== 'none') {
         throw new Error(`the review report must carry a DRAFT review lifecycle header sourced from ${paths.index}`);
       }
-      ctx.evidenceGate({ root, evidencePath: paths.evidence, reportPath: paths.reviewReport });
+      const reserved = ctx.events.find((event) => event.event === 'ROLE_RESERVED' && event.roleSequence === entry.roleSequence);
+      ctx.evidenceGate({ root, evidencePath: paths.evidence, reportPath: paths.reviewReport, notBefore: reserved.timestamp,
+        testCommands: [...new Set(plan.tasks.map((task) => task.testCommand))] });
       return bytes;
     }, { reconciliation: true });
     acceptAutopilotResult(root, paths.dir, entry.roleSequence, { path: paths.reviewReport, digest: sha(draft) }, {
@@ -968,13 +1074,12 @@ async function reviewPhase(ctx) {
     entry = roleIn(ctx, scope, 'review');
   }
   const report = readText(ctx, paths.reviewReport, 'review-report');
-  assertPublished(ctx, 'review report', report, entry, { status: 'DRAFT' });
-  if (lifecycleOf(report).status === 'DRAFT') {
+  if (assertPublished(ctx, 'review report', report, entry, { status: 'DRAFT' }).status === 'DRAFT') {
     writeWorkPath(root, paths.reviewReport, withLifecycle(report, { status: 'READY' }), { family: 'review-report' });
     ctx.crash('review-published', {});
   }
   const index = readText(ctx, paths.index, 'task-result-index');
-  const header = lifecycleOf(index);
+  const header = publishedHeader(ctx, 'task-result index', index);
   if (header.status === 'READY') {
     writeWorkPath(root, paths.index, withLifecycle(index, { status: 'CONSUMED', next: 'none', 'consumed-by': paths.reviewReport }),
       { family: 'task-result-index' });
@@ -985,25 +1090,29 @@ async function reviewPhase(ctx) {
 }
 
 // Drives (or resumes) one controller-protocol-2 run under the caller's lease.
-// Returns { code, reason }; a decided halt is recorded in the journal first.
+// Returns { code, reason, halted }: `halted` is true only for a halt recorded in
+// the journal; a refusal before any effect journals nothing and stays resumable.
 export async function runController(options) {
   const ctx = createContext(options);
-  startOrResume(ctx);
-  projectAutopilotStatus(ctx.root, ctx.paths.dir);
-  if (ctx.state.status === 'HALTED') return { code: 1, reason: `controller run halted: ${ctx.state.reason}` };
-  if (ctx.state.status === 'COMPLETED') return { code: 0, reason: 'controller run already completed' };
-  if (ctx.run.branch !== ctx.contract.branch || ctx.git.branch(ctx.root) !== ctx.run.branch) {
-    return { code: 1, reason: `controller run belongs to branch "${ctx.run.branch}"; refusing to drive it from "${ctx.git.branch(ctx.root)}"` };
-  }
   try {
+    // A fresh run validates its spec inputs before creating any run identity.
+    if (optionalWork(ctx.root, ctx.paths.run, 'autopilot-run') === null) planInputs(ctx);
+    startOrResume(ctx);
+    projectAutopilotStatus(ctx.root, ctx.paths.dir);
+    if (ctx.state.status === 'HALTED') return { code: 1, reason: `controller run halted: ${ctx.state.reason}`, halted: true };
+    if (ctx.state.status === 'COMPLETED') return { code: 0, reason: 'controller run already completed', halted: false };
+    if (ctx.run.branch !== ctx.contract.branch || ctx.git.branch(ctx.root) !== ctx.run.branch) {
+      throw new ControllerRefusal(`controller run belongs to branch "${ctx.run.branch}"; refusing to drive it from "${ctx.git.branch(ctx.root)}"`);
+    }
     await planPhase(ctx);
     await implementPhase(ctx);
     await reviewPhase(ctx);
     appendAutopilotEvent(ctx.root, ctx.paths.dir, { event: 'RUN_COMPLETED' });
     refresh(ctx);
-    return { code: 0, reason: 'READY_FOR_PR' };
+    return { code: 0, reason: 'READY_FOR_PR', halted: false };
   } catch (error) {
-    if (error instanceof ControllerHalt) return { code: 1, reason: error.message };
+    if (error instanceof ControllerHalt) return { code: 1, reason: error.message, halted: true };
+    if (error instanceof ControllerRefusal) return { code: 1, reason: error.message, halted: false };
     throw error;
   }
 }
