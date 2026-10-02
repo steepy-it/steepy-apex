@@ -809,3 +809,45 @@ for (const [flow, options, point, match, remaining] of [
     assert.equal(journal(repo).status, 'COMPLETED');
   });
 }
+
+for (const command of ['node --test tests/*.test.mjs', 'FOO_BAR=1 npm test']) {
+  test(`review roles carry the exact plan test command ${command} and its fresh evidence is accepted`, async (t) => {
+    const repo = repository(t);
+    const seen = {};
+    const capture = (role) => ({ manifest, defaults, ...context }) => {
+      seen[role] = { testCommand: manifest.testCommand, criterionIds: manifest.criterionIds };
+      return defaults[role]({ manifest, defaults, ...context });
+    };
+    const { runner } = scriptedRunner(repo, {
+      tasks: [taskSection(1).replace('`npm test`', `\`${command}\``)],
+      script: {
+        'task-reviewer': [capture('task-reviewer')],
+        'final-review': [capture('final-review')],
+        review: [({ manifest, put, defaults }) => {
+          seen.review = { testCommand: manifest.testCommand, criterionIds: manifest.criterionIds };
+          const payload = defaults.review();
+          put(`${DIR}/evidence-report.md`, evidenceReport({ command: manifest.testCommand }));
+          return payload;
+        }],
+      },
+    });
+    const result = await control(repo, runner);
+    assert.deepEqual([result.code, result.reason], [0, 'READY_FOR_PR']);
+    for (const role of ['task-reviewer', 'final-review', 'review']) {
+      assert.deepEqual(seen[role], { testCommand: command, criterionIds: ['SC1'] }, role);
+    }
+    assert.ok(repo.read(`${DIR}/task-1-brief.md`).includes(`- **Test command:** \`${command}\``));
+  });
+}
+
+test('a genuinely failing evidence collection is refused with its specific exit diagnosis', async (t) => {
+  const repo = repository(t);
+  const { runner } = scriptedRunner(repo, { script: { review: [({ put, defaults }) => {
+    const payload = defaults.review();
+    put(`${DIR}/evidence-report.md`, evidenceReport({ surfaceExit: 1 }));
+    return payload;
+  }] } });
+  const result = await control(repo, runner);
+  assert.deepEqual([result.code, result.halted], [1, true]);
+  assert.match(result.reason, /review evidence rejected: surface-test exited 1 \(signal none, spawn error none\)/);
+});

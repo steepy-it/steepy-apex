@@ -867,12 +867,25 @@ function materializeReviewInputs(ctx, plan) {
 const finalRoles = (ctx) => ctx.state.roles.filter((entry) => entry.role === 'final-review');
 const standardUnion = (plan) => [...new Set(plan.tasks.flatMap((task) => task.standardPaths))];
 
+// Whole-branch role values come from the executable plan only, never from the
+// compact parser (which strips backticks, `*`, and `_`): the exact test
+// command the task briefs carry (absent when tasks declare several), the full
+// command set the evidence gate binds, and the ordered criteria union.
+function branchContract(plan) {
+  const testCommands = [...new Set(plan.tasks.map((task) => task.testCommand))];
+  return {
+    testCommands,
+    ...(testCommands.length === 1 ? { testCommand: testCommands[0] } : {}),
+    criterionIds: [...new Set(plan.tasks.flatMap((task) => task.criterionIds))],
+  };
+}
+
 async function finalReview(ctx, plan, iteration) {
   const { root, paths } = ctx;
   const scope = scopeOf('final-review', null, iteration);
   const guard = guardOf(ctx, scope);
   materializeReviewInputs(ctx, plan);
-  const compact = plan.compact;
+  const { testCommand, criterionIds } = branchContract(plan);
   return dispatchRole(ctx, {
     scope, role: 'final-review', modelTier: finalReviewerTier(plan),
     effects: () => {
@@ -886,8 +899,7 @@ async function finalReview(ctx, plan, iteration) {
       repoRoot: root, runId: ctx.state.runId, attempt: 1, modelTier: finalReviewerTier(plan),
       criteriaPath: paths.criteria, taskResultIndexPath: paths.index, branchDiffPath: paths.branchDiff,
       standardPaths: standardUnion(plan), outputs: [paths.finalReport, paths.finalIssues],
-      ...(compact.testCommand === undefined ? {} : { testCommand: compact.testCommand }),
-      criterionIds: compact.criterionIds, contract: contractFor(ctx, roleSequence),
+      ...(testCommand === undefined ? {} : { testCommand }), criterionIds, contract: contractFor(ctx, roleSequence),
     }),
   });
 }
@@ -1006,14 +1018,15 @@ function evidenceSections(bytes) {
     if (section === null) incomplete();
     sections[label] = section;
   }
-  if (!/^## Collection result\n\nRun finished: [^\n]+\nAll commands passed: true\n$/.test(bytes.subarray(cursor).toString('latin1'))) incomplete();
-  return { runStarted: head[1], sections };
+  const result = /^## Collection result\n\nRun finished: [^\n]+\nAll commands passed: (true|false)\n$/.exec(bytes.subarray(cursor).toString('latin1'));
+  if (!result) incomplete();
+  return { runStarted: head[1], sections, allPassed: result[1] === 'true' };
 }
 
 // Fresh evidence for this review role: the plan's exact surface test command
 // and the coherence gate, both exiting 0, collected after the role was reserved.
 function defaultReviewEvidenceGate({ root, evidencePath, testCommands, notBefore }) {
-  const { runStarted, sections } = evidenceSections(readWorkPath(root, evidencePath, { family: 'evidence' }));
+  const { runStarted, sections, allPassed } = evidenceSections(readWorkPath(root, evidencePath, { family: 'evidence' }));
   if (!(Date.parse(runStarted) >= Date.parse(notBefore))) throw new Error('evidence predates the review role reservation');
   if (!testCommands.includes(sections['surface-test'].command)) {
     throw new Error(`surface-test command ${JSON.stringify(sections['surface-test'].command)} is not the plan's exact surface test command`);
@@ -1023,6 +1036,7 @@ function defaultReviewEvidenceGate({ root, evidencePath, testCommands, notBefore
       throw new Error(`${label} exited ${section.exit} (signal ${section.signal}, spawn error ${section.spawnError})`);
     }
   }
+  if (!allPassed) throw new Error('evidence collection did not record all commands passing');
 }
 
 async function reviewPhase(ctx) {
@@ -1033,16 +1047,17 @@ async function reviewPhase(ctx) {
   let entry = roleIn(ctx, scope, 'review');
   if (!entry) {
     materializeReviewInputs(ctx, plan);
+    // The compact handoff parse still validates index coverage and the reviewer tier.
     const route = gate(ctx, 'review context', () => reviewPhaseContext(plan.planText, readText(ctx, paths.index, 'task-result-index')));
+    const { testCommand, criterionIds } = branchContract(plan);
     entry = await dispatchRole(ctx, {
       scope, role: 'review', modelTier: route.modelTier,
       manifest: (roleSequence) => buildReviewManifest({
         repoRoot: root, runId: ctx.state.runId, attempt: 1, modelTier: route.modelTier,
         criteriaPath: paths.criteria, taskResultIndexPath: paths.index, branchDiffPath: paths.branchDiff,
-        tasks: route.tasks, standardsBySurface: plan.standardsBySurface, onUnroutedSurface: () => {},
+        tasks: plan.tasks, standardsBySurface: plan.standardsBySurface, onUnroutedSurface: () => {},
         otherHubPaths: ['.apex/conventions.md'], outputs: [paths.evidence, paths.reviewReport],
-        ...(route.testCommand === undefined ? {} : { testCommand: route.testCommand }),
-        criterionIds: route.criterionIds, contract: contractFor(ctx, roleSequence),
+        ...(testCommand === undefined ? {} : { testCommand }), criterionIds, contract: contractFor(ctx, roleSequence),
       }),
     });
   }
@@ -1063,7 +1078,7 @@ async function reviewPhase(ctx) {
       }
       const reserved = ctx.events.find((event) => event.event === 'ROLE_RESERVED' && event.roleSequence === entry.roleSequence);
       ctx.evidenceGate({ root, evidencePath: paths.evidence, reportPath: paths.reviewReport, notBefore: reserved.timestamp,
-        testCommands: [...new Set(plan.tasks.map((task) => task.testCommand))] });
+        testCommands: branchContract(plan).testCommands });
       return bytes;
     }, { reconciliation: true });
     acceptAutopilotResult(root, paths.dir, entry.roleSequence, { path: paths.reviewReport, digest: sha(draft) }, {
