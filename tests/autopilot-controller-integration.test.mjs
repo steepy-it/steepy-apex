@@ -659,6 +659,25 @@ describe('carry-forward boundaries through the public CLIs', { concurrency: CONC
     assert.equal(eventNames(sb).includes('RUN_COMPLETED'), false);
   });
 
+  // The review role resumes a captured response without re-projecting the index,
+  // so a planted v2 entry reaches the evidence gate exactly as written.
+  test('a v2 index entry of kind import is refused in a run that was not started from a recovery input', async (t) => {
+    const sb = sandbox(t);
+    await crashed(sb, { point: 'response-captured', match: { role: 'review' } });
+    const index = `${DIR}/task-result-index.md`;
+    const text = sb.read(index);
+    const block = /```json\n([\s\S]*?)\n```/.exec(text);
+    const entries = JSON.parse(block[1]);
+    entries[0] = { ...entries[0], kind: 'import' };
+    sb.put(index, text.replace(block[1], JSON.stringify(entries, null, 2)));
+    const before = invocations(sb).length;
+    const result = await run(sb, RESUME);
+    await assertHalted(sb, result, /review evidence rejected: invalid task result projection entry schema/, { reconciliation: true });
+    assert.equal(invocations(sb).length, before, 'no dispatch after the refusal');
+    assert.equal(eventNames(sb).includes('RUN_COMPLETED'), false);
+    assert.match(sb.read(index), /"kind": "import"/, 'the refused entry is left for reconciliation, never re-projected away');
+  });
+
   test('an import registered in a run that was not started from a recovery input halts without any writer', async (t) => {
     const sb = sandbox(t);
     await crashed(sb, { point: 'phase-reserved', match: { phase: 'implement' } });
@@ -729,7 +748,7 @@ describe('the opt-in native smoke driver, without any provider', { concurrency: 
       GIT_CONFIG_GLOBAL: join(base, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1', STEEPY_FAKE_CONTROL: control,
     };
     writeFileSync(env.GIT_CONFIG_GLOBAL, '');
-    const drive = (args, extra = {}) => spawnSync(process.execPath, [DRIVER, ...args], {
+    const drive = (args, extra = {}, script = DRIVER) => spawnSync(process.execPath, [script, ...args], {
       env: { ...env, ...extra }, encoding: 'utf8', timeout: RUN_TIMEOUT * 2, killSignal: 'SIGKILL' });
     // A payload with only the three files the driver requires before any effect.
     const minimalPayload = () => {
@@ -745,6 +764,19 @@ describe('the opt-in native smoke driver, without any provider', { concurrency: 
       + (existsSync(join(control, 'invocations.jsonl')) ? readFileSync(join(control, 'invocations.jsonl'), 'utf8').split('\n').filter(Boolean).length : 0);
     return { base, bin, control, drive, minimalPayload, listing, harnessCalls };
   }
+
+  // Node runs the main module from its realpath; a symlinked invocation must still run main.
+  test('invoked through a symlinked path it still runs and refuses without --execute', (t) => {
+    const sb = driverSandbox(t);
+    const link = join(sb.base, 'native-smoke.mjs');
+    symlinkSync(DRIVER, link);
+    const evidence = join(sb.base, 'evidence');
+    const refused = sb.drive(['--engine-root', sb.minimalPayload(), '--evidence', evidence], {}, link);
+    assert.equal(refused.status, 2, 'main ran: a skipped main would exit 0 silently');
+    assert.match(refused.stderr, /native-smoke: refusing to run without the explicit '--execute' option/);
+    assert.equal(existsSync(evidence), false);
+    assert.equal(sb.harnessCalls(), 0);
+  });
 
   test('it parses and no suite imports it', () => {
     const checked = spawnSync(process.execPath, ['--check', DRIVER], { encoding: 'utf8', timeout: RUN_TIMEOUT, killSignal: 'SIGKILL' });

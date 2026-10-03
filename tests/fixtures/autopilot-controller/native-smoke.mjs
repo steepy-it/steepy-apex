@@ -326,6 +326,12 @@ export async function main(argv = process.argv.slice(2)) {
   return finish('PASS');
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Node loads the main module from its realpath, so compare realpaths: a
+// symlinked invocation path must still run main rather than exit 0 silently.
+function invokedDirectly() {
+  try { return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; }
+}
+
+if (invokedDirectly()) {
   process.exitCode = await main();
 }
