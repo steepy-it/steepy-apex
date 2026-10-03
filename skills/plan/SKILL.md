@@ -302,6 +302,15 @@ canonical path + heading and state exactly which requirement it supplies.
 `implement` reads this line (`Complexity`) to pick the model tier and decide whether the task gets
 its own reviewer (Step 3.4).
 
+**Vertical TDD slices.** Every task that adds or changes behavior is a vertical TDD slice: its
+failing test and the implementation that makes it pass belong to the same task, and its Exact paths
+list both. Never plan a task that only adds a failing (red) test, or a task that only implements
+behavior whose test lives in another task. The implementer must reach green inside its own task, so
+a red-only task can never finish. A spec that says "update the test first, then the implementation"
+describes the order inside one task, not two tasks. The task keeps the implementation's Surface and
+Specialist agent even when its test file sits under another surface's directory. Docs-only or
+pure-refactor tasks with no new behavior are unaffected.
+
 **Controller protocol 2 plans.** Fresh autopilot runs default to controller protocol 2, which accepts
 a plan only through the strict v2 grammar:
 
@@ -354,9 +363,10 @@ Read the plan you just wrote with fresh eyes and fix any of these inline — no 
 3. **Dependency ordering** — dependencies name existing earlier tasks, ordering is executable, and each task ends in an independently testable deliverable.
 4. **Complexity present** — validate allowed complexity: each `Complexity` value is exactly `mechanical | integration | design` and matches the task text (a multi-file task marked `mechanical` is a bug).
 5. **Criteria coverage** — every requirement and success criterion in the spec maps to at least one task; list and close any gap.
-6. **Safe repository-relative paths** — every path is exact, stays inside the repository, and is owned by the task's declared surface.
+6. **Safe repository-relative paths** — every path is exact, stays inside the repository, and is owned by the task's declared surface, except the task's own failing test file (item 9), which may sit under a separate tests surface.
 7. **Context independence** — a downstream agent can implement the task from the plan/task brief without chat history; in manual and legacy plans, large references use canonical path + heading and state the supplied requirement, while a controller protocol 2 plan carries the text itself.
 8. **Discovery-free tasks** — no task's requirements are stated only as a goal ("make X work," "write the section on Y"); each names exact paths and the expected change at each path, or is split / preceded by a discovery task whose deliverable is the missing facts.
+9. **Vertical TDD slices** — every task that adds or changes behavior is one slice whose Exact paths include both its failing test and its implementation; no task only adds a failing (red) test, and no task only implements behavior whose test lives in another task. Docs-only and pure-refactor tasks are exempt.
 
 All checks must pass before appending autopilot `DONE` or asking for human approval.
 

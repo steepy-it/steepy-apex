@@ -1053,6 +1053,38 @@ test('plan: Step 4.5 checklist adds the discovery criterion without renumbering 
   assert.match(item8, /split|discovery task/i, 'checklist item 8 must name the split-or-precede-with-discovery remedy');
 });
 
+test('plan: every behavior task is a vertical TDD slice in the task format and the self-review', () => {
+  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const step3 = sectionBetween(text, '### Step 3', '### Step 4').replace(/\s+/g, ' ');
+  assert.match(step3, /vertical TDD slice/i, 'Step 3 must make each behavior task a vertical TDD slice');
+  assert.match(step3, /failing test and the implementation that makes it pass belong to the same task/i,
+    'Step 3 must keep the failing test and its implementation in the same task');
+  assert.match(step3, /Exact paths list both/i, 'Step 3 must make the task Exact paths include both test and implementation');
+  assert.match(step3, /Never plan a task that only adds a failing \(red\) test/i, 'Step 3 must forbid a red-only task');
+  assert.match(step3, /only implements behavior whose test lives in another task/i,
+    'Step 3 must forbid an implementation-only task whose test lives in another task');
+  assert.match(step3, /test first, then the implementation[^.]*order inside one task, not two tasks/i,
+    'Step 3 must read a test-first spec as the order inside one task');
+  assert.match(step3, /Docs-only or pure-refactor tasks[^.]*unaffected/i,
+    'Step 3 must leave docs-only and pure-refactor tasks unaffected');
+  assert.match(step3, /keeps the implementation's Surface and Specialist agent even when its test file sits under another surface/i,
+    'Step 3 must keep a slice whole when its test file sits under another surface');
+  const rule = step3.search(/vertical TDD slice/i);
+  const v2 = step3.indexOf('**Controller protocol 2 plans.**');
+  assert.ok(v2 !== -1 && rule < v2, 'the vertical-slice rule must precede the controller protocol 2 subsection so every drive keeps it');
+  const step45 = sectionBetween(text, '### Step 4.5', '### Step 5');
+  const item9 = step45.match(/9\.\s+\*\*[^\n]*/)?.[0] ?? '';
+  assert.match(item9, /^9\.\s+\*\*Vertical TDD slices\*\*/, 'self-review item 9 must check vertical TDD slices');
+  assert.match(item9, /Exact paths include both its failing test and its implementation/i,
+    'self-review item 9 must check that Exact paths carry both test and implementation');
+  assert.match(item9, /no task only adds a failing \(red\) test/i, 'self-review item 9 must reject a red-only task');
+  assert.match(item9, /no task only implements behavior whose test lives in another task/i,
+    'self-review item 9 must reject an implementation-only task whose test lives elsewhere');
+  const item6 = step45.match(/6\.\s+\*\*Safe repository-relative paths\*\*[^\n]*/)?.[0] ?? '';
+  assert.match(item6, /owned by the task's declared surface, except the task's own failing test file \(item 9\)/i,
+    'self-review item 6 must except only the slice test file from surface ownership, so it never forces a red-only split');
+});
+
 test('review: autopilot manifest and manual capability inventories are authoritative and exclude transcripts', () => {
   const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
   const step0 = sectionBetween(text, '### Step 0', '### Ceremony');

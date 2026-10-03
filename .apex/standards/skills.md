@@ -31,6 +31,7 @@
   implementer must discover what to change — its requirements stated only as a goal ("make X
   work," "write the section on Y") rather than a sketch of the diff to exact paths. Split the task,
   or add a discovery task upfront whose deliverable is the missing facts, before handoff.
+  Every behavior task is a vertical TDD slice: its failing test and the implementation that makes it pass share one task and its Exact paths, even across surfaces; never plan a red-only task or an implementation-only task whose test lives in another task.
 - An argument-taking skill declares `argument-hint:` in its frontmatter (`new-surface`).
 - Engine scripts are invoked as `node <engine-root>/scripts/<x>.mjs`, resolved relative to the
   skill's own base directory — never a machine-specific absolute path or a `CLAUDE_*` env var

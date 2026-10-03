@@ -799,6 +799,10 @@ test('standards/skills.md Conventions states the plan task-cutting criterion (di
   const section = match[1];
   assert.match(section, /`plan`[\s\S]{0,120}discover/i, "Conventions must state plan's task-cutting criterion");
   assert.match(section, /mis-cut/i, 'the criterion must name a mis-cut task');
+  const flat = section.replace(/\s+/g, ' ');
+  assert.match(flat, /vertical TDD slice: its failing test and the implementation that makes it pass share one task and its Exact paths/i,
+    'Conventions must keep each behavior task a vertical TDD slice');
+  assert.match(flat, /never plan a red-only task/i, 'Conventions must forbid a red-only plan task');
 });
 
 test('docs/inception.md documents the greenfield path end to end and stays self-sufficient', () => {
