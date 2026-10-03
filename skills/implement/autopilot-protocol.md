@@ -26,7 +26,9 @@ lifecycle header, projection, or commit.
   and at standard otherwise. The final review runs at most-capable when any task is design. A
   response-only correction runs at standard.
 - A refusal before any effect journals nothing and leaves the run resumable. A gate refusal after an
-  effect is a terminal `RUN_HALTED`: the run stays halted and nothing is dispatched again.
+  effect is a terminal `RUN_HALTED`: the run stays halted and nothing is dispatched again. A writer's
+  or reviewer's NEEDS_CONTEXT or BLOCKED is also a terminal `RUN_HALTED`; protocol 2 has no retry
+  execution.
 - The review evidence gate binds the plan's exact surface test command and `validate-hub`, both
   exiting 0 with no signal or spawn error, collected after the review role was reserved.
 

@@ -173,9 +173,9 @@ value, drive mode says *who pushes the button between phases*. Gear 3 only:
   protocol 2, reviewers return reviewer response protocol 3 status/signals, as do the plan and
   review roles). The controller validates every response under controller protocol 2, and the
   implement skill does so in a legacy run; either retains only that envelope until a next decision
-  needs the durable artifact. The controller routes an effective
-  abstract tier, and adapters record concrete apply/degrade evidence. A legacy run's resource-usage ledger is
-  observational only: observation identity deduplicates exact retransmissions, while measurement
+  needs the durable artifact. The controller routes an effective abstract tier, and adapters record
+  concrete apply/degrade evidence. A legacy run's resource-usage ledger is observational only:
+  observation identity deduplicates exact retransmissions, while measurement
   scope independently establishes accounting eligibility. Reports sum only provably disjoint
   provider measurements; missing or unsupported scope is unknown, not zero, and an
   eligibility label is insufficient accounting evidence. Unknown-scope observations are retained,
@@ -203,7 +203,7 @@ The implement controller of a legacy run records the exact execution state in it
 before dispatch, and controller protocol 2 binds its receipt path in the role reservation;
 deterministic replay follows only schema-authorized same-directory parent/previous links. These
 machine capabilities do not allow work scanning or child report preloading. A durable capture resumes review-pending without
-another implementation; baseline-only state cannot prove completion. Valid captured NEEDS_CONTEXT/BLOCKED may continue in a new retry execution after a recorded remedy, preserving partial work; malformed results and drift cannot. Fixes retain earlier report
+another implementation; baseline-only state cannot prove completion. In a legacy run, valid captured NEEDS_CONTEXT/BLOCKED may continue in a new retry execution after a recorded remedy, preserving partial work; malformed results and drift cannot. Under controller protocol 2 a writer's NEEDS_CONTEXT or BLOCKED is a terminal `RUN_HALTED`. Fixes retain earlier report
 snapshots and cumulative paths, and task approvals bind the latest execution. Final approval and phase
 acceptance require receipt replay plus every applicable task/final gate and exact phase-manifest provenance for every execution ancestor. Never fabricate historical
 baselines or silently upgrade. Manual drive and Gear 4 keep their existing contracts.
@@ -338,8 +338,9 @@ task and `standard` otherwise, the final review runs at `most-capable` when any 
 a response-only correction runs at `standard`; the plan and review roles keep the tiers above.
 The plan tags every task with a **Complexity** line (`mechanical | integration | design`);
 `implement` reads it to pick the model tier and to decide whether the task gets its own
-reviewer. The ledger records the model used, review iterations, and escalations, so the
-policy can be tuned from real runs.
+reviewer. In manual drive and a legacy run, the ledger records the model used, review iterations,
+and escalations, so the policy can be tuned from real runs; under controller protocol 2 the
+journal's role reservations and scopes carry the model and iterations.
 
 Skills stay self-contained: the per-skill Model Selection and gear-0 ("Read the gear") blocks are
 duplicated on purpose. Only one SKILL.md loads per invocation, so folding them into a shared file

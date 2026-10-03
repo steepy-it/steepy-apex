@@ -1,7 +1,8 @@
 # Task execution receipts (Gear 3 autopilot v2)
 
-Read this protocol only when `manifest.contract.taskResultProtocol` is `2`. The conductor records
-`TASK_RESULT_PROTOCOL` once for a fresh run and pins the value in every phase manifest; propagate
+Read this protocol only when `manifest.contract.taskResultProtocol` is `2`. In a legacy controller
+protocol 1 run, the conductor records `TASK_RESULT_PROTOCOL` once for a fresh run and pins the value
+in every phase manifest; propagate
 `--task-result-protocol 2` to every task-role manifest. Retained legacy autopilot runs stay on
 protocol 1. Never silently upgrade a run or manufacture a historical baseline. Manual drive and
 Gear 4 retain their existing response and index grammar. These v2 instructions take precedence
@@ -108,6 +109,9 @@ review merely to handle ignored legacy path telemetry. Legacy protocol 1 recover
 by its original reviewer gate; it does not acquire historical task receipts.
 
 ## Continue a valid non-success response
+
+This path exists only in legacy controller protocol 1 runs. Under controller protocol 2 a writer's
+NEEDS_CONTEXT or BLOCKED is a terminal `RUN_HALTED`, and no retry execution is begun.
 
 A captured semantic NEEDS_CONTEXT or BLOCKED result is not task completion. Inspect its derived
 `retryable` fact. If true, resolve the question from authorized context or choose a concrete remedy

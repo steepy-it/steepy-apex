@@ -23,9 +23,9 @@ import's recorded task baseline to the current working tree, so it can include l
 and the accepted delta; judge only this task's brief and Exact paths. Read the receipt only to
 confirm what it binds. The import is not approval and no legacy verdict carries over: review the
 work as you would a fresh execution. ISSUES_FOUND sends the task to a fix, which becomes execution 2.
-Otherwise, `manifest.contract.taskResultProtocol` equal to `2` takes precedence over
-all four-field examples below. In v2 return only `status`, `artifact`, `signals`, in that text order
-(or the same JSON keys when the controller selected JSON). Preserve the role's status and artifact
+When `manifest.contract.reviewerResponseProtocol` is not `3`, `manifest.contract.taskResultProtocol`
+equal to `2` takes precedence over all four-field examples below. In v2 return only `status`,
+`artifact`, `signals`, in that text order (or the same JSON keys when the controller selected JSON). Preserve the role's status and artifact
 rules. A legacy extra `changed-paths` is raw-only telemetry ignored by the gate, never authoritative.
 Manual drive and legacy autopilot protocol 1 retain the following four-field response contract:
 

@@ -1308,3 +1308,31 @@ test('stable docs scope legacy-only autopilot statements and state the missing p
   assert.match(conventions, /In a legacy controller protocol 1 run, what a child still authors it verifies first: implement parses its own/);
   assert.match(conventions, /controller protocol 2 writes no usage ledger/i);
 });
+
+// Review fix iteration 2: the writer-protocol bullet scopes its legacy-only rules,
+// and the artifact-first glossary entry states each protocol's response shape.
+test('the skills standard and glossary state each protocol\'s response shape and retry path truthfully', () => {
+  const skills = readFileSync(join(repoRoot, '.apex', 'standards', 'skills.md'), 'utf8');
+  assert.match(skills, /under controller protocol 2 a reviewer returns reviewer response protocol 3 `status`\/`signals` only/);
+  assert.match(skills, /In a legacy run, valid captured NEEDS_CONTEXT\/BLOCKED can continue only through a new retry execution/);
+  assert.match(skills, /Under controller protocol 2 a writer's NEEDS_CONTEXT or BLOCKED is a terminal `RUN_HALTED`/);
+  const glossary = readFileSync(join(repoRoot, '.apex', 'glossary.md'), 'utf8');
+  const entry = (glossaryEntry(glossary, 'Artifact-first completion') ?? '').replace(/\s+/g, ' ');
+  assert.match(entry, /Manual drive and task-result protocol 1 return exactly `status`, `artifact`, `changed-paths`, and `signals`/);
+  assert.match(entry, /under task-result protocol 2, writers[^.]*return `status`, `artifact`, and `signals`/);
+  assert.match(entry, /reviewers under reviewer response protocol 3[^.]*return `status` and `signals`/);
+});
+
+test('stable docs scope the retry path and the progress ledger to legacy runs', () => {
+  const flat = (path) => readFileSync(join(repoRoot, path), 'utf8').replace(/\s+/g, ' ');
+  const conventions = flat('.apex/conventions.md');
+  assert.match(conventions, /In a legacy run, valid captured NEEDS_CONTEXT\/BLOCKED may continue in a new retry execution/);
+  assert.match(conventions, /under controller protocol 2 a writer's NEEDS_CONTEXT or BLOCKED is a terminal `RUN_HALTED`/i);
+  assert.match(conventions, /In manual drive and a legacy run, the ledger records the model used/);
+  const scripts = flat('.apex/standards/scripts.md');
+  assert.match(scripts, /The legacy resource-usage ledger is observational JSONL/);
+  assert.match(scripts, /a legacy run may continue a valid captured NEEDS_CONTEXT\/BLOCKED via an explicit retry execution/i);
+  const taskResultsRow = readFileSync(join(repoRoot, 'docs', 'architecture.md'), 'utf8').split('\n')
+    .find((line) => line.startsWith('| `task-results.mjs` |')) ?? '';
+  assert.match(taskResultsRow, /legacy runs use explicit retry executions[^|]*controller protocol 2 halts instead/i);
+});

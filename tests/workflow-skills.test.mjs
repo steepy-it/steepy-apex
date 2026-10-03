@@ -2796,6 +2796,21 @@ test('the task reviewer prompt explains an import-bound review', () => {
   assert.match(flat, /The import is not approval/);
   assert.match(flat, /ISSUES_FOUND sends the task to a fix, which becomes execution 2/);
   assert.match(flat, /for an import-bound review the import receipt/);
+  assert.match(flat, /When `manifest\.contract\.reviewerResponseProtocol` is not `3`, `manifest\.contract\.taskResultProtocol` equal to `2`/,
+    'the v2 reviewer grammar applies only outside reviewer response protocol 3');
+  assert.doesNotMatch(flat, /Otherwise, `manifest\.contract\.taskResultProtocol` equal to `2`/);
   assert.match(flat, /required` inventory is exactly the task brief, implementer report, task diff, and selected owning standards/,
     'the ordinary inventory statement stays intact');
+});
+
+// Review fix iteration 2 sweep: the retry path and the v2 reviewer grammar are legacy-only.
+test('implement prose scopes the retry path and the v2 reviewer grammar to legacy runs', () => {
+  const results = flatSkill('implement/task-results-protocol.md');
+  assert.match(results, /In a legacy controller protocol 1 run, the conductor records `TASK_RESULT_PROTOCOL` once/);
+  const retry = results.slice(results.indexOf('## Continue a valid non-success response'));
+  assert.match(retry, /Under controller protocol 2 a writer's NEEDS_CONTEXT or BLOCKED is a terminal `RUN_HALTED`/);
+  const protocol = flatSkill('implement/autopilot-protocol.md');
+  assert.match(protocol, /A writer's or reviewer's NEEDS_CONTEXT or BLOCKED is also a terminal `RUN_HALTED`; protocol 2 has no retry execution/);
+  assert.match(flatSkill('implement/reviewer-recovery.md'),
+    /In a legacy controller protocol 1 run, for `manifest\.contract\.taskResultProtocol: 2`, the semantic contract takes precedence/);
 });

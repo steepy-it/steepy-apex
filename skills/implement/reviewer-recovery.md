@@ -15,8 +15,8 @@ whole payload. No role runs these commands or writes guard evidence.
 
 ## Protocol selection
 
-For `manifest.contract.taskResultProtocol: 2`, the semantic contract takes precedence over the
-legacy four-field examples and correction section below: return only status, artifact, signals
+In a legacy controller protocol 1 run, for `manifest.contract.taskResultProtocol: 2`, the semantic
+contract takes precedence over the legacy four-field examples and correction section below: return only status, artifact, signals
 (ordered text or the selected JSON format). Select `reviewer-response-v2.schema.json` through
 `reviewerResponseSchema(2)`; native schema-constrained generation remains optional. The gate
 preserves a legacy extra changed-paths field as ignored raw-only telemetry. A path-only typo needs
