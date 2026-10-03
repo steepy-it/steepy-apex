@@ -2703,12 +2703,12 @@ test('implement prose scopes the controller-owned path and keeps the legacy and 
   assert.match(step0, /Roles never write state/);
   assert.match(step0, /apply only to legacy controller protocol 1 and to manual drive/i);
   const protocol = flatSkill('implement/autopilot-protocol.md');
-  const controller = protocol.match(/## Controller protocol 2 \(default for fresh runs\)(.*?)## Step 0/)?.[1] ?? '';
+  const controller = protocol.match(/## Controller protocol 2\b(.*?)## Step 0/)?.[1] ?? '';
   assert.ok(controller, 'autopilot-protocol.md must describe the controller path before the legacy steps');
   assert.match(controller, /no implement-phase child exists/i);
-  assert.match(controller, /What stays with the model/i);
+  assert.match(controller, /A writer edits only its assigned source paths under TDD and writes its assigned report/);
   assert.match(controller, /Roles never write state/);
-  assert.match(controller, /What the controller owns and verifies/i);
+  assert.match(controller, /keeps dispatch, the durable capture of each response before any gate, task-result receipts/);
   assert.match(controller, /task reviewer runs at most-capable for a design task and at standard otherwise/i);
   assert.match(controller, /final review runs at most-capable when any task is design/i);
   assert.match(controller, /response-only correction runs at standard/i);
@@ -2725,11 +2725,14 @@ test('implement prose scopes the controller-owned path and keeps the legacy and 
 
 test('implement prose states the known controller limitations', () => {
   const protocol = flatSkill('implement/autopilot-protocol.md');
+  assert.match(protocol, /Controller protocol 2 writes no `resource-usage\.jsonl` usage ledger, so `scripts\/cost-report\.mjs` reports no headless usage for these runs/);
   assert.match(protocol, /several distinct test commands[^.]*no single `testCommand`[^.]*one `--test-command`/i);
   assert.match(protocol, /finding-ID inventory[^.]*fix-target block itself/i);
   assert.match(protocol, /`role-N-response\.json` gained `rawDigest` under response record schema 1[^.]*unreleased/i);
   const review = flatSkill('review/SKILL.md');
   assert.match(review, /several distinct test commands[^.]*no single `testCommand`[^.]*one `--test-command`/i);
+  assert.match(review, /the manifest's `testCommand` \(the plan's exact surface test command\)/);
+  assert.match(review, /`\.apex\/testing-and-checklist\.md` command of a surface whose standard the manifest lists[^.]*return `NEEDS_CONTEXT` if none applies/);
 });
 
 test('plan prose states the strict v2 grammar and runs the protocol-matched plan gate', () => {
@@ -2766,10 +2769,33 @@ test('review prose reads index protocol 3 import entries without treating an imp
   assert.match(step0, /import-bound task review/);
   assert.match(step0, /first fix[^.]*execution 2/i);
   assert.match(step0, /do not open the import receipt or the source run/i);
-  assert.match(step0, /exact surface test command and `validate-hub`, both exiting 0/i);
+  assert.match(step0, /`testCommand` \(the plan's exact surface test command\) and `validate-hub`, both exiting 0/i);
 });
 
 test('brainstorm states that exact capture needs a legacy run', () => {
   const brainstorm = flatSkill('brainstorm/SKILL.md');
   assert.match(brainstorm, /Exact capture needs a legacy run[^.]*`--controller-protocol 1`[^.]*refuses `log-mode: exact` before any effect/);
+});
+
+test('brainstorm reports the artifacts the default controller run actually writes', () => {
+  const brainstorm = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const item = brainstorm.split('\n').find((line) => line.startsWith("4. Report the run's status path")) ?? '';
+  assert.match(item, /`role-<N>\.log`/);
+  assert.match(item, /`role-<N>\.raw\.jsonl`/);
+  assert.match(item, /authoritative journal `autopilot-events\.jsonl`/);
+  const legacy = item.indexOf('--controller-protocol 1');
+  assert.ok(legacy > 0, 'item 4 must scope the phase logs to a legacy run');
+  assert.ok(item.indexOf('phase-<n>-attempt-<m>') > legacy, 'phase-attempt logs appear only after the legacy selection');
+});
+
+test('the task reviewer prompt explains an import-bound review', () => {
+  const prompt = readFileSync(join(skillsDir, 'implement', 'task-reviewer-prompt.md'), 'utf8');
+  const flat = prompt.replace(/\s+/g, ' ');
+  assert.match(flat, /`manifest\.contract\.reviewedEvidence` is `import`/);
+  assert.match(flat, /required inventory adds the import receipt \(`task-N-import\.json`\)/);
+  assert.match(flat, /The import is not approval/);
+  assert.match(flat, /ISSUES_FOUND sends the task to a fix, which becomes execution 2/);
+  assert.match(flat, /for an import-bound review the import receipt/);
+  assert.match(flat, /required` inventory is exactly the task brief, implementer report, task diff, and selected owning standards/,
+    'the ordinary inventory statement stays intact');
 });

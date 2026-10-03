@@ -2,7 +2,7 @@
 
 If your harness provides a task/subagent tool, dispatch a fresh reviewer after an eligible task's
 implementer reports DONE or DONE_WITH_CONCERNS. In autopilot, pass the validated task-reviewer
-manifest path as the sole file-inventory reference. Its `required` inventory is exactly the task brief, implementer report, task diff, and selected owning standards (a single file, or the exact modular core plus matching leaves). The hub index may be `onDemand` only for a
+manifest path as the sole file-inventory reference. Its `required` inventory is exactly the task brief, implementer report, task diff, and selected owning standards (a single file, or the exact modular core plus matching leaves); an import-bound review (`manifest.contract.reviewedEvidence: import`, controller protocol 2 recovery runs only) also requires the import receipt, and its report input is the imported legacy task report. The hub index may be `onDemand` only for a
 named suspected routing conflict; the controller records that concrete reason before the read.
 Otherwise review inline in a dedicated same-session pass over those same inputs and record the
 no-task-tool or manual no-manifest degradation in the ledger.
@@ -15,6 +15,14 @@ owns the verdict gate, receipts, and lifecycle; report prose cannot supply a ver
 containing `artifact` or `changed-paths` is invalid. Only one reserved response-only correction
 may repair reversed text-line order or one Markdown block around the whole selected payload;
 values and types remain frozen. This v3 branch takes precedence over v2 and legacy examples.
+When `manifest.contract.reviewedEvidence` is `import`, this task's evidence is a controller-verified
+import from a halted legacy run, not a writer execution of this run. The required inventory adds the
+import receipt (`task-N-import.json`), and the report input is the imported task report frozen from
+that run; its claims are unverified, like any implementer report. The task diff runs from the
+import's recorded task baseline to the current working tree, so it can include later imported work
+and the accepted delta; judge only this task's brief and Exact paths. Read the receipt only to
+confirm what it binds. The import is not approval and no legacy verdict carries over: review the
+work as you would a fresh execution. ISSUES_FOUND sends the task to a fix, which becomes execution 2.
 Otherwise, `manifest.contract.taskResultProtocol` equal to `2` takes precedence over
 all four-field examples below. In v2 return only `status`, `artifact`, `signals`, in that text order
 (or the same JSON keys when the controller selected JSON). Preserve the role's status and artifact
@@ -55,7 +63,8 @@ Subagent (reviewer):
     four-field example in this prompt. Do not include a source-path claim. The controller obtains
     paths from Git observations; a legacy extra changed-paths is ignored raw-only telemetry.
     Manual drive and legacy protocol 1 retain the four-field grammar below. Read every `required` input: task brief,
-    implementer report, task diff, and owning standard under `.apex/standards/`. Do not preload the
+    implementer report (for an import-bound review, the imported report), task diff, owning standard
+    under `.apex/standards/`, and for an import-bound review the import receipt. Do not preload the
     routing table (`.apex/_INDEX.md`). Read its `onDemand` entry only for a named suspected routing
     conflict, recording the risk and read in [REVIEW_FILE]. Never preload a full spec, plan, transcript,
     conversation, or another work artifact. Ordinary repository source needed to verify the assigned

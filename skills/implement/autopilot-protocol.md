@@ -39,6 +39,9 @@ lifecycle header, projection, or commit.
   because the final-review prompt has no finding-ID grammar outside that block.
 - `role-N-response.json` gained `rawDigest` under response record schema 1; that schema is
   unreleased.
+- Controller protocol 2 writes no `resource-usage.jsonl` usage ledger, so `scripts/cost-report.mjs`
+  reports no headless usage for these runs; each role reservation records only the requested and
+  descriptor model or the degradation.
 
 Legacy controller protocol 1 (`--controller-protocol 1`, or a run whose existing status is legacy)
 keeps the phase-child protocol below unchanged.

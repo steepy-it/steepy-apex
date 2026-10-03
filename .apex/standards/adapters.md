@@ -91,10 +91,10 @@ Adapters declare configured host wiring, not a timeless host-runtime guarantee. 
   capability. Protocol 1 retains four fields and literal none. Protocol 2 selects
   `reviewer-response-v2.schema.json` with status/artifact/signals only; a legacy extra changed-paths
   is ignored raw telemetry. Protocol 3 selects `reviewer-response-v3.schema.json` with `status` and
-  `signals` only; the adapter decodes strictly and never unwraps a Markdown block or reorders lines:
-  the engine gate alone classifies a repairable format and owns the single correction. Only the
-  engine's unchanged source observation establishes no source changes. Adapters never infer or
-  correct semantic fields or decide task approval.
+  `signals` only; its strict decoder never unwraps a Markdown block or reorders lines. Only the engine
+  gate's check classifies such a format as repairable, and the gate owns the single reserved
+  correction. Only the engine's unchanged source observation establishes no source changes. Adapters
+  never infer or correct semantic fields or decide task approval.
 - `adapters/headless-response.mjs` correlates one headless stream to one direct terminal role
   response, checking transport provenance only (no child-agent markers, one session, exactly one
   terminal event, a byte bound); response grammar, repair, and approval stay with controller gates.

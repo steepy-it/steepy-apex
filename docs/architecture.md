@@ -148,11 +148,13 @@ conductor lease + locked preflight
                 |
   role-N-response.json captured before any gate
                 |
+  writer only: controller commits the task's source
+                |
   plan / task-result / reviewer / review-evidence gate
           /                         \
  receipt + RESULT_ACCEPTED     refusal after an effect
           |                         |
- commits, READY/CONSUMED,       RUN_HALTED
+ READY/CONSUMED,                RUN_HALTED
  PHASE_ACCEPTED, RUN_COMPLETED
 ```
 
@@ -160,10 +162,12 @@ What stays with the model: the plan, writer, reviewer, and review roles do the j
 only their assigned artifacts, and return a closed payload. Writers edit only their assigned source
 under TDD. Roles never write state. What the controller owns and verifies: dispatch, durable response
 capture before any gate, task-result receipts, the reviewer gate with at most one format correction,
-the review evidence gate, workflow events, task commits, and READY/CONSUMED publication. The review
-evidence gate binds the plan's exact surface test command and `validate-hub`, both exiting 0 with no
-signal or spawn error, collected after the review role was reserved. A refusal before any effect
-journals nothing and stays resumable; a gate refusal after an effect is a terminal `RUN_HALTED`.
+the review evidence gate, workflow events, task commits, and READY/CONSUMED publication. A writer's
+source is committed by the controller after its response is captured and before the task-result
+gate. The review evidence gate binds the plan's exact surface test command and `validate-hub`, both
+exiting 0 with no signal or spawn error, collected after the review role was reserved. A refusal
+before any effect journals nothing and stays resumable; a gate refusal after an effect is a terminal
+`RUN_HALTED`.
 
 The authoritative journal is `autopilot-events.jsonl` (event schema 2), beside the immutable
 `autopilot-run.json`; `autopilot-status.md` is a regenerated projection and never an event source.
@@ -202,7 +206,10 @@ share the managed runner in `headless-runner.mjs`, which persists only safe-reda
 Known limitations: with several distinct test commands, the review manifest carries no single
 `testCommand`, and the review skill takes one `--test-command`; the evidence gate accepts any one of
 the plan's commands. The whole-branch fix-target finding-ID inventory is derived from the fix-target
-block itself, because the final-review prompt has no finding-ID grammar outside it.
+block itself, because the final-review prompt has no finding-ID grammar outside it. Controller
+protocol 2 writes no `resource-usage.jsonl` usage ledger, so `scripts/cost-report.mjs` reports no
+headless usage for these runs; each role reservation records only the requested and descriptor
+model or the degradation.
 
 Evidence for this path is synthetic, not native evidence: `tests/autopilot-controller-integration.test.mjs`
 drives the public CLIs against the fake-harness stand-in. `tests/fixtures/autopilot-controller/native-smoke.mjs`
@@ -224,9 +231,17 @@ Adapters are fail-open: every optional host API sits behind a capability check, 
 
 DeepSeek Harness's fail-open shape is dependency-gated activation rather than a synchronous presence check: each of its three capabilities runs on its own child fiber, gated on exactly the one host service it needs. A host that never composes one of those services leaves only that one capability's fiber pending forever — silently, with no error and no timeout — while the adapter's own fiber and the other two capabilities stay unaffected. This wiring degradation is declared in the adapter's own bootstrap block as well as here, per `.apex/conventions.md`'s "degradations are explicit, never silent" rule.
 
-`adapters/headless.mjs` is the odd one out: not a session-injection adapter but a harness → headless one-shot command map (`claude -p`, `codex exec`, `opencode run`; `null` for a harness with no headless mode, e.g. Pi). It is what `scripts/autopilot.mjs` — the gear-3 autopilot conductor — uses to spawn each phase, and what tells `brainstorm` Step 7 whether autopilot can be offered on the current harness.
+`adapters/headless.mjs` is the odd one out: not a session-injection adapter but a harness → headless one-shot command map (`claude -p`, `codex exec`, `opencode run`; `null` for a harness with no headless mode, e.g. Pi). It is what `scripts/autopilot.mjs` — the gear-3 autopilot conductor — uses to build each headless command: one per phase in a legacy controller protocol 1 run, and one per role invocation under controller protocol 2, where the shared `headless-runner.mjs` runs it. It also tells `brainstorm` Step 7 whether autopilot can be offered on the current harness.
 
 ## Autopilot live-observability boundary
+
+This section describes the legacy controller protocol 1 driver in `scripts/autopilot.mjs`. Under
+controller protocol 2, the default for a fresh run, `autopilot.mjs` builds each role's descriptor,
+and the shared managed runner `headless-runner.mjs` frames the stream, persists the safe-redacted
+`role-<N>.raw.jsonl` and the readable `role-<N>.log`, feeds the live destination, correlates the
+terminal response through `adapters/headless-response.mjs`, and owns process-group termination.
+Its authority is the journal `autopilot-events.jsonl`; it writes no aggregate phase log and no
+resource-usage ledger.
 
 The headless path has a deliberately one-way dependency direction:
 
@@ -236,7 +251,7 @@ adapters/headless-events.mjs ── decoded event ─► scripts/autopilot.mjs
 scripts/autopilot-observability.mjs ── bridge primitives ─► scripts/autopilot.mjs
 ```
 
-`adapters/headless.mjs` owns only the harness command descriptor and declared native capabilities. `adapters/headless-events.mjs` owns only protocol decoders for one structured output line; it does not choose persistence, timeout, or halt policy. `scripts/autopilot-observability.mjs` owns the common event envelope, line framing, raw serialization/redaction, curated rendering, and the bounded writer. `scripts/autopilot.mjs` owns orchestration: attempts, versioned manifests, artifact timing, status correlation, child lifetime, and the user-facing halt decision. The implement skill/controller validates artifact-first completion and the selected envelope before the next task decision: manual/legacy v1 uses four fields, while fresh autopilot v2 uses status/artifact/signals and receipt-derived source paths. That controller routes an effective abstract controller tier; adapters apply or degrade the concrete model and return direct provider evidence. The adapters never import conductor policy, and the bridge never selects a harness command.
+`adapters/headless.mjs` owns only the harness command descriptor and declared native capabilities. `adapters/headless-events.mjs` owns only protocol decoders for one structured output line; it does not choose persistence, timeout, or halt policy. `scripts/autopilot-observability.mjs` owns the common event envelope, line framing, raw serialization/redaction, curated rendering, and the bounded writer. `scripts/autopilot.mjs` owns orchestration: attempts, versioned manifests, artifact timing, status correlation, child lifetime, and the user-facing halt decision. In a legacy run, the implement skill/controller validates artifact-first completion and the selected envelope before the next task decision: manual/legacy v1 uses four fields, while v2 uses status/artifact/signals and receipt-derived source paths; under controller protocol 2, `autopilot-controller.mjs` validates every response. That controller routes an effective abstract controller tier; adapters apply or degrade the concrete model and return direct provider evidence. The adapters never import conductor policy, and the bridge never selects a harness command.
 
 For each child stdout/stderr line, the conductor uses a raw-first flow: frame → serialize immutable raw JSONL → decode into the common event envelope where possible → curate the readable per-attempt and aggregate logs → write the same compact curated event to the bounded stdout/stderr live destination. Ordinary plain decoder failures use a source-labelled, redacted, length-limited passthrough; unknown or malformed structured data uses a generic fallback so arbitrary metadata and reasoning cannot enter the readable or live view. Reasoning and token deltas are never promoted.
 
@@ -246,7 +261,7 @@ The resource-usage ledger is append-only JSONL scoped to run, phase, and attempt
 
 Process lifetime converges in `scripts/autopilot.mjs`: terminal interruption, optional native stop, explicit safety/failure condition, and a blocking bridge failure all enter one stop path, send `SIGTERM` to the detached child group, escalate to `SIGKILL` after a short grace, close destinations once, and settle the attempt once. A bounded I/O integrity timeout may protect a stalled read, write, or drain operation; it is not a phase duration or work timer. A live child that emits no output therefore remains active until it exits or receives an explicit stop; the conductor does not infer a hang from silence. This keeps descendants from outliving a halted phase. The entire path uses Node >= 24 built-ins only and has zero runtime dependencies.
 
-The Gear-3 authority sequence is checkout lease and locked preflight → versioned status-protocol
+The legacy Gear-3 authority sequence is checkout lease and locked preflight → versioned status-protocol
 declaration/validation → correlated child evidence plus process-group convergence → conductor-authored
 `PHASE_ACCEPTED` → verified lease release. A failure before acceptance records a correlated halt when
 durable status exists and never promotes the child's completion claim; an unverifiable release fails

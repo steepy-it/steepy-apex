@@ -4800,6 +4800,35 @@ describe('controller protocol 2 routing (runConductor and main)', () => {
     assert.equal(resumed.read(`${TASKS}/autopilot-events.jsonl`), events, 'the journal is untouched');
   });
 
+  it('a recovery start with log-mode: exact is refused before any effect and creates no run identity', async (t) => {
+    const repo = controllerRepo(t);
+    repo.put(SPEC_PATH, repo.read(SPEC_PATH).replace('blast-radius:', 'log-mode: exact\nblast-radius:'));
+    const input = `${TASKS}/recovery-input.json`;
+    repo.put(input, '{}\n');
+    const { runner, calls } = roleRunner(repo);
+    let leased = false;
+    const refused = await conduct(repo, { controllerServices: { runner }, lockTransition: () => { leased = true; } },
+      [SPEC_PATH, '--recovery-input', input]);
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /log-mode: exact is not supported under controller protocol 2/);
+    assert.equal(leased, false, 'refused before the lease');
+    assert.deepEqual(calls, []);
+    assert.equal(exists(repo, `${TASKS}/autopilot-run.json`), false);
+    assert.equal(repo.read(input), '{}\n', 'the recovery input is untouched');
+  });
+
+  it('a fresh run with no selection refuses explicit resume inputs and creates no run identity', async (t) => {
+    const repo = controllerRepo(t);
+    repo.put(`${TASKS}/task-1-report.md`, 'existing evidence\n');
+    const { runner, calls } = roleRunner(repo);
+    const refused = await conduct(repo, { controllerServices: { runner } }, [SPEC_PATH, '--resume-input', `${TASKS}/task-1-report.md`]);
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /resume inputs belong to the legacy implement phase/);
+    assert.deepEqual(calls, []);
+    assert.equal(exists(repo, `${TASKS}/autopilot-run.json`), false);
+    assert.equal(exists(repo, `${TASKS}/autopilot-status.md`), false);
+  });
+
   it('a refusal before any controller effect gets a neutral label and creates no run identity', async (t) => {
     const repo = controllerRepo(t);
     repo.put(SPEC_PATH, repo.read(SPEC_PATH).replace('-->\n\n# Topic', '-->\n<!-- steepy-workflow: v1\nphase: brainstorm\nstatus: DRAFT\nnext: plan\nsource: none\nconsumed-by: none\n-->\n\n# Topic'));

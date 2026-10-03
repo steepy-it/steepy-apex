@@ -160,10 +160,14 @@ Do not append `autopilot-status.md`, advance the task-result index, consume a li
 or infer the verdict from report prose. For this selected protocol, later publication and
 status-appending instructions are replaced by this return contract. The regular manual,
 historical legacy autopilot, and Gear-4 paths below retain their existing lifecycle and handoff rules.
-The controller accepts the report only with fresh evidence from this role: the plan's exact surface
-test command and `validate-hub`, both exiting 0 with no signal or spawn error. With several distinct
-test commands, the review manifest carries no single `testCommand` and this skill takes one
-`--test-command`; capture one of the plan's exact commands.
+The controller accepts the report only with fresh evidence from this role: the manifest's
+`testCommand` (the plan's exact surface test command) and `validate-hub`, both exiting 0 with no
+signal or spawn error. With several distinct test commands, the review manifest carries no single
+`testCommand` and this skill takes one `--test-command`. No manifest field names the plan's
+commands then: use the `.apex/testing-and-checklist.md` command of a surface whose standard the
+manifest lists, which is one of the plan's commands when the plan passed the plan skill's self-review check 2,
+and return `NEEDS_CONTEXT` if none applies. The evidence gate refuses a command that is not one of
+the plan's; that refusal and `NEEDS_CONTEXT` both halt the run.
 
 **Autopilot preflight:** When the conductor-supplied phase manifest is present, read that
 manifest before any other task input. Validate its role and scope against the review phase and the

@@ -1239,7 +1239,7 @@ test('stable docs promote controller ownership, the protocol default, and the ve
   for (const [name, text] of [['scripts standard', scripts], ['conventions', conventions], ['architecture', architecture]]) {
     assert.match(text, /fresh controller runs use index protocol 2[^.]*recovery runs[^.]*index protocol 3/i, `${name} must state the index split`);
   }
-  assert.match(conventions, /What stays with the model[^.]*/i);
+  assert.match(conventions, /writers edit their assigned source under TDD, and every role writes its assigned report or issues artifact/i);
   assert.match(conventions, /Roles never write state/);
   assert.match(conventions, /legacy controller protocol 1 runs[^.]*manual drive[^.]*Gear 4 keep their own contracts; nothing migrates/i);
   assert.match(architecture, /## Gear-3 controller protocol 2/);
@@ -1274,4 +1274,37 @@ test('stable docs promote controller ownership, the protocol default, and the ve
   for (const [name, text] of [['scripts', scripts], ['skills', skills], ['conventions', conventions], ['architecture', architecture]]) {
     assert.doesNotMatch(text, /\bv3 (?:protocol|index)\b/i, `${name} must name the versioned protocol, never a bare v3`);
   }
+});
+
+// Review fix iteration 1: legacy-only statements are scoped, and the default
+// path's missing usage ledger is a stated limitation.
+test('stable docs scope legacy-only autopilot statements and state the missing protocol-2 usage ledger', () => {
+  const read = (path) => readFileSync(join(repoRoot, path), 'utf8');
+  const flat = (text) => text.replace(/\s+/g, ' ');
+  const section = (text, heading) => text.match(new RegExp(`${heading}\\n([\\s\\S]*?)(?=\\n## )`))?.[1] ?? '';
+  const workflow = read('docs/workflow.md');
+  const chain = flat(section(workflow, '## Gear 3: the workflow chain'));
+  assert.doesNotMatch(chain, /Children write their durable report before returning the exact four-field completion envelope/);
+  assert.match(chain, /Under controller protocol 2, the fresh-run default, the controller validates each payload/);
+  assert.match(chain, /under controller protocol 2 the controller projects and verifies the index from its receipts/);
+  const live = section(workflow, '## Autopilot live observability');
+  const resume = flat(live.split(/\n\s*\n/).find((paragraph) => paragraph.includes('--resume-input')) ?? '');
+  assert.match(resume, /controller protocol 2 refuses `--resume-input` before any effect/);
+  assert.match(flat(live), /A default controller protocol 2 run writes, for each role invocation N/);
+  assert.match(flat(live), /Controller protocol 2 writes no usage ledger/);
+  assert.match(flat(section(workflow, '## Model selection')), /Under controller protocol 2, the default, no implement controller exists/);
+  const architecture = read('docs/architecture.md');
+  const boundary = flat(section(architecture, '## Autopilot live-observability boundary'));
+  assert.match(boundary, /`headless-runner\.mjs`/);
+  assert.match(boundary, /legacy Gear-3 authority sequence/);
+  assert.match(flat(section(architecture, '## Gear-3 controller protocol 2')),
+    /Controller protocol 2 writes no `resource-usage\.jsonl` usage ledger, so `scripts\/cost-report\.mjs` reports no headless usage for these runs/);
+  const scripts = read('.apex/standards/scripts.md');
+  const resumeBullet = scripts.split('\n').find((line) => line.includes('`--resume-input`') && line.includes('resumeInputs')) ?? '';
+  assert.match(resumeBullet, /^- Legacy controller protocol 1 only:/);
+  assert.match(flat(scripts), /in legacy controller protocol 1, the observational usage ledger \(controller protocol 2 writes none\)/);
+  assert.match(flat(scripts), /explicit resume inputs[^.]*refused before any effect/);
+  const conventions = flat(read('.apex/conventions.md'));
+  assert.match(conventions, /In a legacy controller protocol 1 run, what a child still authors it verifies first: implement parses its own/);
+  assert.match(conventions, /controller protocol 2 writes no usage ledger/i);
 });

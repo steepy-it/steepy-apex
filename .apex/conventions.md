@@ -157,19 +157,24 @@ value, drive mode says *who pushes the button between phases*. Gear 3 only:
   The conductor derives both of those artifacts itself before the review manifest — the criteria
   from the spec's single `## Success criteria` heading, the diff from the run's recorded `BASELINE`
   commit — so the review gate never depends on a child having written derived evidence, and a
-  resumed run keeps the original baseline. What a child still authors, it verifies first: implement
-  parses its own `task-result-index.md` against the plan before claiming completion, so a malformed
-  result fails inside implement where it is fixable instead of at the review gate where it is not.
+  resumed run keeps the original baseline. In a legacy controller protocol 1 run, what a child still
+  authors it verifies first: implement parses its own `task-result-index.md` against the plan before
+  claiming completion, so a malformed result fails inside implement where it is fixable instead of
+  at the review gate where it is not. Under controller protocol 2 the controller projects the index
+  from its receipts.
   A fresh implement ledger is an absent `onDemand` resume-state entry and a declared output, not a
   required pre-spawn input. The plan phase writes to its manifest-declared output path exactly.
   A manifest's implicated standards separate two classes: an owning or per-task surface with no
   routing row is a binding error and halts, while an unregistered cross-cutting entry is advisory
-  prose, recorded once as `CONTEXT_SURFACE_IGNORED` and skipped — a word in a metadata list never
-  refuses a run.
+  prose, skipped (and recorded once as `CONTEXT_SURFACE_IGNORED` in a legacy run) — a word in a
+  metadata list never refuses a run.
   Children persist their detailed result before replying with the selected artifact-first
-  envelope (manual/legacy v1 four fields, autopilot v2 status/artifact/signals); the implement skill/controller validates it and retains only that
-  envelope until a next decision needs the durable artifact. The controller routes an effective
-  abstract tier, and adapters record concrete apply/degrade evidence. A resource-usage ledger is
+  envelope (manual/legacy v1 four fields; v2 writers status/artifact/signals; under controller
+  protocol 2, reviewers return reviewer response protocol 3 status/signals, as do the plan and
+  review roles). The controller validates every response under controller protocol 2, and the
+  implement skill does so in a legacy run; either retains only that envelope until a next decision
+  needs the durable artifact. The controller routes an effective
+  abstract tier, and adapters record concrete apply/degrade evidence. A legacy run's resource-usage ledger is
   observational only: observation identity deduplicates exact retransmissions, while measurement
   scope independently establishes accounting eligibility. Reports sum only provably disjoint
   provider measurements; missing or unsupported scope is unknown, not zero, and an
@@ -180,9 +185,10 @@ value, drive mode says *who pushes the button between phases*. Gear 3 only:
   versions stay unknown. This restriction concerns usage accounting, not general OpenCode support.
   Interactive session-store observations are excluded from additive rollups
   without official disjoint-scope evidence. `scripts/cost-report.mjs` exposes coverage explicitly
-  without creating a work timer or fixed resource stop condition. The ledger
+  without creating a work timer or fixed resource stop condition. The legacy ledger
   also records the model used, review iterations, and escalations so policy can be tuned from real
-  runs.
+  runs; controller protocol 2 writes no usage ledger and records each role's requested and
+  descriptor model or degradation in its reservation.
 
 **Boundary rule** (workflow routing): closed design + machine-verifiable goal → gear 4;
 open design + trusted execution after the spec gate → gear 3 autopilot; otherwise → gear
