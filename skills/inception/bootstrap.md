@@ -17,7 +17,7 @@ comes before its consumers.
 - The child writes code only under its part's path, and writes its report.
 - You keep the bootstrap log, the checkpoints, the commits, the descriptor, and the dialogue with
   the user. Before each child, append its intent to the log. After it, append the outcome, run the
-  checks, record and bind a checkpoint, and commit when the Git policy allows.
+  checks, and follow "Effects and checkpoints" for commit, rechecks, checkpoint, and binding.
 - A child never writes the descriptor, an approval, a checkpoint, the bootstrap log, a commit,
   another part's paths, or a file `init` writes.
 - When a child cannot finish: `BLOCKED` or `NEEDS_CONTEXT` → get the missing fact or ask the user,
@@ -43,10 +43,34 @@ comes before its consumers.
 
 ## Effects and checkpoints
 
-Keep a bootstrap log at `.apex/inception/<run-id>/bootstrap-log.md`. Before each step with effects —
-install, generator, migration, external resource, deploy — append its intent. After it, append the
-observed outcome. When a step changes repository files, record a code checkpoint and bind it
-(`protocol.md` → "Code checkpoint").
+Use the existing bootstrap log at `.apex/inception/<run-id>/bootstrap-log.md`, created before the
+approval transition; preserve its history on retries and new approvals. A legacy missing log uses
+`SKILL.md` → "Resume" reconciliation before any effect.
+
+Before each step with effects, append its intent. After it, append the observed outcome.
+For each effect, including a child, install, generator, migration, external resource, or deploy:
+
+1. Append the intent, exact planned inventory, and applicable checks before the effect.
+2. Perform the effect once and append its observed outcome with exact evidence paths.
+3. Run and record the relevant checks against the observed files and representative behavior.
+4. If the approved Git policy authorizes a commit, append the commit intent, perform the commit,
+   and record its observed outcome and Git identity; otherwise retain the verified working tree.
+5. If the commit changed files, run the relevant rechecks before writing a new checkpoint and
+   binding it to the descriptor; record the outcomes. Inspect hook-generated changes too.
+6. Record a new checkpoint at a new exact path over the complete relevant planned inventory, then
+   bind its printed path and digest through the descriptor helper. Preserve previous checkpoints.
+
+A checkpoint records the final observed files and branch/HEAD after any authorized commit, with
+verification for those bytes. Uncommitted working trees remain supported; without a Git repository,
+retain `git: null`, skip commits, and verify and checkpoint the files normally.
+
+If interrupted after commit and before checkpoint or descriptor binding, compare the log, current
+Git branch/HEAD and working tree, prior checkpoint if present, exact child/results reports, and the
+approved planned inventory. Explain every divergence, including any commit-hook file changes.
+Complete only demonstrable missing verification, a new checkpoint, and descriptor binding.
+Never repeat an already observed commit or issue a second commit to close this gap; never rewrite
+records destructively or establish an unexplained new baseline. If the commit outcome or file state
+cannot be established, use the existing blocked stop rather than guessing.
 
 An external effect with an uncertain outcome (timeout, lost connection, interrupted session) is
 reconciled: observe the real state first. Never repeat it automatically.
