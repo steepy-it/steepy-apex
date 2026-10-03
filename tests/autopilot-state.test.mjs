@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -8,7 +8,7 @@ import {
   createAutopilotRun, readAutopilotRun, reserveAutopilotRole,
   captureAutopilotResponse, acceptAutopilotResult, appendAutopilotEvent,
   parseAutopilotJsonl, renderAutopilotStatus, reconcileAutopilotReservation,
-  projectAutopilotStatus,
+  projectAutopilotStatus, readAutopilotIdentity,
 } from '../scripts/autopilot-state.mjs';
 import { readWorkPath, writeWorkPath } from '../scripts/work-paths.mjs';
 
@@ -300,4 +300,23 @@ test('a tampered run identity cannot gain, lose, or change its recovery kind', (
     write(value);
     assert.throws(() => readAutopilotRun(root, DIR), reason);
   }
+}));
+
+// The controller's pure pre-start checks read only the immutable identity: no
+// journal read, replay, or reconciliation, even when the journal would refuse.
+test('the run identity is read without the journal, beside an orphan reservation or a missing journal', () => fixture((root) => {
+  const { run } = start(root);
+  reserveAutopilotRole(root, DIR, { scope, role: 'implementer' });
+  const path = `${DIR}/autopilot-events.jsonl`;
+  const bytes = readWorkPath(root, path, { family: 'autopilot-events' });
+  writeWorkPath(root, path, bytes.subarray(0, bytes.indexOf(10) + 1), { family: 'autopilot-events' });
+  assert.throws(() => readAutopilotRun(root, DIR), /orphan.*reconciliation/i);
+  const journal = readFileSync(join(root, path));
+  assert.deepEqual(readAutopilotIdentity(root, DIR), run);
+  assert.deepEqual(readFileSync(join(root, path)), journal, 'nothing is adopted');
+  rmSync(join(root, path));
+  assert.deepEqual(readAutopilotIdentity(root, DIR), run);
+  assert.equal(existsSync(join(root, path)), false, 'no RUN_STARTED is repaired');
+  writeWorkPath(root, `${DIR}/autopilot-run.json`, `${JSON.stringify({ ...run, controllerProtocol: 1 })}\n`, { family: 'autopilot-run' });
+  assert.throws(() => readAutopilotIdentity(root, DIR), /invalid run identity/);
 }));

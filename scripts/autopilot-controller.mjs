@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   acceptAutopilotResult, appendAutopilotEvent, captureAutopilotResponse, createAutopilotRun,
-  projectAutopilotStatus, readAutopilotRun, reconcileAutopilotReservation, reconcileAutopilotStart,
+  projectAutopilotStatus, readAutopilotIdentity, readAutopilotRun, reconcileAutopilotReservation, reconcileAutopilotStart,
   reserveAutopilotRole,
 } from './autopilot-state.mjs';
 import { fingerprintAutopilotRuntime } from './autopilot-runtime.mjs';
@@ -567,12 +567,12 @@ async function planPhase(ctx) {
       controllerPlanContext({ repoRoot: root, planText: bytes.toString('utf8') });
       return bytes;
     });
-    acceptAutopilotResult(root, paths.dir, entry.roleSequence, { path: paths.plan, digest: sha(draft) }, {
+    gate(ctx, `${describe(entry)} acceptance`, () => acceptAutopilotResult(root, paths.dir, entry.roleSequence, { path: paths.plan, digest: sha(draft) }, {
       verifyReceipt: (bytes, _path, invocation) => {
         controllerPlanContext({ repoRoot: root, planText: bytes.toString('utf8') });
         return { ...invocation, accepted: true };
       },
-    });
+    }), { reconciliation: true, scope: entry.scope });
     refresh(ctx);
     ctx.crash('result-accepted', { roleSequence: entry.roleSequence, role: 'plan' });
     entry = roleIn(ctx, scope, 'plan');
@@ -736,7 +736,7 @@ async function settleWriter(ctx, plan, task, entry) {
   }
   const receiptPath = `${state}-result.json`;
   const bytes = readWorkPath(ctx.root, receiptPath, { family: 'task-result' });
-  acceptAutopilotResult(ctx.root, ctx.paths.dir, entry.roleSequence, { path: receiptPath, digest: sha(bytes) }, {
+  gate(ctx, `${describe(entry)} acceptance`, () => acceptAutopilotResult(ctx.root, ctx.paths.dir, entry.roleSequence, { path: receiptPath, digest: sha(bytes) }, {
     verifyReceipt: (_bytes, _path, invocation) => {
       const current = inspectTaskResult(ctx.root, state);
       if (!current.accepted || current.config.runId !== ctx.state.runId || current.config.attempt !== entry.scope.attempt
@@ -744,7 +744,7 @@ async function settleWriter(ctx, plan, task, entry) {
         || current.config.execution !== execution) throw new Error('task result receipt does not bind this writer invocation');
       return { ...invocation, accepted: true };
     },
-  });
+  }), { reconciliation: true, scope: entry.scope });
   refresh(ctx);
   ctx.crash('result-accepted', { roleSequence: entry.roleSequence, role: entry.role });
   projectIndex(ctx, plan);
@@ -766,7 +766,7 @@ function guardResult(ctx, path) {
 function acceptReviewer(ctx, entry, guard, receiptPath) {
   const bytes = readWorkPath(ctx.root, receiptPath, { family: 'review-guard' });
   const task = entry.scope.task === null ? 'final' : String(entry.scope.task);
-  acceptAutopilotResult(ctx.root, ctx.paths.dir, entry.roleSequence, { path: receiptPath, digest: sha(bytes) }, {
+  gate(ctx, `${describe(entry)} acceptance`, () => acceptAutopilotResult(ctx.root, ctx.paths.dir, entry.roleSequence, { path: receiptPath, digest: sha(bytes) }, {
     verifyReceipt: (stored, _path, invocation) => {
       const result = inspectReview(ctx.root, guard);
       const { config } = JSON.parse(stored.toString('utf8'));
@@ -777,7 +777,7 @@ function acceptReviewer(ctx, entry, guard, receiptPath) {
       }
       return { ...invocation, accepted: true };
     },
-  });
+  }), { reconciliation: true, scope: entry.scope });
   refresh(ctx);
   ctx.crash('result-accepted', { roleSequence: entry.roleSequence, role: entry.role });
 }
@@ -871,7 +871,9 @@ async function reviewTask(ctx, plan, task, writer, iteration) {
     });
   }
   const verdict = await settleReview(ctx, reviewer, correctionManifest);
-  if (verdict === 'APPROVED') bindReference(ctx, task.task, guard);
+  if (verdict === 'APPROVED') {
+    gate(ctx, `${describe(reviewer)} acceptance`, () => bindReference(ctx, task.task, guard), { reconciliation: true, scope });
+  }
   return verdict;
 }
 
@@ -1147,9 +1149,9 @@ async function reviewPhase(ctx) {
         testCommands: branchContract(plan).testCommands });
       return bytes;
     }, { reconciliation: true });
-    acceptAutopilotResult(root, paths.dir, entry.roleSequence, { path: paths.reviewReport, digest: sha(draft) }, {
+    gate(ctx, `${describe(entry)} acceptance`, () => acceptAutopilotResult(root, paths.dir, entry.roleSequence, { path: paths.reviewReport, digest: sha(draft) }, {
       verifyReceipt: (_bytes, _path, invocation) => ({ ...invocation, accepted: true }),
-    });
+    }), { reconciliation: true, scope: entry.scope });
     refresh(ctx);
     ctx.crash('result-accepted', { roleSequence: entry.roleSequence, role: 'review' });
     entry = roleIn(ctx, scope, 'review');
@@ -1246,21 +1248,29 @@ function selectFreshRecovery(ctx) {
   useRecovery(ctx, present);
 }
 
-// A resumed run keeps the kind bound in its immutable identity. The input file
-// never selects it: a recovery run whose input is missing or changed fails
-// closed, and a stray input beside any other run is refused, both without any
-// journal effect. Imports in a run not started from an input are reconciliation.
-function selectResumedRecovery(ctx) {
-  const binding = ctx.run.recovery ?? null;
+// A resumed run keeps the kind bound in its immutable identity, read before
+// any start reconciliation. The input file never selects it: a recovery run
+// whose input is missing or changed fails closed, and a stray input beside any
+// other run is refused, both without any journal effect.
+function selectResumedRecovery(ctx, identity) {
+  const binding = identity.recovery ?? null;
   const present = optionalWork(ctx.root, ctx.paths.recoveryInput, 'recovery-input');
   if (binding === null) {
     if (present !== null) throw new ControllerRefusal(`a recovery input beside a run that did not start from it is refused: ${ctx.paths.recoveryInput}`);
-    if (ctx.state.imports.length > 0) halt(ctx, 'recovery imports exist in a run that was not started from a recovery input', { reconciliation: true });
     return;
   }
   if (present === null) throw new ControllerRefusal(`this recovery run's input is missing: ${ctx.paths.recoveryInput}`);
   if (sha(present) !== binding.sha256) throw new ControllerRefusal(`this recovery run's input changed since the run was created: ${ctx.paths.recoveryInput}`);
   useRecovery(ctx, present);
+}
+
+// The run's branch must be the contract branch and the checkout: a pure check
+// on the immutable identity (or, for a fresh run, the contract it will record).
+function assertRunBranch(ctx, branch) {
+  const checkout = ctx.git.branch(ctx.root);
+  if (branch !== ctx.contract.branch || checkout !== branch) {
+    throw new ControllerRefusal(`controller run belongs to branch "${branch}"; refusing to drive it from "${checkout}"`);
+  }
 }
 
 // Drives (or resumes) one controller-protocol-2 run under the caller's lease.
@@ -1279,14 +1289,19 @@ export async function runController(options) {
       ctx.recoveryStart = refusing('recovery input', () => verifyRecoveryStart(ctx));
       if (ctx.recoveryStart.recoveryInput.sha256 !== ctx.recoveryDigest) throw new ControllerRefusal('the recovery input changed while the run was starting');
     } else if (fresh) planInputs(ctx);
+    // Pure checks precede start reconciliation (a repaired RUN_STARTED or an
+    // adopted orphan reservation), so their refusals journal nothing.
+    const identity = fresh ? null : readAutopilotIdentity(ctx.root, ctx.paths.dir);
+    assertRunBranch(ctx, fresh ? ctx.contract.branch : identity.branch);
+    if (!fresh) selectResumedRecovery(ctx, identity);
     startOrResume(ctx);
     projectAutopilotStatus(ctx.root, ctx.paths.dir);
     if (ctx.state.status === 'HALTED') return { code: 1, reason: `controller run halted: ${ctx.state.reason}`, halted: true };
     if (ctx.state.status === 'COMPLETED') return { code: 0, reason: 'controller run already completed', halted: false };
-    if (ctx.run.branch !== ctx.contract.branch || ctx.git.branch(ctx.root) !== ctx.run.branch) {
-      throw new ControllerRefusal(`controller run belongs to branch "${ctx.run.branch}"; refusing to drive it from "${ctx.git.branch(ctx.root)}"`);
+    // Imports in a run not started from an input are reconciliation.
+    if (!ctx.recovery && ctx.state.imports.length > 0) {
+      halt(ctx, 'recovery imports exist in a run that was not started from a recovery input', { reconciliation: true });
     }
-    if (!fresh) selectResumedRecovery(ctx);
     if (ctx.recovery) registerRecovery(ctx);
     else await planPhase(ctx);
     await implementPhase(ctx);

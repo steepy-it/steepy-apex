@@ -902,3 +902,87 @@ for (const [label, stray] of [['malformed', '{}\n'], ['valid-looking', `${JSON.s
     assert.equal(journal(repo).status, 'COMPLETED');
   });
 }
+
+// A refusal from a post-effect acceptance is a recorded terminal halt, never a
+// raw error: the review was checked, then its evidence drifted before acceptance.
+const lastEvents = (repo, count) => repo.read(`${DIR}/autopilot-events.jsonl`).trim().split('\n').slice(-count).map((line) => JSON.parse(line));
+for (const [role, phase] of [['task-reviewer', 'review'], ['final-review', 'final-review']]) {
+  test(`a ${role} acceptance refused after its checked review halts terminally and stays halted`, async (t) => {
+    const repo = repository(t);
+    let fired = 0;
+    const drift = (at, detail) => {
+      if (at === 'review-checked' && detail.role === role && fired++ === 0) repo.put('src/value-2.mjs', 'export const value = 9;\n');
+    };
+    const { runner, calls } = scriptedRunner(repo);
+    const result = await control(repo, runner, { crash: drift });
+    assert.equal(fired, 1);
+    assert.deepEqual([result.code, result.halted], [1, true]);
+    assert.match(result.reason, new RegExp(`^role \\d+ ${role}(?: Task 1)? iteration 1 acceptance: reviewer receipt does not bind an accepted verdict for this invocation$`));
+    const [reconciliation, halted] = lastEvents(repo, 2);
+    assert.deepEqual([reconciliation.event, reconciliation.scope.phase, halted.event, halted.reason], ['RECONCILIATION_REQUIRED', phase, 'RUN_HALTED', result.reason]);
+    assert.match(repo.read(`${DIR}/autopilot-status.md`), /Status: HALTED/);
+    const journalBytes = repo.read(`${DIR}/autopilot-events.jsonl`);
+    const dispatched = calls.length;
+    const again = await control(repo, runner);
+    assert.deepEqual([again.code, again.halted, again.reason], [1, true, `controller run halted: ${result.reason}`]);
+    assert.equal(calls.length, dispatched, 'a halted run never dispatches again');
+    assert.equal(repo.read(`${DIR}/autopilot-events.jsonl`), journalBytes);
+  });
+}
+
+test('a review acceptance refused after its evidence gate halts terminally', async (t) => {
+  const repo = repository(t);
+  const { runner, calls } = scriptedRunner(repo);
+  const reviewEvidenceGate = ({ root, reportPath }) => writeFileSync(join(root, reportPath), `${readFileSync(join(root, reportPath), 'utf8')}Edited after the gate read it.\n`);
+  const result = await control(repo, runner, { reviewEvidenceGate });
+  assert.deepEqual([result.code, result.halted], [1, true]);
+  assert.match(result.reason, /^role \d+ review iteration 1 acceptance: autopilot state: artifact digest mismatch: \.apex\/work\/tasks\/topic\/review-report\.md$/);
+  assert.deepEqual(lastEvents(repo, 2).map(({ event }) => event), ['RECONCILIATION_REQUIRED', 'RUN_HALTED']);
+  const dispatched = calls.length;
+  const again = await control(repo, runner, { reviewEvidenceGate });
+  assert.deepEqual([again.code, again.halted, again.reason], [1, true, `controller run halted: ${result.reason}`]);
+  assert.equal(calls.length, dispatched);
+});
+
+test('a task review reference refused after the review was accepted halts terminally', async (t) => {
+  const repo = repository(t);
+  const index = `${DIR}/task-result-index.md`;
+  let fired = 0;
+  const stale = (at, detail) => {
+    if (at === 'result-accepted' && detail.role === 'task-reviewer' && fired++ === 0) {
+      repo.put(index, `${repo.read(index)}Reviewer gate Task 1: ${DIR}/task-1-review-guard-attempt-1-iteration-9\n`);
+    }
+  };
+  const { runner, calls } = scriptedRunner(repo);
+  const result = await control(repo, runner, { crash: stale });
+  assert.deepEqual([result.code, result.halted], [1, true]);
+  assert.match(result.reason, /^role 3 task-reviewer Task 1 iteration 1 acceptance: review reference must advance to a newer iteration$/);
+  const [reconciliation, halted] = lastEvents(repo, 2);
+  assert.deepEqual([reconciliation.event, reconciliation.scope.phase, halted.event], ['RECONCILIATION_REQUIRED', 'review', 'RUN_HALTED']);
+  const dispatched = calls.length;
+  const again = await control(repo, runner);
+  assert.deepEqual([again.code, again.halted, again.reason], [1, true, `controller run halted: ${result.reason}`]);
+  assert.equal(calls.length, dispatched);
+});
+
+// The pure branch and recovery-binding checks read only the immutable run
+// identity, so their refusals precede any start reconciliation.
+for (const [label, disturb, reason] of [
+  ['a stray recovery input', (repo) => repo.put(`${DIR}/recovery-input.json`, '{}\n'), /^a recovery input beside a run that did not start from it is refused/],
+  ['a wrong checkout branch', (repo) => repo.git('checkout', '-q', '-b', 'elsewhere'),
+    /^controller run belongs to branch "gear3-topic"; refusing to drive it from "elsewhere"$/],
+]) {
+  test(`${label} beside an orphan reservation is refused before start reconciliation journals anything`, async (t) => {
+    const repo = repository(t);
+    await assert.rejects(control(repo, scriptedRunner(repo).runner, { crash: crashAt('role-reserved', { role: 'implementer' }) }), /simulated crash/);
+    assert.equal(dropLastEvent(repo), 'ROLE_RESERVED');
+    disturb(repo);
+    const events = repo.read(`${DIR}/autopilot-events.jsonl`);
+    const resumed = scriptedRunner(repo);
+    const refused = await control(repo, resumed.runner);
+    assert.deepEqual([refused.code, refused.halted], [1, false]);
+    assert.match(refused.reason, reason);
+    assert.equal(repo.read(`${DIR}/autopilot-events.jsonl`), events, 'the orphan reservation is not adopted');
+    assert.deepEqual(resumed.calls, []);
+  });
+}

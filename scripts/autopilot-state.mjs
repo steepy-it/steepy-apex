@@ -396,6 +396,10 @@ function readRun(root, dir, { engineRoot, allowOrphanReservation = false } = {})
 
 export function readAutopilotRun(root, dir, { engineRoot } = {}) { return readRun(root, dir, { engineRoot }); }
 
+// The validated immutable run identity alone: no journal read, replay, or
+// reconciliation, so a caller can check it before any start effect.
+export function readAutopilotIdentity(root, dir) { return readIdentity(root, dir); }
+
 export function resumeAutopilotRun(root, dir, engineRoot) {
   if (typeof engineRoot !== 'string' || engineRoot.length === 0) fail('selected engine root is required for resume');
   return readRun(root, dir, { engineRoot });
