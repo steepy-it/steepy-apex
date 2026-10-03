@@ -2813,4 +2813,22 @@ test('implement prose scopes the retry path and the v2 reviewer grammar to legac
   assert.match(protocol, /A writer's or reviewer's NEEDS_CONTEXT or BLOCKED is also a terminal `RUN_HALTED`; protocol 2 has no retry execution/);
   assert.match(flatSkill('implement/reviewer-recovery.md'),
     /In a legacy controller protocol 1 run, for `manifest\.contract\.taskResultProtocol: 2`, the semantic contract takes precedence/);
+  const implementer = flatSkill('implement/implementer-prompt.md');
+  assert.match(implementer, /In a legacy controller protocol 1 run with task-result protocol 2, a later NEEDS_CONTEXT or BLOCKED response retains earlier discovery in its signals and report; successful completion after retry still requires DONE_WITH_CONCERNS\. Under controller protocol 2 there is no retry: a NEEDS_CONTEXT or BLOCKED response is a terminal `RUN_HALTED`\./);
+  assert.doesNotMatch(implementer, /Under protocol 2, a later NEEDS_CONTEXT or BLOCKED/, 'the retry sentence is never unscoped');
+});
+
+test('the glossary scopes the usage ledger and the status entries to their protocols', () => {
+  const glossary = readFileSync(join(root, '.apex', 'glossary.md'), 'utf8').replace(/\s+/g, ' ');
+  const entry = (term) => new RegExp(`- \\*\\*${term}\\*\\* — (.*?)(?= - \\*\\*|$)`).exec(glossary)?.[1] ?? '';
+  const ledger = entry('Resource-usage ledger');
+  assert.match(ledger, /Only legacy controller protocol 1 runs write it; controller protocol 2 writes none/);
+  assert.match(ledger, /known limitation[^.]*\[Architecture\]\(\.\.\/docs\/architecture\.md\)/);
+  const implementer = entry('Implementer status');
+  assert.match(implementer, /In manual drive and legacy controller protocol 1, the orchestrator dispatches on it\. Under controller protocol 2 the controller dispatches, and NEEDS_CONTEXT or BLOCKED is a terminal `RUN_HALTED`\./);
+  const reviewer = entry('Reviewer status');
+  assert.match(reviewer, /review report's `Status:` line \(`Approved` or `Issues Found`\)/);
+  assert.match(reviewer, /reviewer response status \(`APPROVED \| ISSUES_FOUND \| BLOCKED \| NEEDS_CONTEXT`\)/);
+  assert.match(reviewer, /The response status drives the fix loop: `ISSUES_FOUND` sends the work to a fix, and `APPROVED` ends the loop\./);
+  assert.doesNotMatch(reviewer, /`Approved \| Issues Found` enum/, 'the report line is not the response enum');
 });

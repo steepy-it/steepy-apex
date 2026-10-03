@@ -207,6 +207,8 @@
   artifact only for a decision or action; no report body or transcript is copied into controller
   context.
 - **Resource-usage ledger** — an observational JSONL ledger scoped to one run, phase, and attempt.
+  Only legacy controller protocol 1 runs write it; controller protocol 2 writes none, a known
+  limitation (see [Architecture](../docs/architecture.md) → "Gear-3 controller protocol 2").
   It records direct provider usage evidence with source provenance and one canonical measurement
   per event, so summaries cannot double-count it. It informs efficiency analysis only; it never
   imposes a healthy-work quota or stop condition.
@@ -256,9 +258,14 @@
   (`.apex/work/tasks/<plan-basename>/task-N-brief.md`) handed verbatim to the implementer
   subagent.
 - **Implementer status** — the `DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT` enum
-  an implementer returns; the orchestrator dispatches on it.
-- **Reviewer status** — the `Approved | Issues Found` enum a code reviewer returns;
-  `Issues Found` drives the fix loop.
+  an implementer returns. In manual drive and legacy controller protocol 1, the orchestrator
+  dispatches on it. Under controller protocol 2 the controller dispatches, and NEEDS_CONTEXT or
+  BLOCKED is a terminal `RUN_HALTED`.
+- **Reviewer status** — two values a code reviewer produces. The review report's `Status:` line
+  (`Approved` or `Issues Found`) is the human-readable verdict in the review file. The reviewer
+  response status (`APPROVED | ISSUES_FOUND | BLOCKED | NEEDS_CONTEXT`) is what the parent acts on.
+  The response status drives the fix loop: `ISSUES_FOUND` sends the work to a fix, and `APPROVED`
+  ends the loop.
 - **Human gate** — mandatory user approval of a written prose artifact (spec/plan) before
   the chain proceeds in manual drive; in gear-3 autopilot the plan gate collapses to a
   non-blocking checkpoint (the contract carries the pre-authorization); see

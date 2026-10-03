@@ -108,8 +108,10 @@ Subagent (<surface>-agent):
     repository evidence that closed it. Preserve this occurrence through fix reports and final
     envelopes, even after the code is clean. An explicitly planned discovery deliverable is not
     unplanned discovery; ordinary implementation/source inspection alone does not trigger it.
-    Under protocol 2, a later NEEDS_CONTEXT or BLOCKED response retains earlier discovery in its
-    signals and report; successful completion after retry still requires DONE_WITH_CONCERNS.
+    In a legacy controller protocol 1 run with task-result protocol 2, a later NEEDS_CONTEXT or
+    BLOCKED response retains earlier discovery in its signals and report; successful completion
+    after retry still requires DONE_WITH_CONCERNS. Under controller protocol 2 there is no retry: a
+    NEEDS_CONTEXT or BLOCKED response is a terminal `RUN_HALTED`.
     These two routes never share a trigger: ambiguity you cannot resolve by reading the repository
     stops the task before it starts (`status: NEEDS_CONTEXT`, per "Before you begin"), while a gap
     you did close by discovering the answer in the repository finishes the task and is reported as
