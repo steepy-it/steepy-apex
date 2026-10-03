@@ -594,3 +594,39 @@ describe('bounded multi-destination writing', () => {
     assert.deepEqual(readable.chunks, ['read-1']);
   });
 });
+
+// Synthetic transcripts: they lock the capture contract a controller role's
+// response depends on, not any provider's native stream.
+describe('controller role capture (synthetic transcripts, not native evidence)', () => {
+  const payload = 'status: DONE\nartifact: .apex/work/tasks/topic/task-1-report.md\nsignals: tdd:red-green';
+  const transcripts = {
+    claude: [{ type: 'system', subtype: 'init', session_id: 's-1', model: 'synthetic-model' },
+      { type: 'result', subtype: 'success', session_id: 's-1', result: payload }],
+    codex: [{ type: 'thread.started', thread_id: 't-1' },
+      { type: 'item.completed', thread_id: 't-1', item: { type: 'agent_message', text: payload } },
+      { type: 'turn.completed', thread_id: 't-1' }],
+    opencode: [{ type: 'step_start', sessionID: 'o-1', part: { type: 'step-start', sessionID: 'o-1' } },
+      { type: 'text', sessionID: 'o-1', part: { type: 'text', sessionID: 'o-1', text: payload } },
+      { type: 'step_finish', sessionID: 'o-1', part: { type: 'step-finish', reason: 'stop', sessionID: 'o-1' } }],
+  };
+
+  for (const [harness, transcript] of Object.entries(transcripts)) {
+    it(`keeps a closed ${harness} role payload byte-exact in raw capture and one line in readable capture`, async () => {
+      const { decodeHeadlessEvent } = await import('../adapters/headless-events.mjs');
+      const readable = [];
+      for (const event of transcript) {
+        const line = JSON.stringify(event);
+        const result = processEventLine({ line, sourceStream: 'stdout', context: { ...bridgeContext(), harness }, decoder: decodeHeadlessEvent });
+        assert.equal(result.blockingError, null);
+        const raw = JSON.parse(result.raw);
+        assert.deepEqual([raw.line, raw.sourceStream], [line, 'stdout'], 'raw capture is the exact source line');
+        if (result.readable !== null) readable.push(result.readable);
+      }
+      const rendered = readable.filter((line) => line.includes('status: DONE'));
+      assert.equal(rendered.length, 1, 'the payload is rendered once');
+      assert.doesNotMatch(rendered[0], /\n/, 'a multi-line payload cannot forge extra readable lines');
+      assert.match(rendered[0], /status: DONE artifact: \.apex\/work\/tasks\/topic\/task-1-report\.md signals: tdd:red-green/);
+      assert.ok(readable.every((line) => !line.includes('synthetic-model')), 'a stream-reported model is not rendered as an observation');
+    });
+  }
+});

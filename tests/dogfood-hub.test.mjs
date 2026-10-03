@@ -1155,3 +1155,66 @@ test('hub rules lock the planned pauses, exact output file, terse return, and ex
     assert.match(flat, /research and experiments `standard`[^.]*bootstrap parts `most-capable`/i, `${name} must name the tiers`);
   }
 });
+
+test('docs/architecture.md rows for autopilot-controller and autopilot-recovery match their public CLIs', () => {
+  const architecture = readFileSync(join(repoRoot, 'docs', 'architecture.md'), 'utf8');
+  const row = (script) => architecture.split('\n').find((line) => line.startsWith(`| \`${script}.mjs\` |`)) ?? '';
+  for (const script of ['autopilot-controller', 'autopilot-recovery']) {
+    assert.ok(existsSync(join(repoRoot, 'scripts', `${script}.mjs`)), `scripts/${script}.mjs must exist`);
+    assert.notEqual(row(script), '', `docs/architecture.md must have a ${script}.mjs row`);
+  }
+  const controller = row('autopilot-controller');
+  assert.match(controller, /selected only by `--controller-protocol 2` for a fresh run/, 'the controller row must name its CLI selection');
+  assert.match(controller, /captures the response before any gate/i);
+  assert.match(controller, /resumes only from durable evidence, halting on a reservation without a captured response/i);
+  const recovery = row('autopilot-recovery');
+  assert.match(recovery, /exact `recovery-input\.json`[^|]*`inspect`\/`prepare` CLI/i, 'the recovery row must name its exact input and CLI');
+  assert.match(recovery, /never rewrites the source run; the controller performs the imports/i);
+});
+
+test('the documented headless capability matrix states exactly what the descriptors the controller dispatches declare', async () => {
+  const { HEADLESS_CAPABILITIES } = await import('../adapters/headless.mjs');
+  const workflow = readFileSync(join(repoRoot, 'docs', 'workflow.md'), 'utf8');
+  assert.match(workflow, /There is no flag-only promotion: a flag alone never promotes a capability\./,
+    'a capability is promoted only by native event evidence');
+  const lines = workflow.split('\n');
+  const head = lines.findIndex((line) => line.startsWith('| Harness and mapped command |'));
+  assert.notEqual(head, -1, 'docs/workflow.md must keep the capability matrix');
+  const columns = lines[head].split('|').slice(1, -1).map((cell) => cell.trim());
+  const keys = { 'Structured baseline': 'structuredEvents', 'Agent/subagent identity': 'agentIdentity',
+    'Native session identity': 'nativeSessionIdentity', 'Native open/resume': 'nativeOpenResume',
+    'Display name': 'nativeDisplayName', 'Parent link': 'parentLink', 'Native stop': 'nativeStop' };
+  const harnesses = { 'Claude Code': 'claude', Codex: 'codex', OpenCode: 'opencode' };
+  const rows = lines.slice(head + 2).filter((line) => line.startsWith('|')).map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()));
+  assert.deepEqual(rows.map(([name]) => harnesses[name.split(' — ')[0]]), ['claude', 'codex', 'opencode']);
+  for (const row of rows) {
+    const harness = harnesses[row[0].split(' — ')[0]];
+    for (const [column, key] of Object.entries(keys)) {
+      const documented = /^(yes|unavailable|unproven)\b/.exec(row[columns.indexOf(column)])?.[1];
+      assert.equal(documented, HEADLESS_CAPABILITIES[harness][key], `${harness} ${column}`);
+    }
+  }
+});
+
+// Synthetic controller coverage is behavioral evidence only. Once a stable doc
+// names the hermetic matrix or the opt-in native driver, it must say which it is.
+test('stable docs keep the fake-harness boundary and never present synthetic controller coverage as native evidence', () => {
+  const tests = readFileSync(join(repoRoot, '.apex', 'standards', 'tests.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(tests, /Hermetic fake-harness cases may prove parser, redaction, identity, and false-PASS rejection behavior\. They cannot prove a loaded plugin, a skill invocation, generated bootstrap use, or native specialist behavior\./);
+  const markdown = (directory) => readdirSync(join(repoRoot, directory), { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isDirectory()) return markdown(join(directory, entry.name));
+    return entry.isFile() && entry.name.endsWith('.md') ? [join(directory, entry.name)] : [];
+  });
+  const stable = ['README.md', 'RELEASE.md', ...markdown('docs'), ...markdown('skills'),
+    ...stableApexMarkdownPaths().map((path) => path.slice(repoRoot.length + 1))];
+  for (const path of stable) {
+    for (const paragraph of readFileSync(join(repoRoot, path), 'utf8').split(/\n\s*\n/).map((text) => text.replace(/\s+/g, ' '))) {
+      if (/autopilot-controller-integration|fixtures\/autopilot-controller\/fake-harness/.test(paragraph)) {
+        assert.match(paragraph, /synthetic|not native evidence/i, `${path} must not present the hermetic controller matrix as native evidence`);
+      }
+      if (/native-smoke\.mjs/.test(paragraph)) {
+        assert.match(paragraph, /opt-in/i, `${path} must describe the native smoke driver as opt-in`);
+      }
+    }
+  }
+});
