@@ -991,41 +991,64 @@ for (const [label, disturb, reason] of [
 // ---- Role response shape ---------------------------------------------------
 // Each role prompt states its exact final message. The expected text is written
 // out here, from each decoder's own grammar, so the lock compares the prompt
-// with the decoders rather than with the controller's prompt builder.
-const SHAPE_MARKER = 'Example (shape only, not your verdict):';
+// with the decoders rather than with the controller's prompt builder. Plan and
+// writer roles end with a concrete example, which their later gates backstop.
+// Reviews and the review phase judge a verdict no later gate re-derives, so
+// they end with a template whose placeholder their decoder refuses: a verbatim
+// copy halts and never approves. Corrections restate the frozen original.
 const SIGNALS_RULE = '`signals` is `none` alone or distinct machine IDs separated by a comma and a space; '
   + 'each ID starts with a letter or digit and uses only letters, digits, and `:._-`; never prose.';
 const NO_EXTRA = 'No JSON, no Markdown fence, no extra text before or after; put all prose in the assigned artifacts.';
-const REVIEWER_SHAPE = {
-  lines: 2, fields: '`status`, `signals`', statuses: '`APPROVED`, `ISSUES_FOUND`, `BLOCKED`, `NEEDS_CONTEXT`',
-  example: 'status: APPROVED\nsignals: none',
-};
+const EXAMPLE_MARKER = 'Example (shape only, not your verdict):';
+const TWO_ROWS = 'Final message: exactly 2 plain-text lines in this order, each `field: value`: `status`, `signals`.';
+const verdictMarker = (hint) => `Template: replace the placeholder with exactly one status, the verdict your own review reached (${hint}):`;
+const REVIEWER_TEMPLATE = 'status: <exactly one of APPROVED|ISSUES_FOUND|BLOCKED|NEEDS_CONTEXT>\nsignals: none';
+const REVIEW_TEMPLATE = 'status: <exactly one of READY_FOR_PR|BLOCKED|NEEDS_CONTEXT>\nsignals: none';
+const CORRECTION_TEMPLATE = 'status: <captured original status>\nsignals: <captured original signals>';
+const REVIEWER_TAIL = [
+  TWO_ROWS, '`status` is one of `APPROVED`, `ISSUES_FOUND`, `BLOCKED`, `NEEDS_CONTEXT`.', SIGNALS_RULE, NO_EXTRA,
+  verdictMarker('`ISSUES_FOUND` when you wrote issues'),
+].join(' ') + `\n${REVIEWER_TEMPLATE}`;
+const CORRECTION_TAIL = [
+  TWO_ROWS,
+  '`status` and `signals` are exactly the values of the captured original response; only restore their order or remove the one wrapper.',
+  'No JSON, no Markdown fence, no extra text before or after, and no other effect.',
+  "Template: replace each placeholder with the captured original's exact value:",
+].join(' ') + `\n${CORRECTION_TEMPLATE}`;
 const expectedShape = (role, task) => {
-  const shape = {
-    plan: { lines: 2, fields: '`status`, `signals`', statuses: '`DONE`, `BLOCKED`, `NEEDS_CONTEXT`', example: 'status: DONE\nsignals: none' },
-    review: { lines: 2, fields: '`status`, `signals`', statuses: '`READY_FOR_PR`, `BLOCKED`, `NEEDS_CONTEXT`', example: 'status: READY_FOR_PR\nsignals: none' },
-    'task-reviewer': REVIEWER_SHAPE, 'final-review': REVIEWER_SHAPE,
-    'task-review-correction': REVIEWER_SHAPE, 'final-review-correction': REVIEWER_SHAPE,
-  }[role] ?? {
-    lines: 3, fields: '`status`, `artifact`, `signals`', statuses: '`DONE`, `DONE_WITH_CONCERNS`, `BLOCKED`, `NEEDS_CONTEXT`',
-    artifact: `${DIR}/task-${task}-report.md`, example: `status: DONE\nartifact: ${DIR}/task-${task}-report.md\nsignals: none`,
-  };
-  return [
-    `Final message: exactly ${shape.lines} plain-text lines in this order, each \`field: value\`: ${shape.fields}.`,
-    `\`status\` is one of ${shape.statuses}.`,
-    ...(shape.artifact ? [`\`artifact\` is exactly \`${shape.artifact}\`.`] : []),
-    SIGNALS_RULE,
-    ...(shape.artifact ? ['`signals` carries `discovery:unplanned` exactly when the report contains that ID, never with status `DONE`, and keeps it in every later fix of the task.'] : []),
-    NO_EXTRA, SHAPE_MARKER,
-  ].join(' ') + `\n${shape.example}`;
+  switch (role) {
+    case 'plan':
+      return [TWO_ROWS, '`status` is one of `DONE`, `BLOCKED`, `NEEDS_CONTEXT`.', SIGNALS_RULE, NO_EXTRA, EXAMPLE_MARKER]
+        .join(' ') + '\nstatus: DONE\nsignals: none';
+    case 'review':
+      return [TWO_ROWS, '`status` is one of `READY_FOR_PR`, `BLOCKED`, `NEEDS_CONTEXT`.', SIGNALS_RULE, NO_EXTRA,
+        verdictMarker('`READY_FOR_PR` only when every assigned criterion and gate is verified')].join(' ') + `\n${REVIEW_TEMPLATE}`;
+    case 'task-reviewer': case 'final-review': return REVIEWER_TAIL;
+    case 'task-review-correction': case 'final-review-correction': return CORRECTION_TAIL;
+    default: return [
+      'Final message: exactly 3 plain-text lines in this order, each `field: value`: `status`, `artifact`, `signals`.',
+      '`status` is one of `DONE`, `DONE_WITH_CONCERNS`, `BLOCKED`, `NEEDS_CONTEXT`.',
+      `\`artifact\` is exactly \`${DIR}/task-${task}-report.md\`.`, SIGNALS_RULE,
+      '`signals` carries `discovery:unplanned` exactly when the report contains that ID, never with status `DONE`, and keeps it in every later fix of the task.',
+      NO_EXTRA, EXAMPLE_MARKER,
+    ].join(' ') + `\nstatus: DONE\nartifact: ${DIR}/task-${task}-report.md\nsignals: none`;
+  }
 };
-// A literal follower returns the prompt's example rows and nothing else.
-const literalExample = (prompt) => {
-  const at = prompt.indexOf(` ${SHAPE_MARKER}\n`);
-  assert.ok(at > 0, `the role prompt states no example: ${prompt}`);
-  return prompt.slice(at + SHAPE_MARKER.length + 2);
-};
-const literally = (role) => (context) => { context.defaults[role](context); return literalExample(context.request.prompt); };
+const VERDICT_ROWS = /^status: (?:APPROVED|ISSUES_FOUND|BLOCKED|NEEDS_CONTEXT|READY_FOR_PR)$/m;
+// The rows a role prompt ends with: everything after its one instruction line.
+const rowsOf = (prompt) => prompt.slice(prompt.indexOf('\n') + 1);
+// A follower fills each `<placeholder>` row and copies every other row literally.
+const fill = (rows, values) => rows.split('\n').map((line) => {
+  const [, field, value] = /^([a-z-]+): (.*)$/.exec(line);
+  return /^<[^<>]+>$/.test(value) ? `${field}: ${values[field]}` : line;
+}).join('\n');
+// Concrete examples are copied literally; templates get the verdict each role reached.
+const FOLLOW = Object.freeze({
+  'task-reviewer': { status: 'APPROVED' }, 'final-review': { status: 'APPROVED' }, review: { status: 'READY_FOR_PR' },
+  'task-review-correction': { status: 'APPROVED', signals: 'none' }, 'final-review-correction': { status: 'APPROVED', signals: 'none' },
+});
+const followed = (role, prompt) => fill(rowsOf(prompt), FOLLOW[role] ?? {});
+const following = (role) => (context) => { context.defaults[role](context); return followed(role, context.request.prompt); };
 function recordPrompts(runner) {
   const prompts = new Map();
   const prepare = runner.prepare;
@@ -1034,7 +1057,7 @@ function recordPrompts(runner) {
 }
 const payloadOf = (repo, roleSequence) => JSON.parse(repo.read(`${DIR}/role-${roleSequence}-response.json`)).payload;
 
-test('every role prompt states its exact response rows, and a literal follower is accepted by that role\'s decoder', async (t) => {
+test('every role prompt states its exact response rows, and a follower of its example or template is accepted by that role\'s decoder', async (t) => {
   const issues = (repo) => ({ task }) => {
     repo.put(`${DIR}/task-${task}-review.md`, '# Review\n\nIssues found.\n');
     repo.put(`${DIR}/task-${task}-issues.md`, '# Issues\n\n1. Value must be 2.\n');
@@ -1044,23 +1067,23 @@ test('every role prompt states its exact response rows, and a literal follower i
   const fenced = (repo) => () => { repo.put(`${DIR}/final-review.md`, '# Final review\n'); return '```text\nstatus: APPROVED\nsignals: none\n```\n'; };
   const runs = [
     {
-      // Triggers (non-literal) reach the fix and both correction roles.
+      // Unfollowed triggers reach the fix and both correction roles.
       label: 'fix and corrections', tasks: [taskSection(1), taskSection(2)],
       script: (repo) => ({
-        plan: [literally('plan')], implementer: [literally('implementer'), literally('implementer')],
-        'task-reviewer': [issues(repo), reversed(repo), literally('task-reviewer')], fix: [literally('fix')],
-        'task-review-correction': [literally('task-review-correction')], 'final-review': [fenced(repo)],
-        'final-review-correction': [literally('final-review-correction')], review: [literally('review')],
+        plan: [following('plan')], implementer: [following('implementer'), following('implementer')],
+        'task-reviewer': [issues(repo), reversed(repo), following('task-reviewer')], fix: [following('fix')],
+        'task-review-correction': [following('task-review-correction')], 'final-review': [fenced(repo)],
+        'final-review-correction': [following('final-review-correction')], review: [following('review')],
       }),
       sequence: ['plan@1', 'implementer:1@1', 'task-reviewer:1@1', 'fix:1@2', 'task-reviewer:1@2', 'task-review-correction:1@2',
         'implementer:2@1', 'task-reviewer:2@1', 'final-review@1', 'final-review-correction@1', 'review@1'],
-      literal: [1, 2, 4, 6, 7, 8, 10, 11],
+      followed: [1, 2, 4, 6, 7, 8, 10, 11],
     },
     {
-      label: 'every role literal', tasks: [taskSection(1)],
-      script: () => Object.fromEntries(['plan', 'implementer', 'task-reviewer', 'final-review', 'review'].map((role) => [role, [literally(role)]])),
+      label: 'every role followed', tasks: [taskSection(1)],
+      script: () => Object.fromEntries(['plan', 'implementer', 'task-reviewer', 'final-review', 'review'].map((role) => [role, [following(role)]])),
       sequence: ['plan@1', 'implementer:1@1', 'task-reviewer:1@1', 'final-review@1', 'review@1'],
-      literal: [1, 2, 3, 4, 5],
+      followed: [1, 2, 3, 4, 5],
     },
   ];
   const accepted = new Set();
@@ -1073,17 +1096,60 @@ test('every role prompt states its exact response rows, and a literal follower i
     assert.deepEqual(sequence(calls), run.sequence, run.label);
     for (const entry of journal(repo).roles) {
       const prompt = prompts.get(entry.roleSequence);
-      assert.equal(prompt.slice(prompt.indexOf('Final message:')), expectedShape(entry.role, entry.scope.task),
-        `${run.label}: role ${entry.roleSequence} ${entry.role} prompt states its exact response rows`);
-      if (!run.literal.includes(entry.roleSequence)) continue;
-      assert.equal(payloadOf(repo, entry.roleSequence), literalExample(prompt), `${run.label}: role ${entry.roleSequence} returned its example`);
-      assert.equal(entry.accepted, true, `${run.label}: literal role ${entry.roleSequence} ${entry.role} is accepted by its decoder`);
+      const label = `${run.label}: role ${entry.roleSequence} ${entry.role}`;
+      assert.equal(prompt.slice(prompt.indexOf('Final message:')), expectedShape(entry.role, entry.scope.task), `${label} prompt states its exact response rows`);
+      if (!['plan', 'implementer', 'fix'].includes(entry.role)) assert.doesNotMatch(prompt, VERDICT_ROWS, `${label} prompt carries no concrete verdict row`);
+      if (!run.followed.includes(entry.roleSequence)) continue;
+      assert.equal(payloadOf(repo, entry.roleSequence), followed(entry.role, prompt), `${label} returned its followed rows`);
+      assert.equal(entry.accepted, true, `${label} follower is accepted by its decoder`);
       accepted.add(entry.role);
     }
   }
   assert.deepEqual([...accepted].sort(), ['final-review', 'final-review-correction', 'fix', 'implementer', 'plan', 'review',
     'task-review-correction', 'task-reviewer']);
 });
+
+test('a reviewer, review, or correction template decodes only with its placeholders filled, never verbatim', () => {
+  for (const status of ['APPROVED', 'ISSUES_FOUND', 'BLOCKED', 'NEEDS_CONTEXT']) {
+    assert.deepEqual(decodeReviewerResponse(fill(REVIEWER_TEMPLATE, { status }), 'text', { protocol: 3 }), { status, signals: 'none' });
+  }
+  assert.throws(() => decodeReviewerResponse(REVIEWER_TEMPLATE, 'text', { protocol: 3 }), /^Error: invalid status$/);
+  for (const status of ['READY_FOR_PR', 'BLOCKED', 'NEEDS_CONTEXT']) {
+    assert.deepEqual(decodePhaseResponse(fill(REVIEW_TEMPLATE, { status }), 'review'), { status, signals: 'none' });
+  }
+  assert.throws(() => decodePhaseResponse(REVIEW_TEMPLATE, 'review'), /^Error: review response has invalid status$/);
+  assert.deepEqual(decodeReviewerResponse(fill(CORRECTION_TEMPLATE, { status: 'ISSUES_FOUND', signals: 'scope:drift' }), 'text', { protocol: 3 }),
+    { status: 'ISSUES_FOUND', signals: 'scope:drift' });
+  assert.throws(() => decodeReviewerResponse(CORRECTION_TEMPLATE, 'text', { protocol: 3 }), /^Error: invalid status$/);
+});
+
+// A child that copies its template unfilled never earns a verdict: the run halts.
+for (const [role, step, reason] of [
+  ['task-reviewer', (repo) => ({ task, request }) => {
+    repo.put(`${DIR}/task-${task}-review.md`, '# Review\n\nIssues found.\n');
+    repo.put(`${DIR}/task-${task}-issues.md`, '# Issues\n\n1. Value must be 2.\n');
+    return rowsOf(request.prompt);
+  }, 'role 3 task-reviewer Task 1 iteration 1 blocked by the reviewer gate: reviewer response is not an eligible format correction'],
+  ['final-review', (repo) => ({ request }) => { repo.put(`${DIR}/final-review.md`, '# Final review\n'); return rowsOf(request.prompt); },
+    'role 4 final-review iteration 1 blocked by the reviewer gate: reviewer response is not an eligible format correction'],
+  ['review', () => (context) => { context.defaults.review(context); return rowsOf(context.request.prompt); },
+    'role 5 review iteration 1 response rejected: review response has invalid status'],
+]) {
+  test(`a ${role} that returns its template verbatim halts terminally and never approves`, async (t) => {
+    const repo = repository(t);
+    const { runner, calls } = scriptedRunner(repo, { script: { [role]: [step(repo)] } });
+    const result = await control(repo, runner);
+    assert.deepEqual([result.code, result.halted, result.reason], [1, true, reason]);
+    assert.equal(calls.at(-1).role, role, 'nothing is dispatched after the refused template');
+    const state = journal(repo);
+    assert.equal(state.status, 'HALTED');
+    assert.deepEqual([state.roles.at(-1).role, state.roles.at(-1).accepted], [role, false]);
+    assert.match(payloadOf(repo, state.roles.at(-1).roleSequence), /^status: <exactly one of [A-Z_|]+>\nsignals: none$/);
+    if (role === 'task-reviewer') {
+      assert.doesNotMatch(repo.read(`${DIR}/task-result-index.md`), /^Reviewer gate Task 1:/m, 'no task approval reference is bound');
+    }
+  });
+}
 
 // The first native Codex run returned this JSON object with prose signals for
 // the plan role. The decoders stay strict: the role prompt fixes the child.

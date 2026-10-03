@@ -10,8 +10,8 @@ no-task-tool or manual no-manifest degradation in the ledger.
 Protocol selection: when `manifest.contract.reviewerResponseProtocol` is `3`, first apply the
 packaged `controller-role-prompt.md` and this role prompt. The controller assigns the review and
 issues artifact paths; write the review, and write issues for `ISSUES_FOUND`. Return exactly
-`status`, `signals` in that order, in the controller-selected text or JSON format. The controller
-owns the verdict gate, receipts, and lifecycle; report prose cannot supply a verdict. A response
+`status`, `signals` in that order, in the controller-selected text or JSON format (always text
+under controller protocol 2, per `manifest.contract.responseFormat`). The controller owns the verdict gate, receipts, and lifecycle; report prose cannot supply a verdict. A response
 containing `artifact` or `changed-paths` is invalid. Only one reserved response-only correction
 may repair reversed text-line order or one Markdown block around the whole selected payload;
 values and types remain frozen. This v3 branch takes precedence over v2 and legacy examples.

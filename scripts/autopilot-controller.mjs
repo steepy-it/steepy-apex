@@ -189,7 +189,16 @@ export function decodePhaseResponse(payload, phase) {
   return value;
 }
 
-const REVIEWER_ROLES = Object.freeze(['task-reviewer', 'final-review', 'task-review-correction', 'final-review-correction']);
+const REVIEWER_ROLES = Object.freeze(['task-reviewer', 'final-review']);
+const CORRECTION_ROLES = Object.freeze(['task-review-correction', 'final-review-correction']);
+// Roles whose status is a verdict no later gate re-derives get a template, not
+// an example: its status placeholder is outside the decoder's domain, so a
+// verbatim copy halts the run and can never approve.
+const VERDICT_HINTS = Object.freeze({
+  'task-reviewer': '`ISSUES_FOUND` when you wrote issues',
+  'final-review': '`ISSUES_FOUND` when you wrote issues',
+  review: '`READY_FOR_PR` only when every assigned criterion and gate is verified',
+});
 const SHAPE_SIGNALS = '`signals` is `none` alone or distinct machine IDs separated by a comma and a space; '
   + 'each ID starts with a letter or digit and uses only letters, digits, and `:._-`; never prose.';
 const SHAPE_DISCOVERY = '`signals` carries `discovery:unplanned` exactly when the report contains that ID, '
@@ -199,8 +208,11 @@ const SHAPE_DISCOVERY = '`signals` carries `discovery:unplanned` exactly when th
 // uses here. Fields, their order, and the status domain come from the decoder
 // that gates the role: the phase schema (plan, review), the writer protocol
 // (implementer, fix), or reviewer response protocol 3 (reviews, corrections).
-// The signals rule is the strictest of those decoders, so the literal example
-// at the end is accepted by the role's own decoder.
+// The signals rule is the strictest of those decoders. Plan and writer roles
+// end with a concrete example their later gates backstop; reviews and the
+// review phase end with a refused-verbatim template; corrections restate the
+// captured original's frozen values. Filling the rows as told is accepted by
+// the role's own decoder.
 export function roleResponseShape(role, { artifact = null } = {}) {
   let fields;
   let statuses;
@@ -210,22 +222,38 @@ export function roleResponseShape(role, { artifact = null } = {}) {
   } else if (role === 'implementer' || role === 'fix') {
     if (typeof artifact !== 'string' || artifact.length === 0) throw new Error(`${role} response shape needs its assigned report path`);
     [fields, statuses] = [WRITER_RESPONSE_FIELDS, WRITER_STATUSES];
-  } else if (REVIEWER_ROLES.includes(role)) {
+  } else if (REVIEWER_ROLES.includes(role) || CORRECTION_ROLES.includes(role)) {
     const schema = reviewerResponseSchema(CONTROLLER_CONTRACT.reviewerResponseProtocol);
     [fields, statuses] = [schema.required, schema.properties.status.enum];
   } else throw new Error(`unknown controller role ${role}`);
+  const head = `Final message: exactly ${fields.length} plain-text lines in this order, each \`field: value\`: ${fields.map((field) => `\`${field}\``).join(', ')}.`;
+  const rowsOf = (values) => fields.map((field) => `${field}: ${values[field]}`).join('\n');
+  if (CORRECTION_ROLES.includes(role)) {
+    return Object.freeze({
+      instruction: [
+        head,
+        `${fields.map((field) => `\`${field}\``).join(' and ')} are exactly the values of the captured original response; only restore their order or remove the one wrapper.`,
+        'No JSON, no Markdown fence, no extra text before or after, and no other effect.',
+        'Template: replace each placeholder with the captured original\'s exact value:',
+      ].join(' '),
+      rows: rowsOf(Object.fromEntries(fields.map((field) => [field, `<captured original ${field}>`]))),
+    });
+  }
   const writer = fields.includes('artifact');
-  const example = fields.map((field) => `${field}: ${{ status: statuses[0], artifact, signals: 'none' }[field]}`).join('\n');
-  const instruction = [
-    `Final message: exactly ${fields.length} plain-text lines in this order, each \`field: value\`: ${fields.map((field) => `\`${field}\``).join(', ')}.`,
-    `\`status\` is one of ${statuses.map((status) => `\`${status}\``).join(', ')}.`,
-    ...(writer ? [`\`artifact\` is exactly \`${artifact}\`.`] : []),
-    SHAPE_SIGNALS,
-    ...(writer ? [SHAPE_DISCOVERY] : []),
-    'No JSON, no Markdown fence, no extra text before or after; put all prose in the assigned artifacts.',
-    'Example (shape only, not your verdict):',
-  ].join(' ');
-  return Object.freeze({ instruction, example });
+  const hint = VERDICT_HINTS[role];
+  return Object.freeze({
+    instruction: [
+      head,
+      `\`status\` is one of ${statuses.map((status) => `\`${status}\``).join(', ')}.`,
+      ...(writer ? [`\`artifact\` is exactly \`${artifact}\`.`] : []),
+      SHAPE_SIGNALS,
+      ...(writer ? [SHAPE_DISCOVERY] : []),
+      'No JSON, no Markdown fence, no extra text before or after; put all prose in the assigned artifacts.',
+      hint ? `Template: replace the placeholder with exactly one status, the verdict your own review reached (${hint}):`
+        : 'Example (shape only, not your verdict):',
+    ].join(' '),
+    rows: rowsOf({ status: hint ? `<exactly one of ${statuses.join('|')}>` : statuses[0], artifact, signals: 'none' }),
+  });
 }
 
 export function createGitService(run = spawnSync) {
@@ -390,7 +418,7 @@ function contractFor(ctx, roleSequence) {
   };
 }
 
-// One instruction line, then the role's literal example rows, unindented, last.
+// One instruction line, then the role's example or template rows, unindented, last.
 function rolePrompt(ctx, spec, roleSequence, manifestPath) {
   const { role, scope } = spec;
   const prompts = ROLE_PROMPTS[role].map((path) => join(ctx.engineRoot, path));
@@ -402,7 +430,7 @@ function rolePrompt(ctx, spec, roleSequence, manifestPath) {
     `Context manifest: ${manifestPath} (authoritative input inventory). Read required inputs; use onDemand only for a concrete missing fact.`,
     'Unattended autopilot: never ask questions or wait for a human; never push, bump versions, open PRs, commit, or write controller state.',
     shape.instruction,
-  ].join(' ')}\n${shape.example}`;
+  ].join(' ')}\n${shape.rows}`;
 }
 
 function digestOf(ctx, path, family) {

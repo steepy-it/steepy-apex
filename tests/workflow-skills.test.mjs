@@ -2848,4 +2848,13 @@ test('controller protocol 2 prose states the plain-text response rows, never JSO
   }
   const shared = flatSkill('implement/controller-role-prompt.md');
   assert.match(shared, /Return only the selected closed response payload, as plain-text `field: value` rows exactly as the role prompt lists them: never JSON, a Markdown fence, or prose\. Keep all findings in the assigned artifacts\./);
+  // The text-or-JSON choice is a legacy selection; controller protocol 2 pins text.
+  for (const [file, site] of [
+    ['task-reviewer-prompt.md', 'in the controller-selected text or JSON format (always text under controller protocol 2, per `manifest.contract.responseFormat`).'],
+    ['final-review-prompt.md', 'in the controller-selected text or JSON format (always text under controller protocol 2, per `manifest.contract.responseFormat`).'],
+    ['implementer-prompt.md', '(or the same JSON keys when the controller selected JSON; always text under controller protocol 2, per `manifest.contract.responseFormat`).'],
+    ['task-results-protocol.md', '(or the same JSON keys when `--format json` was selected before dispatch; always text under controller protocol 2, per `manifest.contract.responseFormat`):'],
+  ]) {
+    assert.ok(flatSkill(`implement/${file}`).includes(site), file);
+  }
 });

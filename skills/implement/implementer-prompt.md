@@ -19,8 +19,8 @@ controller supplies exact packaged prompts and paths; do not invoke an installed
 
 Protocol selection: `manifest.contract.taskResultProtocol` equal to `2` takes precedence over
 all four-field examples below. In v2 return only `status`, `artifact`, `signals`, in that text order
-(or the same JSON keys when the controller selected JSON). Preserve the role's status and artifact
-rules. A legacy extra `changed-paths` is raw-only telemetry ignored by the gate, never authoritative.
+(or the same JSON keys when the controller selected JSON; always text under controller protocol 2,
+per `manifest.contract.responseFormat`). Preserve the role's status and artifact rules. A legacy extra `changed-paths` is raw-only telemetry ignored by the gate, never authoritative.
 Manual drive and legacy autopilot protocol 1 retain the following four-field response contract:
 
 ```text

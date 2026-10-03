@@ -16,7 +16,8 @@ this file are for legacy controller protocol 1 runs that pin task-result protoco
 ## Semantic response and source evidence
 
 Implementer and fix responses contain exactly these ordered text fields (or the same JSON keys
-when `--format json` was selected before dispatch):
+when `--format json` was selected before dispatch; always text under controller protocol 2, per
+`manifest.contract.responseFormat`):
 
 ```text
 status: <DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT>
