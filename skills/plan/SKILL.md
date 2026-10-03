@@ -155,7 +155,8 @@ fallback. Finish with the closed `plan/controller-response.schema.json` result: 
 `DONE`, `BLOCKED`, or `NEEDS_CONTEXT`, followed by `signals`. The controller validates the
 assigned output and evidence, owns the ledger, receipts, projection, and lifecycle transitions,
 and publishes the plan. Do not append `autopilot-status.md`, mutate a lifecycle header, or infer
-acceptance from the plan's prose. For this selected protocol, later publication/status-appending
+acceptance from the plan's prose. The Step 4.5 self-review and the Step 5 validation gates still apply,
+with the v2 plan check. For this selected protocol, later publication/status-appending
 instructions are replaced by this return contract. The manual and historical legacy autopilot
 paths below retain their existing publication and handoff rules.
 
@@ -289,11 +290,31 @@ canonical criterion form is `- **Success criteria:** SC1, SC2`; the parser rejec
   spec; integration = multi-file or judgment; design = architecture, high-risk, or subtle.
 - **Success criteria:** every mapped success-criterion ID from the source spec.
 
+Use each field label exactly once per task. Put several requirements as sub-bullets or sentences
+inside the single **Requirements and deliverables** field; a repeated label is a plan error.
+
 Include all exact requirements and deliverables needed to materialize the downstream task brief.
-No requirement may live only in conversation. If copying a large upstream section would make the
-task unwieldy, reference it by canonical path + heading and state exactly which requirement it
-supplies. `implement` reads this line (`Complexity`) to pick the model tier and decide whether the task gets its
-own reviewer (Step 3.4).
+No requirement may live only in conversation. In manual drive and legacy controller protocol 1, if
+copying a large upstream section would make the task unwieldy, reference it by
+canonical path + heading and state exactly which requirement it supplies.
+`implement` reads this line (`Complexity`) to pick the model tier and decide whether the task gets
+its own reviewer (Step 3.4).
+
+**Controller protocol 2 plans.** Fresh autopilot runs default to controller protocol 2, which accepts
+a plan only through the strict v2 grammar:
+
+- Exact paths are repository source paths. They never name `.apex`, `.apex/work/**`,
+  `.apex/inception/**`, or Git metadata.
+- No task field may mention a spec file (`.apex/work/specs/<name>.md`, `work/specs/<name>.md`, or a
+  top-level `specs/<name>.md`), so such a file cannot be an Exact path. The controller supplies no
+  spec-section capability, so a spec reference is refused at plan acceptance. Write each task
+  self-contained.
+- Content outside every `## Task` section is not carried into a v2 brief. Repeat each relevant
+  global constraint in the task's own **Relevant global constraints** field.
+- An unknown bold field label, a field after the task notes, an unclosed code fence, or an
+  unclosed HTML comment fails the plan closed.
+
+Manual drive and legacy controller protocol 1 keep the contract above.
 
 ### Step 4 — Write the local working plan
 
@@ -326,13 +347,13 @@ Create `.apex/work/plans/` if it does not exist. Do not register the plan in `.a
 **Gear 2 and 3** — skip only at gear 1 (no plan is produced there).
 
 Read the plan you just wrote with fresh eyes and fix any of these inline — no re-review needed, just fix and move on:
-1. **Every mandatory field** — each task contains exact requirements/deliverables, relevant global constraints, surface, specialist agent, exact paths, test command, dependencies, complexity, and success-criterion IDs; no placeholder (`TBD`, `TODO`) remains.
+1. **Every mandatory field** — each task contains exact requirements/deliverables, relevant global constraints, surface, specialist agent, exact paths, test command, dependencies, complexity, and success-criterion IDs, each field exactly once (several requirements are sub-bullets or sentences inside the one field); no placeholder (`TBD`, `TODO`) remains.
 2. **Binding consistency** — every surface is a known surface in `.apex/_INDEX.md`, every specialist is its registered specialist agent, and every exact test command matches `.apex/testing-and-checklist.md`.
 3. **Dependency ordering** — dependencies name existing earlier tasks, ordering is executable, and each task ends in an independently testable deliverable.
 4. **Complexity present** — validate allowed complexity: each `Complexity` value is exactly `mechanical | integration | design` and matches the task text (a multi-file task marked `mechanical` is a bug).
 5. **Criteria coverage** — every requirement and success criterion in the spec maps to at least one task; list and close any gap.
 6. **Safe repository-relative paths** — every path is exact, stays inside the repository, and is owned by the task's declared surface.
-7. **Context independence** — a downstream agent can implement the task from the plan/task brief without chat history; large references use canonical path + heading and state the supplied requirement.
+7. **Context independence** — a downstream agent can implement the task from the plan/task brief without chat history; in manual and legacy plans, large references use canonical path + heading and state the supplied requirement, while a controller protocol 2 plan carries the text itself.
 8. **Discovery-free tasks** — no task's requirements are stated only as a goal ("make X work," "write the section on Y"); each names exact paths and the expected change at each path, or is split / preceded by a discovery task whose deliverable is the missing facts.
 
 All checks must pass before appending autopilot `DONE` or asking for human approval.
@@ -347,16 +368,23 @@ node <engine-root>/scripts/validate-hub.mjs .
 
 It MUST print `steepy validate-hub: OK`. This skill never edits the stable hub, so any violation is pre-existing drift: report it and point the user to the `check` skill — do not fix the hub mid-plan. A plan under `.apex/work/plans/` is intentionally ignored by the linter and does not need registration or a stable back-link.
 
-**Autopilot:** Before appending `DONE`, run the same canonical plan parse that the implement
-phase will use:
+**Autopilot:** Before appending `DONE` (legacy) or returning `status: DONE` (controller protocol 2),
+run the same canonical plan parse that the implement phase will use. When the manifest selects
+`manifest.contract.controllerProtocol: 2`, run the strict v2 check:
+
+```bash
+node <engine-root>/scripts/autopilot-context.mjs --verify-plan --repo-root . --plan <authoritative-manifest-output-path> --controller-protocol 2
+```
+
+It MUST print `plan OK — controller protocol 2`. Legacy controller protocol 1 keeps the compact check:
 
 ```bash
 node <engine-root>/scripts/autopilot-context.mjs --verify-plan --repo-root . --plan <authoritative-manifest-output-path>
 ```
 
 It MUST print `plan OK`. A rejection is a fixable plan error: repair the plan, repeat the Step 4.5
-self-review, and rerun both deterministic gates. Never append `DONE` for a plan this command has
-not accepted.
+self-review, and rerun both deterministic gates. Never append or return `DONE` for a plan the
+selected check has not accepted.
 
 ### Step 6 — Human review gate and plan lifecycle
 

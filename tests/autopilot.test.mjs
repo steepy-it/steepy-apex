@@ -936,7 +936,9 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
   }
 
   // Runs the conductor with the fixture env set and console captured, so the
-  // suite output stays pristine even for the halt cases.
+  // suite output stays pristine even for the halt cases. This block covers the
+  // legacy driver, so every run selects controller protocol 1 explicitly; a
+  // fresh run without a selection uses the controller (see the routing suite).
   async function drive(run, env = {}, { cliArgs, ...opts } = {}) {
     const fixtureHome = join(run.dir, '.apex', 'work', 'test-home');
     const vars = {
@@ -965,6 +967,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
       const invoke = cliArgs === undefined ? autopilot.runConductor : autopilot.main;
       const code = await invoke(cliArgs ?? run.specPath, {
         commandFor: stubCommandFor,
+        controllerProtocol: 1,
         cwd: run.dir,
         opencodeConfig: { env: vars, homedir: () => fixtureHome },
         liveStdout: capture(out),
@@ -4113,7 +4116,7 @@ if (process.argv[2] === '--version') {
           const result = await drive(run, { FAKE_HARNESS_MODE: 'done' }, {
             async lockTransition(stage) {
               if (stage !== 'acquired') return;
-              contender = await autopilot.runConductor(spec, { cwd: run.dir, commandFor: () => { throw new Error('must not spawn'); } });
+              contender = await autopilot.runConductor(spec, { cwd: run.dir, controllerProtocol: 1, commandFor: () => { throw new Error('must not spawn'); } });
               independent = await drive(other, { FAKE_HARNESS_MODE: 'done' });
             },
           });
@@ -4142,7 +4145,7 @@ if (process.argv[2] === '--version') {
               const acquired = new Promise((resolve) => { successorAcquired = resolve; });
               const barrier = new Promise((resolve) => { resumeSuccessor = resolve; });
               const successor = autopilot.runConductor(run.specPath, {
-                cwd: run.dir, processProbe: deadProbe, commandFor: () => { throw new Error('stop successor'); },
+                cwd: run.dir, controllerProtocol: 1, processProbe: deadProbe, commandFor: () => { throw new Error('stop successor'); },
                 async lockTransition(point) {
                   if (point === 'acquired') {
                     successorOwner = readFileSync(ownerOf(run), 'utf8');
@@ -4663,10 +4666,30 @@ describe('controller protocol 2 routing (runConductor and main)', () => {
     assert.deepEqual(resumed.calls, ['task-reviewer', 'final-review', 'review'], 'the captured writer is never dispatched again');
   });
 
-  it('a legacy run refuses a controller override and a fresh run still defaults to the legacy driver', async (t) => {
+  it('a fresh run with no selection defaults to controller protocol 2 and pins index protocol 2 in every role manifest', async (t) => {
     const repo = controllerRepo(t);
     const { runner, calls } = roleRunner(repo);
-    const legacy = await conduct(repo, { controllerServices: { runner }, commandFor: () => null });
+    const result = await conduct(repo, { controllerServices: { runner } }, [SPEC_PATH]);
+    assert.equal(result.code, 0, result.err);
+    assert.deepEqual(calls, ['plan', 'implementer', 'task-reviewer', 'final-review', 'review']);
+    const identity = JSON.parse(repo.read(`${TASKS}/autopilot-run.json`));
+    assert.deepEqual([identity.schemaVersion, identity.controllerProtocol, Object.hasOwn(identity, 'recovery')], [1, 2, false],
+      'an ordinary run binds no recovery kind');
+    assert.doesNotMatch(repo.read(`${TASKS}/autopilot-status.md`), /STATUS_PROTOCOL/);
+    const reservations = repo.read(`${TASKS}/autopilot-events.jsonl`).trim().split('\n').map((line) => JSON.parse(line))
+      .filter((event) => event.event === 'ROLE_RESERVED');
+    assert.equal(reservations.length, calls.length);
+    for (const { roleSequence } of reservations) {
+      const { contract } = JSON.parse(repo.read(`${TASKS}/context/role-${roleSequence}.json`));
+      assert.deepEqual([contract.controllerProtocol, contract.taskResultProtocol, contract.taskResultIndexProtocol,
+        contract.reviewerResponseProtocol, Object.hasOwn(contract, 'recoveryInputDigest')], [2, 2, 2, 3, false], `role ${roleSequence}`);
+    }
+  });
+
+  it('an explicit legacy selection still starts a legacy run, which keeps protocol 1 on resume and refuses a controller override', async (t) => {
+    const repo = controllerRepo(t);
+    const { runner, calls } = roleRunner(repo);
+    const legacy = await conduct(repo, { controllerProtocol: 1, controllerServices: { runner }, commandFor: () => null });
     assert.equal(legacy.code, 1);
     assert.match(repo.read(`${TASKS}/autopilot-status.md`), /CONDUCTOR — STATUS_PROTOCOL — version=1/);
     assert.equal(exists(repo, `${TASKS}/autopilot-run.json`), false);
@@ -4677,6 +4700,11 @@ describe('controller protocol 2 routing (runConductor and main)', () => {
     assert.match(refused.err, /existing run uses controller protocol 1; refusing incompatible controller protocol 2/);
     assert.equal(repo.read(`${TASKS}/autopilot-status.md`), status);
     assert.equal(exists(repo, `${TASKS}/autopilot-run.json`), false);
+    const resumed = await conduct(repo, { controllerServices: { runner }, commandFor: () => null }, [SPEC_PATH]);
+    assert.equal(resumed.code, 1);
+    assert.ok(repo.read(`${TASKS}/autopilot-status.md`).startsWith(status), 'the legacy status is only appended to');
+    assert.equal(exists(repo, `${TASKS}/autopilot-run.json`), false, 'the recorded legacy protocol is never upgraded');
+    assert.deepEqual(calls, [], 'the controller never dispatched a role');
   });
 
   for (const [label, corrupt, reason] of [
@@ -4737,6 +4765,39 @@ describe('controller protocol 2 routing (runConductor and main)', () => {
     const unknown = await conduct(repo, {}, [SPEC_PATH, '--controller-protocol', '3']);
     assert.equal(unknown.code, 1);
     assert.match(unknown.err, /controller protocol must be 1 or 2/);
+  });
+
+  // The shared role runner writes only safe-redacted raw captures, so protocol 2
+  // refuses exact capture before the lease instead of recording it untruthfully.
+  it('controller protocol 2 refuses log-mode: exact before any effect, for a fresh default, an explicit, or a resumed run', async (t) => {
+    const repo = controllerRepo(t);
+    const exact = (r) => r.put(SPEC_PATH, r.read(SPEC_PATH).replace('blast-radius:', 'log-mode: exact\nblast-radius:'));
+    const reason = /log-mode: exact is not supported under controller protocol 2[^]*log-mode: safe[^]*--controller-protocol 1/;
+    exact(repo);
+    const { runner, calls } = roleRunner(repo);
+    for (const [label, opts, argv] of [['fresh default', {}, [SPEC_PATH]], ['explicit', {}, [SPEC_PATH, '--controller-protocol', '2']],
+      ['explicit API', { controllerProtocol: 2 }, undefined]]) {
+      let leased = false;
+      const refused = await conduct(repo, { ...opts, controllerServices: { runner }, lockTransition: () => { leased = true; } }, argv);
+      assert.equal(refused.code, 1, label);
+      assert.match(refused.err, reason, label);
+      assert.equal(leased, false, `${label}: refused before the lease`);
+      assert.equal(exists(repo, TASKS), false, `${label}: no run state`);
+    }
+    assert.deepEqual(calls, []);
+
+    const resumed = controllerRepo(t);
+    const first = roleRunner(resumed);
+    const crash = (point, detail) => { if (point === 'response-captured' && detail.role === 'implementer') throw new Error('simulated crash'); };
+    assert.equal((await conduct(resumed, { controllerServices: { runner: first.runner, crash } })).code, 1);
+    const events = resumed.read(`${TASKS}/autopilot-events.jsonl`);
+    exact(resumed);
+    const again = roleRunner(resumed);
+    const refused = await conduct(resumed, { controllerServices: { runner: again.runner } });
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, reason);
+    assert.deepEqual(again.calls, []);
+    assert.equal(resumed.read(`${TASKS}/autopilot-events.jsonl`), events, 'the journal is untouched');
   });
 
   it('a refusal before any controller effect gets a neutral label and creates no run identity', async (t) => {

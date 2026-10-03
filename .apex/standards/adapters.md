@@ -90,8 +90,14 @@ Adapters declare configured host wiring, not a timeless host-runtime guarantee. 
   schema and preserves values; native constrained generation is a separate optional dispatch
   capability. Protocol 1 retains four fields and literal none. Protocol 2 selects
   `reviewer-response-v2.schema.json` with status/artifact/signals only; a legacy extra changed-paths
-  is ignored raw telemetry. Only the engine's unchanged source observation establishes no source
-  changes. Adapters never infer or correct semantic fields or decide task approval.
+  is ignored raw telemetry. Protocol 3 selects `reviewer-response-v3.schema.json` with `status` and
+  `signals` only; the adapter decodes strictly and never unwraps a Markdown block or reorders lines:
+  the engine gate alone classifies a repairable format and owns the single correction. Only the
+  engine's unchanged source observation establishes no source changes. Adapters never infer or
+  correct semantic fields or decide task approval.
+- `adapters/headless-response.mjs` correlates one headless stream to one direct terminal role
+  response, checking transport provenance only (no child-agent markers, one session, exactly one
+  terminal event, a byte bound); response grammar, repair, and approval stay with controller gates.
 - A headless descriptor declares its command, protocol, display/native metadata, and
   capabilities. Its decoder maps only source evidence: it never owns workflow policy or invents
   actor hierarchy, and it preserves unknown or malformed source input for fallback.

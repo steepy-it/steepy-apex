@@ -7,6 +7,11 @@ protocol 1. Never silently upgrade a run or manufacture a historical baseline. M
 Gear 4 retain their existing response and index grammar. These v2 instructions take precedence
 over the four-field and comma-list examples in the implementation skill and child prompts.
 
+Under controller protocol 2 the controller performs begin, record, resume, project, and verify itself,
+and pins writer task-result protocol 2 in every role manifest. Writers return only the semantic
+payload below; no role runs these commands, writes a receipt, or edits the index. The commands in
+this file are for legacy controller protocol 1 runs that pin task-result protocol 2.
+
 ## Semantic response and source evidence
 
 Implementer and fix responses contain exactly these ordered text fields (or the same JSON keys

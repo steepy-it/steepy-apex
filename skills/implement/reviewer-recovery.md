@@ -1,11 +1,17 @@
 # Reviewer response gate (Gear 3 autopilot)
 
 This protocol applies to task and whole-branch reviewers, including valid first responses.
-The implement skill orchestrates dispatch; `scripts/reviewer-response.mjs` supplies deterministic
-validation and create-only evidence. Before accepting implement DONE, the conductor independently
-replays the required task receipts and final receipt. The helper does not dispatch a model or
-implement a task itself.
+In legacy controller protocol 1, the implement skill orchestrates dispatch and runs the commands
+below; `scripts/reviewer-response.mjs` supplies deterministic validation and create-only evidence.
+Before accepting implement DONE, the conductor independently replays the required task receipts and
+final receipt. The helper does not dispatch a model or implement a task itself.
 Manual drive retains the legacy four-field response semantics and existing no-manifest degradation.
+
+Under controller protocol 2 the controller runs this gate itself, with `reviewerResponseProtocol: 3`.
+It begins the guard before dispatch, checks the captured two-field verdict (`status`, `signals`),
+and accepts only a receipt-bound APPROVED or ISSUES_FOUND. It reserves at most one response-only
+format correction, at standard tier, for reverse field order or one Markdown block wrapping the
+whole payload. No role runs these commands or writes guard evidence.
 
 ## Protocol selection
 

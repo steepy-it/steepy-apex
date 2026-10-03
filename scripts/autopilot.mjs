@@ -1,8 +1,10 @@
 // Gear-3 autopilot conductor: parses the extended verdict-artifact contract at
 // the head of a spec file, checks it against the refusal guards, then drives
-// `plan → implement → review` as fresh headless harness sessions — one child per
-// phase, each once, halting on anything that needs a human and stopping before
-// bump/PR. Contract shape — the HTML comment at the head of `.apex/work/specs/*.md`:
+// `plan → implement → review` as fresh headless harness sessions, halting on
+// anything that needs a human and stopping before bump/PR. A fresh run defaults
+// to controller protocol 2 (`autopilot-controller.mjs` dispatches every role);
+// `--controller-protocol 1` keeps the legacy driver below, one child per phase.
+// Contract shape — the HTML comment at the head of `.apex/work/specs/*.md`:
 //   <!-- verdict: <text> | gear: <int>
 //   drive: autopilot
 //   branch: <name>
@@ -1873,9 +1875,11 @@ function physicalRelative(cwd, absPath) {
 }
 
 // One run keeps one controller protocol. An existing state imposes its own
-// protocol; `--controller-protocol` / `controllerProtocol` only selects a fresh
-// run (legacy 1 stays the default). A controller marker without its identity is
-// corrupt new state and never falls back to the legacy driver.
+// protocol: a controller run identity means 2, a legacy status means 1, and a
+// contradictory selection is refused. `--controller-protocol` /
+// `controllerProtocol` only selects a fresh run, which defaults to controller
+// protocol 2; 1 still starts a legacy run. A controller marker without its
+// identity is corrupt new state and never falls back to the legacy driver.
 function selectRunProtocol(cwd, specName, statusText, opts) {
   const controller = inspectControllerState(cwd, specName);
   const existing = controller !== null ? controller.controllerProtocol : statusText === '' ? null : 1;
@@ -1892,7 +1896,7 @@ function selectRunProtocol(cwd, specName, statusText, opts) {
   if (existing !== null && requested !== undefined && requested !== existing) {
     throw new Error(`the existing run uses controller protocol ${existing}; refusing incompatible controller protocol ${requested}`);
   }
-  const protocol = existing ?? requested ?? 1;
+  const protocol = existing ?? requested ?? 2;
   if (protocol === 2 && (opts.resumeInputs ?? []).length > 0) {
     throw new Error('explicit resume inputs belong to the legacy implement phase; controller protocol 2 resumes from its own journal');
   }
@@ -2031,6 +2035,12 @@ export async function runConductor(specPath, opts = {}) {
     inspectResumeInputs({ repoRoot: cwd, specPath: specRelPath, resumeInputs: opts.resumeInputs });
     preflightStatus = readStatus(cwd, statusPath);
     selection = selectRunProtocol(cwd, specName, preflightStatus, opts);
+    // The shared role runner persists only safe-redacted raw captures, so exact
+    // capture is refused here, before any effect, rather than recorded untruthfully.
+    if (selection.protocol === 2 && contract.logMode === 'exact') {
+      throw new Error('log-mode: exact is not supported under controller protocol 2, whose role captures are always safe-redacted; '
+        + 'use log-mode: safe, or start a fresh legacy run with --controller-protocol 1');
+    }
   } catch (err) {
     console.error(`autopilot: refusing to drive ${absSpec}: ${err.message}`);
     return 1;

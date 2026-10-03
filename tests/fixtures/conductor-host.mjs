@@ -15,7 +15,7 @@ process.env.HOME = fixtureHome;
 process.env.XDG_CONFIG_HOME = join(fixtureHome, '.config');
 
 const code = await runConductor(specPath, {
-  cwd,
+  cwd, controllerProtocol: 1,
   opencodeConfig: { env: process.env, homedir: () => fixtureHome },
   commandFor: (harness, prompt, options) => {
     const descriptor = headlessCommand(harness, prompt, options);

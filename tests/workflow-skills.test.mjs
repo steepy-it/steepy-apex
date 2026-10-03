@@ -2689,3 +2689,87 @@ test('docs/workflow.md says the greenfield path precedes the hub and spec means 
   assert.match(flat, /inception's own project write-up is a different document/i);
   assert.match(flat, /not a sixth skill/i, 'workflow.md must deny inception is a sixth chain skill');
 });
+
+// Controller protocol 2 is the fresh-run default. These content locks keep the
+// skill prose truthful about who owns what; they prove no model behavior.
+const flatSkill = (path) => readFileSync(join(skillsDir, path), 'utf8').replace(/\s+/g, ' ');
+
+test('implement prose scopes the controller-owned path and keeps the legacy and manual paths explicit', () => {
+  const skill = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const step0 = sectionBetween(skill, '### Step 0', '### Ceremony').replace(/\s+/g, ' ');
+  assert.match(step0, /controller protocol 2 is the default for fresh autopilot runs/i);
+  assert.match(step0, /no implement-phase child runs this skill/i);
+  assert.match(step0, /dispatch, response capture, receipts, workflow events, and task commits/i);
+  assert.match(step0, /Roles never write state/);
+  assert.match(step0, /apply only to legacy controller protocol 1 and to manual drive/i);
+  const protocol = flatSkill('implement/autopilot-protocol.md');
+  const controller = protocol.match(/## Controller protocol 2 \(default for fresh runs\)(.*?)## Step 0/)?.[1] ?? '';
+  assert.ok(controller, 'autopilot-protocol.md must describe the controller path before the legacy steps');
+  assert.match(controller, /no implement-phase child exists/i);
+  assert.match(controller, /What stays with the model/i);
+  assert.match(controller, /Roles never write state/);
+  assert.match(controller, /What the controller owns and verifies/i);
+  assert.match(controller, /task reviewer runs at most-capable for a design task and at standard otherwise/i);
+  assert.match(controller, /final review runs at most-capable when any task is design/i);
+  assert.match(controller, /response-only correction runs at standard/i);
+  assert.match(controller, /gate refusal after an effect is a terminal `RUN_HALTED`/i);
+  assert.match(controller, /exact surface test command and `validate-hub`, both exiting 0/i);
+  assert.match(controller, /Legacy controller protocol 1 \(`--controller-protocol 1`/);
+  const recovery = flatSkill('implement/reviewer-recovery.md');
+  assert.match(recovery, /In legacy controller protocol 1, the implement skill orchestrates dispatch/);
+  assert.match(recovery, /Under controller protocol 2 the controller runs this gate itself/);
+  const results = flatSkill('implement/task-results-protocol.md');
+  assert.match(results, /Under controller protocol 2 the controller performs begin, record, resume, project, and verify itself/);
+  assert.match(results, /legacy controller protocol 1 runs/i);
+});
+
+test('implement prose states the known controller limitations', () => {
+  const protocol = flatSkill('implement/autopilot-protocol.md');
+  assert.match(protocol, /several distinct test commands[^.]*no single `testCommand`[^.]*one `--test-command`/i);
+  assert.match(protocol, /finding-ID inventory[^.]*fix-target block itself/i);
+  assert.match(protocol, /`role-N-response\.json` gained `rawDigest` under response record schema 1[^.]*unreleased/i);
+  const review = flatSkill('review/SKILL.md');
+  assert.match(review, /several distinct test commands[^.]*no single `testCommand`[^.]*one `--test-command`/i);
+});
+
+test('plan prose states the strict v2 grammar and runs the protocol-matched plan gate', () => {
+  const plan = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const step3 = sectionBetween(plan, '### Step 3', '### Step 4 ').replace(/\s+/g, ' ');
+  assert.match(step3, /Use each field label exactly once per task/);
+  assert.match(step3, /sub-bullets or sentences inside the single \*\*Requirements and deliverables\*\* field/);
+  assert.match(step3, /never name `\.apex`, `\.apex\/work\/\*\*`, `\.apex\/inception\/\*\*`, or Git metadata/);
+  assert.match(step3, /top-level `specs\/<name>\.md`[^.]*cannot be an Exact path/);
+  assert.match(step3, /no spec-section capability[^.]*refused at plan acceptance/i);
+  assert.match(step3, /outside every `## Task` section is not carried into a v2 brief/);
+  assert.match(step3, /Repeat each relevant global constraint in the task's own/);
+  assert.match(step3, /unclosed code fence, or an unclosed HTML comment fails the plan closed/);
+  assert.match(step3, /Manual drive and legacy controller protocol 1 keep/);
+  const selfReview = sectionBetween(plan, '### Step 4.5', '### Step 5').replace(/\s+/g, ' ');
+  assert.match(selfReview, /1\. \*\*Every mandatory field\*\*[^]*each field exactly once/);
+  const gate = sectionBetween(plan, '### Step 5', '### Step 6');
+  assert.ok(gate.includes('node <engine-root>/scripts/autopilot-context.mjs --verify-plan --repo-root . --plan <authoritative-manifest-output-path> --controller-protocol 2'),
+    'protocol 2 runs the strict v2 plan check');
+  assert.ok(gate.includes('node <engine-root>/scripts/autopilot-context.mjs --verify-plan --repo-root . --plan <authoritative-manifest-output-path>\n'),
+    'legacy protocol 1 keeps the compact check');
+  assert.match(gate.replace(/\s+/g, ' '), /`manifest\.contract\.controllerProtocol: 2`[^]*plan OK — controller protocol 2/);
+  const step0 = sectionBetween(plan, '### Step 0', '### Ceremony').replace(/\s+/g, ' ');
+  assert.match(step0, /Step 4\.5 self-review and the Step 5 validation gates still apply/);
+});
+
+test('review prose reads index protocol 3 import entries without treating an import as approval', () => {
+  const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const step0 = sectionBetween(review, '### Step 0', '### Ceremony').replace(/\s+/g, ' ');
+  assert.match(step0, /recovery run pins `manifest\.contract\.taskResultIndexProtocol: 3`/);
+  assert.match(step0, /fresh controller run keeps index protocol 2/i);
+  assert.match(step0, /`kind: import` has `status: IMPORTED`/);
+  assert.match(step0, /The import is not approval/);
+  assert.match(step0, /import-bound task review/);
+  assert.match(step0, /first fix[^.]*execution 2/i);
+  assert.match(step0, /do not open the import receipt or the source run/i);
+  assert.match(step0, /exact surface test command and `validate-hub`, both exiting 0/i);
+});
+
+test('brainstorm states that exact capture needs a legacy run', () => {
+  const brainstorm = flatSkill('brainstorm/SKILL.md');
+  assert.match(brainstorm, /Exact capture needs a legacy run[^.]*`--controller-protocol 1`[^.]*refuses `log-mode: exact` before any effect/);
+});

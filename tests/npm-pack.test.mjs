@@ -261,6 +261,20 @@ test('npm tarball includes the controller runtime payload the conductor fingerpr
   for (const entry of ['scripts/autopilot.mjs', 'scripts/autopilot-controller.mjs', 'scripts/autopilot-recovery.mjs']) visit(entry);
 });
 
+// The skills invoke engine scripts by `<engine-root>/scripts/<name>.mjs`; an
+// installed engine must carry each one, including the plan skill's v2 gate.
+test('npm tarball includes every engine script the packaged skills invoke', () => {
+  const skillFiles = paths.filter((path) => path.startsWith('skills/') && path.endsWith('.md'));
+  const invoked = new Set(skillFiles.flatMap((path) => [...readFileSync(join(root, path), 'utf8')
+    .matchAll(/<engine-root>\/(scripts\/[a-z0-9-]+\.mjs)/g)].map((match) => match[1])));
+  for (const script of ['scripts/autopilot-context.mjs', 'scripts/task-results.mjs', 'scripts/reviewer-response.mjs',
+    'scripts/capture-review-evidence.mjs', 'scripts/validate-hub.mjs']) {
+    assert.ok(invoked.has(script), `the skills must still invoke ${script}`);
+  }
+  assertPacked([...invoked].sort(), 'skill-invoked engine script');
+  assertPacked(['scripts/autopilot-plan.mjs'], 'v2 plan grammar behind --verify-plan --controller-protocol 2');
+});
+
 test('npm tarball excludes the synthetic controller fixtures and the opt-in native smoke driver', () => {
   for (const path of ['tests/fixtures/autopilot-controller/fake-harness.mjs', 'tests/fixtures/autopilot-controller/native-smoke.mjs']) {
     assert.ok(existsSync(join(root, path)), `${path} must exist in the repository`);

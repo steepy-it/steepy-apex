@@ -209,6 +209,29 @@
 - **Conductor** — the deterministic engine script (`scripts/autopilot.mjs`) that runs
   the gear-3 chain phases as fresh headless sessions under an autopilot contract,
   halting on anything that needs a human.
+- **Controller protocol** — which engine drives a Gear-3 autopilot run, fixed for the run's life.
+  Controller protocol 2, the default for a fresh run, has `scripts/autopilot-controller.mjs`
+  reserve, dispatch, capture, and gate every role, while roles never write state. Legacy controller
+  protocol 1 (`--controller-protocol 1`, or an existing legacy status) spawns one model child per
+  phase. Existing state keeps its protocol; nothing migrates.
+- **Role invocation** — one reserved controller protocol 2 dispatch, numbered by a positive
+  `roleSequence` across the run, not by task. It owns a durable `role-N-reservation.json`, the
+  controller-written `role-N-response.json`, the `role-N.raw.jsonl` capture, the readable
+  `role-N.log`, and its context manifest. Run, phase, attempt, task or whole-branch scope, and
+  iteration stay separate fields.
+- **Task-result index protocol** — the version of the generated task-result index. Protocol 2 lists
+  one execution entry per task; protocol 3 gives each entry `kind: execution` or `kind: import`, with
+  `status: IMPORTED` for an import. Fresh controller runs use index protocol 2 and recovery runs index
+  protocol 3. It is separate from the writer's task-result protocol and the reviewer response protocol.
+- **Recovery input** — `recovery-input.json` in a new run's task directory: the exact, digest-bound
+  declaration of a halted legacy run's spec, plan, phase manifests, and execution receipts, the tasks
+  to reuse, the accepted current branch, HEAD, observation, and delta, and the new destinations.
+  `scripts/autopilot-recovery.mjs` inspects and prepares it; `--recovery-input` starts the recovery
+  run explicitly, and a resume never passes it again but rechecks that the bound input is unchanged.
+- **Import receipt** — `task-N-import.json`: the controller's verified, digest-bound record that a
+  recovery run reuses one legacy execution of task N. It projects as an `IMPORTED` index entry and is
+  never approval: the task still needs this run's import-bound review, and its first fix is
+  execution 2.
 - **Event bridge** — the normalization, persistence, and rendering boundary that carries
   harness streams into source-grounded events and user evidence.
 - **Agent task events** — decoded subagent lifecycle events (`agent.started`, `agent.completed`,

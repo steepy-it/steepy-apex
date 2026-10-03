@@ -465,7 +465,7 @@ async function legacyFixture(t) {
   const plan = planText([taskSection(1), taskSection(2)], 'READY');
   const sb = sandbox(t, { plan });
   script(sb, { plan, steps: { implement: [{ helpers: true, exit: 1 }] } });
-  const result = await run(sb, RESUME);
+  const result = await run(sb, [SPEC, '--controller-protocol', '1']);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /HALTED — run-id=\S+ phase=implement attempt=1: child exited 1/);
   return sb;
@@ -526,7 +526,7 @@ const recoveryDispatches = (sb) => invocations(sb).filter((item) => item.protoco
 describe('legacy protocol 1 and recovery into protocol 2', { concurrency: CONCURRENCY }, () => {
   test('a lazy child that calls no helper halts under protocol 1 but completes under protocol 2, where the controller owns the helpers', async (t) => {
     const legacy = sandbox(t, { plan: planText([taskSection(1), taskSection(2)], 'READY') });
-    const halted = await run(legacy, RESUME);
+    const halted = await run(legacy, [SPEC, '--controller-protocol', '1']);
     assert.equal(halted.status, 1);
     assert.match(halted.stderr,
       /HALTED — run-id=\S+ phase=implement attempt=1: reviewer evidence rejected: work path: missing work artifact '\.apex\/work\/tasks\/topic\/task-result-index\.md'/);

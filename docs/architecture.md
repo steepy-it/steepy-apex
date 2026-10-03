@@ -27,17 +27,17 @@ Pure Node, no dependencies. The skills and the hook shell out to these.
 
 | Script | Responsibility |
 |---|---|
-| `reviewer-response.mjs` | Gates Gear-3 reviewer responses with Git snapshots, version-selected envelopes, one changed-paths-only correction for legacy v1, and replay-validated receipts. V2 uses semantic fields and binds task approval to its latest execution digest. The conductor requires task/final proof bound to the full plan contract and handoff, and verifies every execution ancestor against its exact phase manifest before accepting implementation. Retained approval keeps its original identity; active references advance atomically without rewriting history. The skill owns dispatch. |
+| `reviewer-response.mjs` | Gates Gear-3 reviewer responses with Git snapshots, version-selected envelopes, one changed-paths-only correction for legacy v1, and replay-validated receipts. V2 uses semantic fields and binds task approval to its latest execution digest. The conductor requires task/final proof bound to the full plan contract and handoff, and verifies every execution ancestor against its exact phase manifest before accepting implementation. Retained approval keeps its original identity; active references advance atomically without rewriting history. Under controller protocol 2 the controller dispatches and gates reviewers itself with reviewer response protocol 3 (a two-field verdict and at most one format correction); in legacy controller protocol 1 the implement skill owns dispatch. |
 | `source-observation.mjs` | Observes branch, HEAD, index, tracked and nonignored untracked source using exact Git filenames; validates source paths separately from work artifacts and detects source continuation/drift. Unsupported submodules fail closed. |
 | `task-results.mjs` | Begins and captures immutable v2 task executions, freezes reports, resumes durable captured results without writer redispatch, projects JSON task indexes, and verifies lineage, all task reports, and current source. Same-task previous execution and latest global parent are separate links. Explicit retry executions can continue valid NEEDS_CONTEXT/BLOCKED results after a remedy while preserving partial work; malformed or ambiguous evidence cannot authorize retry. |
 | `autopilot-plan.mjs` | Parses complete controller v2 plan tasks against routed agents and explicitly selected standards, renders self-contained task briefs from the task fields, annotated exact paths, task notes, and declared spec-section capabilities, and validates whole-branch finding-to-task fix targets. |
 | `autopilot-context.mjs` | Builds and validates versioned role-local context manifests, materializes the criteria-only review artifact, derives routed standards, and exposes strict plan/handoff verification commands. |
 | `autopilot-runtime.mjs` | Loads selected-engine scripts, adapters, skill instructions, version manifests, and mapping bytes; fingerprints their ordered paths and content and verifies that identity on resume. |
 | `autopilot-state.mjs` | Defines the separate Gear-3 controller event domain, validates and replays its authoritative journal, binds immutable run and role reservations to journal prefixes, checks captured responses and role-specific accepted receipts (including immutable phase proofs), and renders a replaceable status projection. |
-| `autopilot-controller.mjs` | Drives a controller-protocol-2 Gear-3 run under the conductor's existing lease, selected only by `--controller-protocol 2` for a fresh run. Reserves each plan, writer, reviewer, correction, and review role in the authoritative journal, publishes its immutable manifest, dispatches it through an injected role runner, and captures the response before any gate. Validates it through the existing plan, task-result, reviewer, and review-evidence gates; owns task commits and READY/CONSUMED publication; and resumes only from durable evidence, halting on a reservation without a captured response. |
+| `autopilot-controller.mjs` | Drives a controller-protocol-2 Gear-3 run under the conductor's existing lease. Protocol 2 is the default for a fresh run: `--controller-protocol 1` still starts a legacy run, and existing state keeps its recorded protocol. Reserves each plan, writer, reviewer, correction, and review role in the authoritative journal, publishes its immutable manifest, dispatches it through an injected role runner, and captures the response before any gate. Validates it through the existing plan, task-result, reviewer, and review-evidence gates; owns task commits and READY/CONSUMED publication; and resumes only from durable evidence, halting on a reservation without a captured response. |
 | `autopilot-recovery.mjs` | Validates the exact `recovery-input.json` of a new recovery run against a halted legacy Gear-3 run, through an `inspect`/`prepare` CLI. The input declares the source spec, plan, phase manifests, and execution receipts with their digests, the tasks to reuse, the accepted current branch/HEAD/observation and delta, and the new destinations. Inspect classifies each plan task as an import with a pending review or as residual work, and reports drift, an unexplained delta, foreign or protocol-1 evidence, and plan-gate refusals as reconciliation. Prepare then writes deterministic spec and plan copies that record their provenance and recovery authorization, only after the prepared plan passes the controller v2 plan gate. It never rewrites the source run; the controller performs the imports. |
 | `autopilot-observability.mjs` | Implements the dependency-free observability bridge: incremental framing, safe/exact raw persistence, event curation, redaction, and bounded multi-destination backpressure. |
-| `autopilot.mjs` | The **gear-3 autopilot conductor**. Parses the extended verdict-artifact contract at a spec head, writes deterministic versioned role manifests (including exact modular core/leaf references and scalar contract metadata), derives review evidence it can derive (criteria-only artifact, aggregate `git` diff from the run's baseline commit), then spawns `plan → implement → review` as fresh headless harness sessions — one child per finite phase/task lifecycle. It halts on `BLOCKED`, a mid-run `CONFLICT`, explicit safety/failure conditions, or I/O integrity failure; it always stops before bump/PR. |
+| `autopilot.mjs` | The **gear-3 autopilot conductor**. Parses the extended verdict-artifact contract at a spec head, writes deterministic versioned role manifests (including exact modular core/leaf references and scalar contract metadata), derives review evidence it can derive (criteria-only artifact, aggregate `git` diff from the run's baseline commit), then drives `plan → implement → review` as fresh headless harness sessions. A fresh run defaults to controller protocol 2 (delegated to `autopilot-controller.mjs`); `--controller-protocol 1` keeps the legacy driver, one child per finite phase/task lifecycle; existing state keeps its recorded protocol. A contradictory selection or `log-mode: exact` under protocol 2 is refused before any effect. It halts on `BLOCKED`, a mid-run `CONFLICT`, explicit safety/failure conditions, or I/O integrity failure; it always stops before bump/PR. |
 | `bump-version.mjs` | Stages and validates all three manifests, retains one durable recovery target, publishes by per-file atomic rename under the repository lease, and rejects incomplete transactions in `--check`. |
 | `capture-review-evidence.mjs` | The **bounded review-evidence collector**. Runs the surface test, optional Gear-4 verifier, and coherence gate in order; streams complete combined output to a confined current-run evidence artifact; emits only a compact hash/count/status/excerpt receipt to the reviewer context. Capture failure enters one awaited path that converges the detached child group and streams before closing its descriptor, and no later command starts. |
 | `cost-report.mjs` | Aggregates repository-scoped interactive-session usage and confined headless ledger/raw evidence into a harness-neutral observational cost and token report. |
@@ -127,6 +127,86 @@ discard only when event, snapshot, changed-path, and Git identities prove contro
 Ambiguity appends `RECONCILIATION_REQUIRED` then `RUN_HALTED`; it never resets uncertain work.
 Claude, Codex, and OpenCode have deterministic CLI descriptors. Pi and DeepSeek remain explicit
 `runner-unavailable` refusals rather than falling back to a weaker inline loop.
+
+## Gear-3 controller protocol 2
+
+A fresh Gear-3 autopilot run defaults to controller protocol 2. `scripts/autopilot.mjs` selects the
+protocol once: `--controller-protocol 1` still starts a legacy run, and existing state keeps its
+recorded protocol (an `autopilot-run.json` identity means 2, a legacy status means 1). A
+contradictory selection, controller state without its identity, or `log-mode: exact` under protocol 2
+is refused before any effect, with no reset and no fallback.
+
+```text
+conductor lease + locked preflight
+                |
+                v
+     autopilot-controller.mjs
+                |
+  role-N-reservation.json (durable, before any effect)
+                |
+  role manifest + shared managed runner (headless-runner.mjs)
+                |
+  role-N-response.json captured before any gate
+                |
+  plan / task-result / reviewer / review-evidence gate
+          /                         \
+ receipt + RESULT_ACCEPTED     refusal after an effect
+          |                         |
+ commits, READY/CONSUMED,       RUN_HALTED
+ PHASE_ACCEPTED, RUN_COMPLETED
+```
+
+What stays with the model: the plan, writer, reviewer, and review roles do the judgment work, write
+only their assigned artifacts, and return a closed payload. Writers edit only their assigned source
+under TDD. Roles never write state. What the controller owns and verifies: dispatch, durable response
+capture before any gate, task-result receipts, the reviewer gate with at most one format correction,
+the review evidence gate, workflow events, task commits, and READY/CONSUMED publication. The review
+evidence gate binds the plan's exact surface test command and `validate-hub`, both exiting 0 with no
+signal or spawn error, collected after the review role was reserved. A refusal before any effect
+journals nothing and stays resumable; a gate refusal after an effect is a terminal `RUN_HALTED`.
+
+The authoritative journal is `autopilot-events.jsonl` (event schema 2), beside the immutable
+`autopilot-run.json`; `autopilot-status.md` is a regenerated projection and never an event source.
+Each role invocation N has a durable `role-N-reservation.json` before any effect, the
+controller-written `role-N-response.json` captured before any gate, a receipt validated before
+`RESULT_ACCEPTED`, the `role-N.raw.jsonl` capture, the readable `role-N.log`, and the manifest
+`context/role-N.json`. N numbers the invocation, not the task. Writers run at their task Complexity
+tier; a task reviewer runs at `most-capable` for a design task and `standard` otherwise; the final
+review runs at `most-capable` when any task is design; a response-only correction runs at `standard`.
+
+| Version | Value |
+|---|---|
+| Controller protocol | 2 for fresh runs; legacy runs keep 1 |
+| Writer task-result protocol | 2 |
+| Task-result index protocol | 2 for fresh controller runs; 3 for recovery runs |
+| Reviewer response protocol | 3 |
+| Run identity schema | 1 for ordinary runs; 2 for recovery runs |
+| Journal event schema | 2 |
+| Response record schema | 1, which added the unreleased `rawDigest` |
+
+Fresh controller runs use index protocol 2 and recovery runs use index protocol 3. Recovery is a
+separate entry, not a resume. `autopilot-recovery.mjs` inspects and prepares one exact
+`recovery-input.json`, and `--recovery-input` starts a new recovery run whose kind is bound once in
+its run identity. Only legacy sources are importable: a protocol-2 source is refused by name, and the
+approved contract branch must equal the accepted current branch. The controller registers one import
+per reused task before any other run event. Index protocol 3 projects `kind: execution` and
+`kind: import` entries, and an import has `status: IMPORTED`. An import is never approval: every
+imported task gets a fresh import-bound review in the new run, its first fix is execution 2, and the
+whole-branch diff starts where the imported lineage started.
+
+Compatibility boundaries: legacy controller protocol 1 runs keep the one-child-per-phase driver, the
+Markdown status stream, and their recorded task-result protocol; manual drive keeps its human
+handoff; Gear 4 keeps `loop-engineer.mjs`. Nothing migrates between them. The controller and Gear 4
+share the managed runner in `headless-runner.mjs`, which persists only safe-redacted raw captures.
+
+Known limitations: with several distinct test commands, the review manifest carries no single
+`testCommand`, and the review skill takes one `--test-command`; the evidence gate accepts any one of
+the plan's commands. The whole-branch fix-target finding-ID inventory is derived from the fix-target
+block itself, because the final-review prompt has no finding-ID grammar outside it.
+
+Evidence for this path is synthetic, not native evidence: `tests/autopilot-controller-integration.test.mjs`
+drives the public CLIs against the fake-harness stand-in. `tests/fixtures/autopilot-controller/native-smoke.mjs`
+is the opt-in driver for one real provider; the suite runs it only against fake shims.
 
 ## `adapters/` — the harness adapters
 
@@ -233,7 +313,7 @@ Run with `npm test` (`node --test tests/*.test.mjs`) — no test framework, just
 - **Scaffolding flow:** `init` (repair mode, non-destructive), `project-scaffold` (public planning/apply/conflict/lock behavior), `dogfood-hub` (the repository uses the public planner and proves repair is a byte/mode/mtime no-op), `git-policy`, and `e2e-smoke` (a hub built from templates + one surface must lint green).
 - **Plugin wiring:** `hooks` (Stop-hook robustness), `workflow-skills` (the brainstorm→plan→implement→review skills are valid, hub-aware, and correctly chained), `release-metadata` (identity, README/RELEASE/COMMUNITY copy stay consistent).
 - **Multi-harness:** `portability-contract` (zero `CLAUDE_*`/absolute paths in `skills/`, open-subset frontmatter, engine-root resolution), `adapters` (Codex manifests, OpenCode plugin, Pi extension, DeepSeek Harness plugin — behavior-tested with stub hosts), `canary-structural` (isolated-HOME, env-scrubbed engine runs through literal skill-relative paths), `npm-pack` (the tarball carries every manifest, adapter, skill, and script).
-- **Autopilot:** `autopilot` (headless command builder, contract parser + refusal guards, and the conductor drive loop — hermetic fake-harness children, real signals, process-group kill verification).
+- **Autopilot:** `autopilot` (headless command builder, contract parser + refusal guards, protocol selection, and the conductor drive loop — hermetic fake-harness children, real signals, process-group kill verification); `autopilot-controller`, `autopilot-state`, `autopilot-recovery`, and the synthetic `autopilot-controller-integration` matrix cover controller protocol 2 and recovery with fake harnesses only, never as native evidence.
 - **Fixtures:** `good-hub` / `bad-hub` (linter cases) and `pnpm-*` / `single-pkg` (stack-detection cases).
 
 ## Local usage reports
@@ -293,10 +373,13 @@ As with any plugin, review plugin hooks before trusting them: the full hook wiri
 
 ### Autopilot task execution receipts
 
-Fresh runs record TASK_RESULT_PROTOCOL 2 once and pin it in all phase and task-role manifests;
-retained legacy runs stay on protocol 1. V2 changes neither manual drive nor Gear 4. The controller
-records an exact task execution prefix in the authorized ledger before dispatch, captures the raw
-semantic response and source observation, freezes the report, and publishes the result. Each file
+In legacy controller protocol 1, fresh runs record TASK_RESULT_PROTOCOL 2 once and pin it in all
+phase and task-role manifests, and retained runs that predate it stay on protocol 1. Controller
+protocol 2 pins the same writer protocol 2 in every role manifest. V2 changes neither manual drive
+nor Gear 4. A legacy run's implement controller records an exact task execution prefix in the
+authorized ledger before dispatch, and controller protocol 2 binds that execution's receipt path in
+the role reservation; either controller then captures the raw semantic response and source
+observation, freezes the report, and publishes the result. Each file
 uses staged fsynced atomic publication under the cooperating-writer lease; this is neither a
 multi-file transaction nor protection from hostile concurrent writers. A durable capture can finish
 publication on restart without repeating implementation. Baseline-only state cannot establish DONE.
