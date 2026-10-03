@@ -265,16 +265,16 @@ test('a duplicate field other than Requirements still fails preparation with the
 
 // The merge is narrow: only a contiguous run of plain inline values. Anything
 // else is refused by name for human reconciliation, never moved or re-indented.
-test('repeated Requirements around another field, without an inline value, or with a fence or comment are refused by name', async (t) => {
+test('repeated Requirements around another field, without an inline value, or opening a fence or comment are refused by name', async (t) => {
   for (const [label, task, reason] of [
     ['around another field', taskSection(1).replace('- **Surface:**', '- **Requirements and deliverables:** Log nothing.\n- **Surface:**'),
       /plan rejected: Task 1 repeats Requirements and deliverables around another field; only a contiguous run is merged/],
     ['without an inline value', repeatedRequirements(1, ['Set value 1 to its next number.', '\n  - Log nothing.']),
       /plan rejected: Task 1 repeats Requirements and deliverables without an inline value; only inline values are merged/],
     ['with a code fence', repeatedRequirements(1, ['Set value 1 to its next number.', 'Run it:\n  ```sh\n  npm test\n  ```']),
-      /plan rejected: Task 1 repeats Requirements and deliverables with a code fence or HTML comment; only plain values are merged/],
-    ['with an HTML comment', repeatedRequirements(1, ['Set value 1 to its next number.', 'Log nothing. <!-- reviewer note -->']),
-      /plan rejected: Task 1 repeats Requirements and deliverables with a code fence or HTML comment; only plain values are merged/],
+      /plan rejected: Task 1 repeats Requirements and deliverables with a continuation line that opens a code fence or HTML comment; only plain values are merged/],
+    ['with an HTML comment', repeatedRequirements(1, ['Set value 1 to its next number.', 'Log nothing.\n  <!-- reviewer note -->']),
+      /plan rejected: Task 1 repeats Requirements and deliverables with a continuation line that opens a code fence or HTML comment; only plain values are merged/],
   ]) {
     const repo = prepared(t, { tasks: [task, taskSection(2), taskSection(3)] });
     const result = inspectRecovery(repo.root, INPUT);
@@ -471,6 +471,20 @@ test('a recovery run imports reused evidence, reviews it, and dispatches only th
   assert.deepEqual(header(repo.read(NEW_PLAN)), { phase: 'plan', status: 'CONSUMED', next: 'implement', source: NEW_SPEC, 'consumed-by': `${DEST}/task-result-index.md` });
   assert.deepEqual(sourceBytes(repo), before, 'the source run keeps its own incomplete lifecycle');
   assert.equal(writerRoles(repo).length, 1, 'only the residual task has a writer');
+});
+
+// Inline markers read the same before and after the merge: only a continuation
+// line that opens a fence or comment would change how the gate reads it.
+test('repeated Requirements with inline comment markers merge and pass the v2 gate', async (t) => {
+  const repo = prepared(t, { tasks: [
+    repeatedRequirements(1, ['Set value 1 to its next number.', 'Keep the `<!-- steepy:managed -->` marker intact.', 'Point the `-->` arrow at the label.']),
+    taskSection(2), taskSection(3),
+  ] });
+  assert.deepEqual(inspectRecovery(repo.root, INPUT).reconciliation, []);
+  await prepareRecovery(repo.root, INPUT);
+  const [task] = controllerPlanContext({ repoRoot: repo.root, planText: repo.read(NEW_PLAN) }).tasks;
+  assert.equal(task.requirements,
+    '\n  - Set value 1 to its next number.\n  - Keep the `<!-- steepy:managed -->` marker intact.\n  - Point the `-->` arrow at the label.');
 });
 
 test('a recovery run from a plan with repeated Requirements bullets binds the merged copy and completes', async (t) => {

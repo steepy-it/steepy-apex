@@ -173,8 +173,9 @@ function prepareSpec(text, loaded) {
 // repeat its Requirements bullet. Only a contiguous run of plain inline values
 // is merged: one label at the first occurrence, each value a sub-bullet in
 // source order, its continuation lines re-indented and blank lines kept. A run
-// split by another field, a value that starts on the next line, or one with a
-// fence or comment is refused by name. The scan follows the field list the v2
+// split by another field, a value that starts on the next line, or a
+// continuation line that opens a fence or comment (re-indenting could hide that
+// opener from the gate) is refused by name. The scan follows the field list the v2
 // gate reads (labels, then blank or indented continuations, up to the notes or
 // an H2); every other duplicate is left for the gate to refuse.
 const FIELD_LABEL = /^-[ \t]+\*\*([^*]+?)(?::\*\*|\*\*:)[ \t]*(.*)$/;
@@ -205,9 +206,8 @@ function requirementRuns(lines) {
     if (at.at(-1) - at[0] !== at.length - 1) refuse('around another field; only a contiguous run is merged');
     const items = at.map((position) => fields[position]);
     if (items.some((item) => !item.value.trim())) refuse('without an inline value; only inline values are merged');
-    if (items.some((item) => [item.value, ...lines.slice(item.start + 1, item.end)]
-      .some((text) => /<!--|-->|^[ \t]*(?:`{3}|~{3})/.test(text)))) {
-      refuse('with a code fence or HTML comment; only plain values are merged');
+    if (items.some((item) => lines.slice(item.start + 1, item.end).some((line) => /^[ \t]*(?:<!--|`{3}|~{3})/.test(line)))) {
+      refuse('with a continuation line that opens a code fence or HTML comment; only plain values are merged');
     }
     return [{ task, items }];
   });
