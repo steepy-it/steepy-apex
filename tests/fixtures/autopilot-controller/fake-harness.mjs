@@ -18,6 +18,8 @@
 // A step may set:
 //   default: false    skip the role's default effects
 //   payload           string terminal response, or null for no terminal event
+//   verdict           task-reviewer status (default APPROVED); ISSUES_FOUND also
+//                     writes the issue artifact
 //   evidence          review evidence overrides { command, surfaceExit, hubExit, passed }
 //   write             [{ path, text }] extra repository-relative writes
 //   terminal          'success' (default) | 'none'
@@ -126,7 +128,12 @@ const DEFAULTS = {
     put(outputs[0], `# Task ${task} report\n\nInvocation ${invocationNumber}: RED then GREEN.\n`);
     return `status: DONE\nartifact: ${outputs[0]}\nsignals: tdd:red-green`;
   },
-  'task-reviewer': () => { put(outputs[0], `# Task ${task} review\n\nApproved.\n`); return 'status: APPROVED\nsignals: none'; },
+  'task-reviewer': () => {
+    const verdict = step.verdict ?? 'APPROVED';
+    put(outputs[0], `# Task ${task} review\n\n${verdict}.\n`);
+    if (verdict === 'ISSUES_FOUND') put(outputs[1], '# Issues\n\n1. The value must change again.\n');
+    return `status: ${verdict}\nsignals: none`;
+  },
   'final-review': () => { put(outputs[0], '# Final review\n\nApproved.\n'); return 'status: APPROVED\nsignals: none'; },
   review: () => {
     put(outputs[0], evidenceReport(step.evidence));

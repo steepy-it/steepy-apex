@@ -14,11 +14,10 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { observeSource } from '../scripts/source-observation.mjs';
 
 const ENGINE = join(dirname(fileURLToPath(import.meta.url)), '..');
 const AUTOPILOT = join(ENGINE, 'scripts', 'autopilot.mjs');
@@ -472,10 +471,23 @@ async function legacyFixture(t) {
   return sb;
 }
 
-function writeRecoveryInput(sb) {
+// The accepted snapshot is observed by a child process in the sandbox
+// environment, the same Git configuration the CLIs that consume it see.
+const OBSERVE = `const { observeSource } = await import(${JSON.stringify(pathToFileURL(join(ENGINE, 'scripts', 'source-observation.mjs')).href)});
+const { head, digest } = observeSource(process.env.STEEPY_OBSERVE_ROOT);
+process.stdout.write(JSON.stringify({ head, digest, home: process.env.HOME, gitConfig: process.env.GIT_CONFIG_GLOBAL }));`;
+function observeSandbox(sb) {
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', OBSERVE], { cwd: sb.root,
+    env: { ...sb.env, STEEPY_OBSERVE_ROOT: sb.root }, encoding: 'utf8', timeout: RUN_TIMEOUT, killSignal: 'SIGKILL' });
+  assert.equal(result.status, 0, result.stderr);
+  const observation = JSON.parse(result.stdout);
+  assert.deepEqual([observation.home, observation.gitConfig], [sb.home, sb.env.GIT_CONFIG_GLOBAL], 'observed with the sandbox environment');
+  return observation;
+}
+
+function writeRecoveryInput(sb, { manifest = `${DIR}/context/phase-implement-attempt-1.json` } = {}) {
   const digest = (path) => sha(readFileSync(join(sb.root, path)));
-  const observation = observeSource(sb.root);
-  const manifest = `${DIR}/context/phase-implement-attempt-1.json`;
+  const observation = observeSandbox(sb);
   const receipt = `${DIR}/task-1-execution-1-result.json`;
   sb.put(INPUT, `${JSON.stringify({
     schemaVersion: 1,
@@ -528,6 +540,7 @@ describe('legacy protocol 1 and recovery into protocol 2', { concurrency: CONCUR
     assert.equal(converted.status, 1);
     assert.match(converted.stderr, /the existing run uses controller protocol 1; refusing incompatible controller protocol 2/);
     assert.equal(legacy.read(`${DIR}/autopilot-status.md`), status, 'the legacy run keeps its own path and bytes');
+    assert.equal(legacy.exists(`${DIR}/autopilot-run.json`), false, 'the refused start created no run identity');
 
     const controlled = sandbox(t, { plan: TWO_TASKS });
     assertCompleted(controlled, await run(controlled, START));
@@ -573,15 +586,242 @@ describe('legacy protocol 1 and recovery into protocol 2', { concurrency: CONCUR
   });
 });
 
-test('the native smoke driver is opt-in: it parses, refuses an npm test lifecycle, and no suite imports it', () => {
-  const driver = join(FIXTURES, 'native-smoke.mjs');
-  const checked = spawnSync(process.execPath, ['--check', driver], { encoding: 'utf8', timeout: RUN_TIMEOUT, killSignal: 'SIGKILL' });
-  assert.equal(checked.status, 0, checked.stderr);
-  const source = readFileSync(driver, 'utf8');
-  assert.match(source, /if \(!values\.execute\) return refuse\(/, 'execution needs the explicit --execute option');
-  assert.match(source, /if \(process\.env\.npm_lifecycle_event === 'test'\) return refuse\(/, 'the driver refuses to run under npm test');
-  for (const name of readdirSync(join(ENGINE, 'tests')).filter((file) => file.endsWith('.test.mjs'))) {
-    const suite = readFileSync(join(ENGINE, 'tests', name), 'utf8');
-    assert.doesNotMatch(suite, /^\s*import\s[^;]*native-smoke|\bimport\(\s*[^)]*native-smoke/m, `${name} must not import the native smoke driver`);
+describe('carry-forward boundaries through the public CLIs', { concurrency: CONCURRENCY }, () => {
+  const runArtifacts = [`${DIR}/autopilot-run.json`, `${DIR}/autopilot-events.jsonl`, `${DIR}/role-1-reservation.json`];
+  const headered = (status) => specText('claude').replace('-->\n\n# Topic spec',
+    `-->\n<!-- steepy-workflow: v1\nphase: brainstorm\nstatus: ${status}\nnext: plan\nsource: none\nconsumed-by: none\n-->\n\n# Topic spec`);
+
+  test('a pre-effect refusal creates no run identity, and the corrected start runs from role 1', async (t) => {
+    const sb = sandbox(t);
+    sb.put('src/extra.mjs', 'export const extra = 1;\n');
+    const dirty = await run(sb, START);
+    assert.equal(dirty.status, 1);
+    assert.match(dirty.stderr, /refusing to drive \S+: the working tree has uncommitted changes/);
+    rmSync(join(sb.root, 'src/extra.mjs'));
+    sb.put(SPEC, headered('DRAFT'));
+    const draft = await run(sb, START);
+    assert.equal(draft.status, 1);
+    assert.match(draft.stderr, /autopilot: refused — spec lifecycle is not a READY brainstorm input/);
+    assert.doesNotMatch(draft.stderr, /HALTED/);
+    for (const path of runArtifacts) assert.equal(sb.exists(path), false, `${path} after a pre-effect refusal`);
+    assert.equal(invocations(sb).length, 0);
+    sb.put(SPEC, headered('READY'));
+    assertCompleted(sb, await run(sb, START));
+    assert.equal(reservations(sb)[0].role, 'plan', 'the refusals spent no role identity');
+    assert.equal(reservations(sb)[0].roleSequence, 1);
+  });
+
+  test('a pending response file that does not bind the raw capture is refused, never adopted or redispatched', async (t) => {
+    const sb = sandbox(t);
+    await crashed(sb, { point: 'response-captured', match: { role: 'implementer' } });
+    const lines = sb.read(`${DIR}/autopilot-events.jsonl`).split('\n').filter(Boolean);
+    assert.equal(JSON.parse(lines.at(-1)).event, 'RESPONSE_CAPTURED');
+    sb.put(`${DIR}/autopilot-events.jsonl`, `${lines.slice(0, -1).join('\n')}\n`);
+    const record = JSON.parse(sb.read(`${DIR}/role-2-response.json`));
+    sb.put(`${DIR}/role-2-response.json`, `${JSON.stringify({ ...record, rawDigest: '0'.repeat(64) })}\n`);
+    const result = await run(sb, RESUME);
+    await assertHalted(sb, result, /role 2 implementer Task 1 iteration 1 was reserved without a captured response; refusing to adopt an uncorroborated response file or dispatch it again/,
+      { reconciliation: true });
+    assert.equal(count(sb, 'implementer'), 1);
+    assert.equal(accepted(sb, 2), false);
+  });
+
+  test('a protocol-2 source run is refused by name by inspect, prepare, and the recovery start', async (t) => {
+    const sb = sandbox(t);
+    assertCompleted(sb, await run(sb, START));
+    writeRecoveryInput(sb, { manifest: `${DIR}/context/role-2.json` });
+    const before = invocations(sb).length;
+    for (const action of ['inspect', 'prepare']) {
+      const refused = recoveryCli(sb, action);
+      assert.equal(refused.status, 1, action);
+      assert.match(refused.stderr, /autopilot-recovery: controller protocol 2 source runs are not importable/, action);
+    }
+    assert.equal(sb.exists(NEW_SPEC), false, 'prepare wrote no copy');
+    // A hand-made destination spec gets the start past the CLI to the controller, which refuses the source by name too.
+    sb.put(NEW_SPEC, sb.read(SPEC));
+    const started = await run(sb, RECOVER);
+    assert.equal(started.status, 1);
+    assert.match(started.stderr, /autopilot: refused — recovery input: controller protocol 2 source runs are not importable/);
+    for (const path of [NEW_PLAN, `${NEW_DIR}/autopilot-run.json`, `${NEW_DIR}/autopilot-events.jsonl`, `${NEW_DIR}/task-1-import.json`]) {
+      assert.equal(sb.exists(path), false, path);
+    }
+    assert.equal(invocations(sb).length, before);
+  });
+
+  test('an index projection of protocol 3 is refused in a run that was not started from a recovery input', async (t) => {
+    const sb = sandbox(t);
+    await crashed(sb, { point: 'result-accepted', match: { role: 'implementer' } });
+    const index = `${DIR}/task-result-index.md`;
+    sb.put(index, `${sb.read(index)}<!-- steepy-task-results: v3 -->\n\`\`\`json\n[]\n\`\`\`\n<!-- /steepy-task-results -->\n`);
+    const result = await run(sb, RESUME);
+    await assertHalted(sb, result, /task result index protocol 3 does not match required protocol 2/, { reconciliation: true });
+    assert.deepEqual([count(sb, 'implementer'), count(sb, 'final-review'), count(sb, 'review')], [1, 0, 0]);
+    assert.equal(eventNames(sb).includes('RUN_COMPLETED'), false);
+  });
+
+  test('an import registered in a run that was not started from a recovery input halts without any writer', async (t) => {
+    const sb = sandbox(t);
+    await crashed(sb, { point: 'phase-reserved', match: { phase: 'implement' } });
+    const importPath = `${DIR}/task-1-import.json`;
+    sb.put(importPath, '{"kind":"import"}\n');
+    const last = events(sb).at(-1);
+    const forged = { schemaVersion: 2, sequence: last.sequence + 1, runId: last.runId, timestamp: new Date().toISOString(),
+      event: 'RECOVERY_IMPORTED', scope: { phase: 'implement', attempt: 1, task: 1, iteration: 1 }, importPath,
+      importDigest: sha(readFileSync(join(sb.root, importPath))) };
+    sb.put(`${DIR}/autopilot-events.jsonl`, `${sb.read(`${DIR}/autopilot-events.jsonl`)}${JSON.stringify(forged)}\n`);
+    const result = await run(sb, RESUME);
+    await assertHalted(sb, result, /recovery imports exist in a run that was not started from a recovery input/, { reconciliation: true });
+    assert.equal(count(sb, 'implementer'), 0);
+  });
+
+  test('the first fix after an import is execution 2, linked to the import, with no execution-1 writer', async (t) => {
+    const sb = await preparedRecovery(t);
+    script(sb, { plan: '', steps: { 'task-reviewer': [{ verdict: 'ISSUES_FOUND' }] } });
+    assertCompleted(sb, await run(sb, RECOVER), NEW_DIR);
+    assert.deepEqual(recoveryDispatches(sb).map(({ role, task, iteration }) => `${role}${task === null ? '' : `:${task}`}@${iteration}`),
+      ['task-reviewer:1@1', 'fix:1@2', 'task-reviewer:1@2', 'implementer:2@1', 'task-reviewer:2@1', 'final-review@1', 'review@1']);
+    assert.equal(sb.exists(`${NEW_DIR}/task-1-execution-1-result.json`), false, 'the import stands in for execution 1');
+    assert.ok(sb.exists(`${NEW_DIR}/task-1-execution-2-result.json`));
+    const baseline = JSON.parse(sb.read(`${NEW_DIR}/task-1-execution-2-baseline.json`));
+    assert.deepEqual([baseline.config.role, baseline.config.execution, baseline.config.previousImport, baseline.config.previousState],
+      ['fix', 2, `${NEW_DIR}/task-1-import.json`, null]);
+    assert.equal(baseline.previousDigest, sha(readFileSync(join(sb.root, `${NEW_DIR}/task-1-import.json`))));
+    const index = sb.read(`${NEW_DIR}/task-result-index.md`);
+    assert.deepEqual(JSON.parse(/```json\n([\s\S]*?)\n```/.exec(index)[1]).map(({ task, kind }) => [task, kind]), [['1', 'execution'], ['2', 'execution']]);
+  });
+});
+
+// The driver runs here only in a sandbox: an explicit minimal environment with
+// no npm lifecycle, a temporary HOME, and PATH shims that answer `--version`
+// and otherwise run the fake harness. No provider binary is reachable.
+describe('the opt-in native smoke driver, without any provider', { concurrency: CONCURRENCY }, () => {
+  const DRIVER = join(FIXTURES, 'native-smoke.mjs');
+  const NATIVE_PLAN = `<!-- steepy-workflow: v1\nphase: plan\nstatus: DRAFT\nnext: implement\nsource: .apex/work/specs/native-smoke.md\nconsumed-by: none\n-->
+# Plan
+
+## Task 1 — punctuate the greeting
+
+- **Requirements and deliverables:** greet returns Hello, <name>!.
+- **Relevant global constraints:** Node built-ins only.
+- **Surface:** \`src\`
+- **Specialist agent:** \`src-agent\`
+- **Exact paths:** \`src/greeting.mjs\`
+- **Test command:** \`npm test\`
+- **Dependencies:** none
+- **Complexity:** mechanical
+- **Success criteria:** SC1
+`;
+
+  function driverSandbox(t) {
+    const base = mkdtempSync(join(tmpdir(), 'steepy-native-driver-'));
+    t.after(() => rmSync(base, { recursive: true, force: true }));
+    const [bin, home, control] = ['bin', 'home', 'control'].map((name) => join(base, name));
+    for (const dir of [bin, home, control]) mkdirSync(dir, { recursive: true });
+    for (const name of ['claude', 'codex', 'opencode']) {
+      writeFileSync(join(bin, name), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo version >> ${JSON.stringify(join(control, 'versions.log'))}; echo "fake-${name} 0.0.0 (synthetic)"; exit 0; fi\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE)} "$@"\n`);
+      chmodSync(join(bin, name), 0o755);
+    }
+    writeFileSync(join(control, 'script.json'), `${JSON.stringify({ plan: NATIVE_PLAN })}\n`);
+    const gitBin = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const env = {
+      PATH: [bin, dirname(gitBin), dirname(process.execPath), '/usr/bin', '/bin'].join(':'),
+      HOME: home, XDG_CONFIG_HOME: join(home, '.config'), TMPDIR: tmpdir(),
+      GIT_CONFIG_GLOBAL: join(base, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1', STEEPY_FAKE_CONTROL: control,
+    };
+    writeFileSync(env.GIT_CONFIG_GLOBAL, '');
+    const drive = (args, extra = {}) => spawnSync(process.execPath, [DRIVER, ...args], {
+      env: { ...env, ...extra }, encoding: 'utf8', timeout: RUN_TIMEOUT * 2, killSignal: 'SIGKILL' });
+    // A payload with only the three files the driver requires before any effect.
+    const minimalPayload = () => {
+      const payload = join(base, 'payload');
+      for (const path of ['scripts/autopilot.mjs', 'scripts/autopilot-runtime.mjs', 'adapters/headless.mjs']) {
+        mkdirSync(dirname(join(payload, path)), { recursive: true });
+        writeFileSync(join(payload, path), '// stub\n');
+      }
+      return payload;
+    };
+    const listing = (dir) => readdirSync(dir, { recursive: true }).sort();
+    const harnessCalls = () => (existsSync(join(control, 'versions.log')) ? readFileSync(join(control, 'versions.log'), 'utf8').split('\n').filter(Boolean).length : 0)
+      + (existsSync(join(control, 'invocations.jsonl')) ? readFileSync(join(control, 'invocations.jsonl'), 'utf8').split('\n').filter(Boolean).length : 0);
+    return { base, bin, control, drive, minimalPayload, listing, harnessCalls };
   }
+
+  test('it parses and no suite imports it', () => {
+    const checked = spawnSync(process.execPath, ['--check', DRIVER], { encoding: 'utf8', timeout: RUN_TIMEOUT, killSignal: 'SIGKILL' });
+    assert.equal(checked.status, 0, checked.stderr);
+    for (const name of readdirSync(join(ENGINE, 'tests')).filter((file) => file.endsWith('.test.mjs'))) {
+      const suite = readFileSync(join(ENGINE, 'tests', name), 'utf8');
+      assert.doesNotMatch(suite, /^\s*import\s[^;]*native-smoke|\bimport\(\s*[^)]*native-smoke/m, `${name} must not import the native smoke driver`);
+    }
+  });
+
+  for (const [label, args, extra, reason] of [
+    ['without --execute', [], {}, /native-smoke: refusing to run without the explicit '--execute' option/],
+    ['inside an npm test lifecycle', ['--execute'], { npm_lifecycle_event: 'test' }, /native-smoke: refusing to run inside an npm test lifecycle/],
+  ]) {
+    test(`${label} it refuses with exit 2 before any effect`, (t) => {
+      const sb = driverSandbox(t);
+      const evidence = join(sb.base, 'evidence');
+      const refused = sb.drive([...args, '--engine-root', sb.minimalPayload(), '--evidence', evidence], extra);
+      assert.equal(refused.status, 2);
+      assert.match(refused.stderr, reason);
+      assert.equal(existsSync(evidence), false, 'no evidence directory');
+      assert.equal(sb.harnessCalls(), 0, 'no harness lookup');
+    });
+  }
+
+  test('an evidence directory inside the payload is refused before it is created', (t) => {
+    const sb = driverSandbox(t);
+    const payload = sb.minimalPayload();
+    const before = sb.listing(payload);
+    const refused = sb.drive(['--execute', '--engine-root', payload, '--evidence', join(payload, 'ev', 'nested')]);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /^native-smoke: evidence directory must be outside the engine root\n$/);
+    assert.equal(existsSync(join(payload, 'ev')), false);
+    assert.deepEqual(sb.listing(payload), before, 'the frozen payload is untouched');
+    assert.equal(sb.harnessCalls(), 0);
+  });
+
+  test('a payload holding a symlink is a clean refusal before any evidence', (t) => {
+    const sb = driverSandbox(t);
+    const payload = sb.minimalPayload();
+    symlinkSync('autopilot.mjs', join(payload, 'scripts', 'link.mjs'));
+    const evidence = join(sb.base, 'evidence');
+    const refused = sb.drive(['--execute', '--engine-root', payload, '--evidence', evidence]);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /^native-smoke: the frozen payload must hold only ordinary files and directories: scripts\/link\.mjs\n$/);
+    assert.doesNotMatch(refused.stderr, /^\s+at /m, 'no stack trace');
+    assert.equal(existsSync(evidence), false);
+    assert.equal(sb.harnessCalls(), 0);
+  });
+
+  test('a substituted harness never yields a native PASS, and response payloads stay out of the evidence', (t) => {
+    const sb = driverSandbox(t);
+    const payload = join(sb.base, 'frozen');
+    for (const entry of ['scripts', 'adapters', 'skills', '.claude-plugin', '.codex-plugin', 'package.json', 'cordis.patch.yml']) {
+      cpSync(join(ENGINE, entry), join(payload, entry), { recursive: true });
+    }
+    const evidence = join(sb.base, 'evidence');
+    const result = sb.drive(['--execute', '--engine-root', payload, '--evidence', evidence, '--timeout-ms', String(RUN_TIMEOUT)]);
+    assert.equal(result.status, 1, 'only a PASS exits 0');
+    const summary = JSON.parse(readFileSync(join(evidence, 'native-smoke.json'), 'utf8'));
+    assert.deepEqual([summary.result, summary.observation], ['NOT NATIVE', 'substituted']);
+    assert.equal(summary.harnessVersion.path, join(sb.bin, 'codex'));
+    assert.deepEqual([summary.run.status, summary.run.fingerprintBound, summary.engine.immutable], ['RUN_COMPLETED', true, true]);
+    assert.ok(summary.descriptorShapes && !Object.hasOwn(summary, 'descriptors'), 'descriptor shapes are named as a re-derivation');
+    assert.deepEqual(summary.roles.map(({ role, accepted: done }) => [role, done]), [['plan', true], ['implementer', true], ['final-review', true], ['review', true]]);
+    for (const role of summary.roles) {
+      assert.equal(typeof role.requestedModel, 'string', 'the applied selection comes from the reservation');
+      assert.deepEqual(Object.keys(role.response).sort(), ['bytes', 'capturePersisted', 'exit', 'observedModel', 'rawDigest', 'sessionId', 'sha256', 'terminalReason', 'transportError']);
+      assert.equal(typeof role.raw.sha256, 'string');
+    }
+    const copied = sb.listing(evidence);
+    assert.ok(copied.includes(join('run', 'autopilot-events.jsonl')) && copied.includes(join('run', 'role-2-reservation.json')));
+    assert.deepEqual(copied.filter((path) => /-response\.json$|\.raw\.jsonl$/.test(path)), [], 'payload-bearing captures are recorded by digest only');
+    const payloadText = 'status: DONE\nartifact: .apex/work/tasks/native-smoke/task-1-report.md\nsignals: tdd:red-green';
+    for (const path of copied.filter((entry) => statSync(join(evidence, entry)).isFile())) {
+      const text = readFileSync(join(evidence, path), 'utf8');
+      assert.ok(!text.includes(payloadText) && !text.includes(JSON.stringify(payloadText).slice(1, -1)), `${path} must not carry the verbatim writer payload`);
+    }
+  });
 });

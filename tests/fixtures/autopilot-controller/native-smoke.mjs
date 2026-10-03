@@ -1,28 +1,42 @@
 #!/usr/bin/env node
-// Opt-in native smoke for Gear-3 controller protocol 2. It is never imported or
-// run by `npm test`: it refuses without --execute and under an npm test
-// lifecycle, and it uses the caller's real environment (provider credentials and
-// profiles) only when explicitly executed.
+// Opt-in native smoke for Gear-3 controller protocol 2. `npm test` never imports
+// it and never runs it against a provider: it refuses without --execute and
+// under an npm test lifecycle, before any effect. It uses the caller's real
+// environment (provider credentials and profiles) only when explicitly executed.
 //
 //   node tests/fixtures/autopilot-controller/native-smoke.mjs --execute \
 //     --engine-root <frozen candidate payload> --evidence <absent or empty dir> \
 //     [--harness codex|claude|opencode] [--timeout-ms <ms>] [--keep-repo]
 //
-// It digests the candidate payload before and after the run (any change is a
-// FAIL), records the harness CLI version, creates a sacrificial Git repository
-// with a minimal coherent hub and a one-task spec, runs the candidate's own
-// `scripts/autopilot.mjs --controller-protocol 2` there, and copies the
-// controller's journal, reservations, response records, manifests, and readable
-// logs into the evidence directory. The summary binds the candidate payload
-// digest and runtime fingerprint, the applied descriptors and their recorded
-// model selection, and the events the run actually produced. Raw captures are
-// recorded by digest and size only. A PASS here is a native observation of this
-// candidate and harness on this host, nothing more.
+// Before any write it refuses a payload that holds anything but ordinary files
+// and directories, and an evidence directory inside the payload. It digests the
+// candidate payload (every directory and file by path, mode, and bytes) before
+// and after the run, and any change is a FAIL. It records the harness binary's
+// resolved path and CLI version, creates a sacrificial Git repository with a
+// minimal coherent hub and a one-task spec, and runs the candidate's own
+// `scripts/autopilot.mjs --controller-protocol 2` there.
+//
+// Evidence policy (`summary.evidencePolicy`): it copies only payload-free or
+// safe-mode-redacted controller artifacts — the journal, run identity,
+// projection, reservations, phase receipts, role manifests, readable role logs,
+// and the conductor's console output. Raw captures and role response records
+// are recorded by SHA-256 and size only: a response record keeps the terminal
+// payload verbatim, so only its non-payload fields are copied into the summary.
+//
+// The applied model selection of each role is `summary.roles[*]` (requested
+// model, descriptor model, degradation reason) from the controller's own
+// reservations; `summary.descriptorShapes` is only a per-tier re-derivation for
+// reference. A harness binary resolved under a temporary directory, the engine
+// root, or the evidence directory is a substitute: such a run is reported as
+// NOT NATIVE, never PASS. Any other run is `unverified-native` until a human
+// confirms `harnessVersion.path` and `harnessVersion.stdout` name the real
+// provider binary; only then is a PASS native evidence of this candidate and
+// harness on this host, nothing more.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -30,41 +44,69 @@ const USAGE = 'usage: node tests/fixtures/autopilot-controller/native-smoke.mjs 
 const HARNESSES = ['codex', 'claude', 'opencode'];
 const SPEC_NAME = 'native-smoke';
 const BRANCH = 'gear3-native-smoke';
+const EVIDENCE_POLICY = Object.freeze({
+  copied: ['autopilot-run.json', 'autopilot-events.jsonl', 'autopilot-status.md', 'role-N-reservation.json', 'role-N-receipt.json',
+    'context/role-N.json', 'role-N.log (safe-mode readable)', 'conductor.stdout.log', 'conductor.stderr.log', 'repository.diff'],
+  digestOnly: ['role-N.raw.jsonl', 'role-N-response.json (terminal payload kept verbatim; non-payload fields in summary.roles)'],
+});
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const inside = (child, parent) => child === parent || child.startsWith(`${parent}${sep}`);
 
+class Refusal extends Error {}
+
 function refuse(message, code = 2) {
   console.error(`native-smoke: ${message}`);
-  console.error(USAGE);
+  if (code === 2) console.error(USAGE);
   return code;
 }
 
-// Every ordinary file of the payload by path, mode, and bytes, in sorted order.
+// Every directory and ordinary file of the payload by path, mode, and bytes,
+// in sorted order; anything else is a refusal.
 function payloadDigest(root) {
   const entries = [];
   const walk = (dir) => {
     for (const name of readdirSync(dir).sort()) {
       if (name === '.git' || name === 'node_modules') continue;
       const path = join(dir, name);
+      const rel = relative(root, path).split(sep).join('/');
       const stat = lstatSync(path);
-      if (stat.isDirectory()) walk(path);
-      else if (stat.isFile()) entries.push(`${relative(root, path).split(sep).join('/')}\0${(stat.mode & 0o777).toString(8)}\0${sha(readFileSync(path))}`);
-      else throw new Error(`the frozen payload must hold only ordinary files and directories: ${relative(root, path)}`);
+      if (stat.isDirectory()) {
+        entries.push(`${rel}/\0${(stat.mode & 0o777).toString(8)}`);
+        walk(path);
+      } else if (stat.isFile()) entries.push(`${rel}\0${(stat.mode & 0o777).toString(8)}\0${sha(readFileSync(path))}`);
+      else throw new Refusal(`the frozen payload must hold only ordinary files and directories: ${rel}`);
     }
   };
   walk(root);
-  return { digest: sha(`steepy-native-smoke-payload\n${entries.join('\n')}\n`), files: entries.length };
+  return { digest: sha(`steepy-native-smoke-payload\n${entries.join('\n')}\n`), entries: entries.length };
 }
 
+// Containment is decided on the nearest existing ancestor's physical path,
+// before any directory is created.
 function evidenceDirectory(path, engineRoot) {
   const absolute = resolve(path);
-  if (existsSync(absolute)) {
-    if (!lstatSync(absolute).isDirectory() || readdirSync(absolute).length > 0) throw new Error(`evidence directory must be absent or empty: ${absolute}`);
+  let ancestor = absolute;
+  const missing = [];
+  while (!existsSync(ancestor)) {
+    missing.unshift(basename(ancestor));
+    ancestor = dirname(ancestor);
   }
-  mkdirSync(absolute, { recursive: true });
-  const real = realpathSync(absolute);
-  if (inside(real, engineRoot)) throw new Error('evidence directory must be outside the engine root');
-  return real;
+  const physical = join(realpathSync(ancestor), ...missing);
+  if (inside(physical, engineRoot)) throw new Refusal('evidence directory must be outside the engine root');
+  if (missing.length === 0 && (!lstatSync(absolute).isDirectory() || readdirSync(absolute).length > 0)) {
+    throw new Refusal(`evidence directory must be absent or empty: ${absolute}`);
+  }
+  try { mkdirSync(physical, { recursive: true }); } catch (error) { throw new Refusal(`cannot create the evidence directory: ${error.message}`); }
+  return physical;
+}
+
+// A binary under a temporary directory, the engine root, or the evidence
+// directory is a stand-in for the provider, never the provider itself.
+function substitutedHarness(path, engineRoot, evidence) {
+  if (path === null) return false;
+  const physical = (value) => { try { return realpathSync(value); } catch { return resolve(value); } };
+  const binary = physical(path);
+  return [tmpdir(), '/tmp', engineRoot, evidence].map(physical).some((root) => inside(binary, root) || inside(resolve(path), root));
 }
 
 function git(repo, ...args) {
@@ -143,30 +185,38 @@ function runConductor(engineRoot, repo, timeoutMs, evidence) {
   });
 }
 
-// Controller-owned artifacts only, by their exact role-numbered names.
+const digestOf = (path) => {
+  if (!existsSync(path)) return null;
+  const bytes = readFileSync(path);
+  return { sha256: sha(bytes), bytes: bytes.length };
+};
+
+// Controller-owned artifacts only, by their exact role-numbered names, under
+// EVIDENCE_POLICY: copied artifacts are payload-free or safe-mode redacted.
 function collect(repo, evidence) {
   const dir = join(repo, '.apex', 'work', 'tasks', SPEC_NAME);
   const copy = (name) => {
     const source = join(dir, name);
-    if (!existsSync(source)) return false;
-    put(join(evidence, 'run'), name, readFileSync(source));
-    return true;
+    if (existsSync(source)) put(join(evidence, 'run'), name, readFileSync(source));
   };
   for (const name of ['autopilot-run.json', 'autopilot-events.jsonl', 'autopilot-status.md']) copy(name);
   const events = existsSync(join(dir, 'autopilot-events.jsonl'))
     ? readFileSync(join(dir, 'autopilot-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [];
   const roles = events.filter(({ event }) => event === 'ROLE_RESERVED' || event === 'REPAIR_RESERVED').map((reservation) => {
     const n = reservation.roleSequence;
-    for (const name of [`role-${n}-reservation.json`, `role-${n}-response.json`, `role-${n}-receipt.json`, `role-${n}.log`, `context/role-${n}.json`]) copy(name);
-    const raw = join(dir, `role-${n}.raw.jsonl`);
-    const response = existsSync(join(dir, `role-${n}-response.json`)) ? JSON.parse(readFileSync(join(dir, `role-${n}-response.json`), 'utf8')) : null;
+    for (const name of [`role-${n}-reservation.json`, `role-${n}-receipt.json`, `role-${n}.log`, `context/role-${n}.json`]) copy(name);
+    const responsePath = join(dir, `role-${n}-response.json`);
+    const record = existsSync(responsePath) ? JSON.parse(readFileSync(responsePath, 'utf8')) : null;
     return {
       roleSequence: n, role: reservation.role, scope: reservation.scope,
       requestedModel: reservation.requestedModel, descriptorModel: reservation.descriptorModel, degradationReason: reservation.degradationReason,
-      captured: response !== null, terminalReason: response?.terminalReason ?? null, exit: response?.exit ?? null,
-      observedModel: response?.observedModel ?? null,
+      response: record === null ? null : {
+        ...digestOf(responsePath), terminalReason: record.terminalReason, exit: record.exit, sessionId: record.sessionId,
+        transportError: record.transportError, capturePersisted: record.capturePersisted, observedModel: record.observedModel,
+        rawDigest: record.rawDigest,
+      },
       accepted: events.some((event) => event.event === 'RESULT_ACCEPTED' && event.roleSequence === n),
-      raw: existsSync(raw) ? { sha256: sha(readFileSync(raw)), bytes: readFileSync(raw).length } : null,
+      raw: digestOf(join(dir, `role-${n}.raw.jsonl`)),
     };
   });
   return { events, roles };
@@ -188,18 +238,25 @@ export async function main(argv = process.argv.slice(2)) {
   const timeoutMs = values['timeout-ms'] === undefined ? 60 * 60 * 1000 : Number(values['timeout-ms']);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000) return refuse('--timeout-ms must be an integer of at least 1000');
 
+  // Every refusal below precedes the first write and the harness lookup.
   let engineRoot;
+  let before;
   let evidence;
   try {
+    if (!existsSync(values['engine-root'])) throw new Refusal(`engine root does not exist: ${values['engine-root']}`);
     engineRoot = realpathSync(resolve(values['engine-root']));
     for (const path of ['scripts/autopilot.mjs', 'scripts/autopilot-runtime.mjs', 'adapters/headless.mjs']) {
-      if (!existsSync(join(engineRoot, path))) throw new Error(`engine root is not a steepy-apex payload: missing ${path}`);
+      if (!existsSync(join(engineRoot, path))) throw new Refusal(`engine root is not a steepy-apex payload: missing ${path}`);
     }
+    before = payloadDigest(engineRoot);
     evidence = evidenceDirectory(values.evidence, engineRoot);
-  } catch (error) { return refuse(error.message, 1); }
+  } catch (error) {
+    if (error instanceof Refusal) return refuse(error.message, 1);
+    throw error;
+  }
 
-  const summary = { schemaVersion: 1, kind: 'controller-protocol-2-native-smoke', observation: 'native', executedAt: new Date().toISOString(),
-    harness, node: process.version, platform: `${process.platform}-${process.arch}` };
+  const summary = { schemaVersion: 2, kind: 'controller-protocol-2-native-smoke', executedAt: new Date().toISOString(),
+    harness, node: process.version, platform: `${process.platform}-${process.arch}`, evidencePolicy: EVIDENCE_POLICY };
   const finish = (result, reason = null) => {
     Object.assign(summary, { result, reason });
     writeFileSync(join(evidence, 'native-smoke.json'), `${JSON.stringify(summary, null, 2)}\n`);
@@ -207,14 +264,15 @@ export async function main(argv = process.argv.slice(2)) {
     return result === 'PASS' ? 0 : 1;
   };
 
-  const before = payloadDigest(engineRoot);
   const { fingerprintAutopilotRuntime } = await import(pathToFileURL(join(engineRoot, 'scripts', 'autopilot-runtime.mjs')).href);
   const { headlessCommand } = await import(pathToFileURL(join(engineRoot, 'adapters', 'headless.mjs')).href);
   const runtime = fingerprintAutopilotRuntime(engineRoot);
   const pkg = JSON.parse(readFileSync(join(engineRoot, 'package.json'), 'utf8'));
-  summary.engine = { root: engineRoot, version: pkg.version, payloadDigest: before.digest, payloadFiles: before.files, runtimeFingerprint: runtime.fingerprint };
-  // The descriptor shape for every tier, with the prompt elided.
-  summary.descriptors = Object.fromEntries(['cheap', 'standard', 'most-capable'].map((modelTier) => {
+  summary.engine = { root: engineRoot, version: pkg.version, payloadDigest: before.digest, payloadEntries: before.entries, runtimeFingerprint: runtime.fingerprint };
+  // A reference re-derivation per tier, with the prompt elided. It omits the
+  // controller's own display names and any OpenCode model mappings; the applied
+  // selection is summary.roles.
+  summary.descriptorShapes = Object.fromEntries(['cheap', 'standard', 'most-capable'].map((modelTier) => {
     const descriptor = headlessCommand(harness, '<prompt>', { displayName: 'steepy-native-smoke', modelTier });
     return [modelTier, { cmd: descriptor.cmd, args: descriptor.args, modelSelection: descriptor.modelSelection ?? null,
       resolvedModel: descriptor.resolvedModel ?? null, degradationReason: descriptor.degradationReason ?? null, capabilities: descriptor.capabilities }];
@@ -224,6 +282,11 @@ export async function main(argv = process.argv.slice(2)) {
   const version = spawnSync(harness, ['--version'], { encoding: 'utf8', timeout: 30_000 });
   summary.harnessVersion = { path: located.status === 0 ? located.stdout.trim() : null, status: version.status,
     stdout: (version.stdout ?? '').trim(), stderr: (version.stderr ?? '').trim(), error: version.error?.message ?? null };
+  const substituted = substitutedHarness(summary.harnessVersion.path, engineRoot, evidence);
+  summary.observation = substituted ? 'substituted' : 'unverified-native';
+  summary.verification = substituted
+    ? 'The harness binary resolves under a temporary directory, the engine root, or the evidence directory: this run is synthetic, never native evidence.'
+    : 'A human must confirm that harnessVersion.path and harnessVersion.stdout name the real provider binary before a PASS counts as native evidence.';
   if (version.error || version.status !== 0) return finish('NOT RUN', `harness "${harness}" is unavailable: ${version.error?.message ?? `--version exited ${version.status}`}`);
 
   const repo = sacrificialRepository(harness);
@@ -249,15 +312,17 @@ export async function main(argv = process.argv.slice(2)) {
       summary.roles = roles;
     }
   } finally {
-    const after = payloadDigest(engineRoot);
-    summary.engine.payloadDigestAfter = after.digest;
-    summary.engine.immutable = after.digest === before.digest;
+    let after = null;
+    try { after = payloadDigest(engineRoot).digest; } catch (error) { summary.engine.payloadError = error.message; }
+    summary.engine.payloadDigestAfter = after;
+    summary.engine.immutable = after === before.digest;
     if (!values['keep-repo']) rmSync(repo, { recursive: true, force: true });
   }
   if (!summary.engine.immutable) return finish('FAIL', 'the candidate payload changed during the run');
   if (failure !== null) return finish('FAIL', failure);
   if (!summary.run.fingerprintBound) return finish('FAIL', 'the run did not bind the candidate runtime fingerprint');
   if (summary.run.status !== 'RUN_COMPLETED') return finish('FAIL', `the controller run ended with ${summary.run.status ?? 'no journal'}`);
+  if (substituted) return finish('NOT NATIVE', 'the run completed with a substituted harness binary');
   return finish('PASS');
 }
 
