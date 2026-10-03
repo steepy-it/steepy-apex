@@ -682,17 +682,26 @@ function latestAcceptedWriter(ctx, task = null) {
     && (task === null || entry.scope.task === Number(task))).at(-1) ?? null;
 }
 
+// The canonical Gear-3 index metadata, immediately below the lifecycle header:
+// the run's spec (a recovery run's prepared copy) and the criteria and
+// branch-diff artifacts materialized before each review.
+const indexMetadata = (paths) => `source-spec: ${paths.spec}\ncriteria: ${paths.criteria}\nbranch-diff: ${paths.branchDiff}\n`;
+
 function ensureIndex(ctx) {
   const { paths } = ctx;
   const text = optionalWork(ctx.root, paths.index, 'task-result-index');
   if (text === null) {
-    writeWorkPath(ctx.root, paths.index, `<!-- steepy-workflow: v1\nphase: implement\nstatus: DRAFT\nnext: review\nsource: ${paths.plan}\nconsumed-by: none\n-->\n# Task results\n\n`,
+    writeWorkPath(ctx.root, paths.index, `<!-- steepy-workflow: v1\nphase: implement\nstatus: DRAFT\nnext: review\nsource: ${paths.plan}\nconsumed-by: none\n-->\n${indexMetadata(paths)}\n# Task results\n\n`,
       { family: 'task-result-index', createOnly: true });
     return;
   }
-  const header = gate(ctx, 'task-result index', () => lifecycleOf(text.toString('utf8')));
+  const source = text.toString('utf8');
+  const header = gate(ctx, 'task-result index', () => lifecycleOf(source));
   if (!header || header.phase !== 'implement' || header.source !== paths.plan) {
     halt(ctx, 'task-result index lifecycle does not bind the run plan', { reconciliation: true });
+  }
+  if (!source.slice(LIFECYCLE.exec(source)[0].length).startsWith(`\n${indexMetadata(paths)}`)) {
+    halt(ctx, 'task-result index metadata does not bind the run spec, criteria, and branch diff', { reconciliation: true });
   }
 }
 
@@ -1026,11 +1035,14 @@ async function finalReview(ctx, plan, iteration) {
         ...indexSelection(ctx),
       });
     },
+    // A recovery run's whole-branch diff also holds the delta its recovery
+    // input accepted; the final reviewer gets that declaration, not the input.
     manifest: (roleSequence) => buildFinalReviewManifest({
       repoRoot: root, runId: ctx.state.runId, attempt: 1, modelTier: finalReviewerTier(plan),
       criteriaPath: paths.criteria, taskResultIndexPath: paths.index, branchDiffPath: paths.branchDiff,
       standardPaths: standardUnion(plan), outputs: [paths.finalReport, paths.finalIssues],
       ...(testCommand === undefined ? {} : { testCommand }), criterionIds, contract: contractFor(ctx, roleSequence),
+      ...(ctx.recovery ? { recovery: { input: paths.recoveryInput, delta: loadRecoveryInput(root, paths.recoveryInput).input.current.delta } } : {}),
     }),
   });
 }

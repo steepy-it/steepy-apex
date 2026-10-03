@@ -2890,3 +2890,13 @@ test('controller protocol 2 prose states the plain-text response rows, never JSO
     assert.ok(flatSkill(`implement/${file}`).includes(site), file);
   }
 });
+
+// A native recovery run's final reviewer blocked on a branch-diff path the
+// recovery input had accepted as its explained delta, which it could not see.
+test('the final-review prompt reads a recovery run\'s declared delta as explained changes, not unattributed task work', () => {
+  const prompt = flatSkill('implement/final-review-prompt.md');
+  const sentence = 'In a recovery run, paths in the manifest\'s declared recovery delta (`manifest.recovery.delta`) are explained changes accepted by the recovery input, not unattributed task work.';
+  assert.ok(prompt.includes(sentence));
+  const metadata = prompt.indexOf('Validate the task-result index\'s canonical grammar and its exact `source-spec`, `criteria`, and `branch-diff` metadata');
+  assert.ok(metadata !== -1 && prompt.indexOf(sentence) > metadata, 'the delta rule sits beside the index validation in the reviewer prompt');
+});

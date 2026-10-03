@@ -472,6 +472,41 @@ test('task role builders expose exactly the approved eager inventories', (t) => 
   }, { repoRoot }), /criteria-only artifact.*is a spec path/i);
 });
 
+test('only a final-review manifest declares a recovery delta, in its closed shape bound to the run\'s recovery input', (t) => {
+  const repoRoot = materialize(t);
+  const dir = '.apex/work/tasks/context-efficient';
+  const input = `${dir}/recovery-input.json`;
+  const delta = ['.apex/standards/scripts.md', 'src/a.mjs'];
+  const bytes = `${JSON.stringify({ current: { delta } })}\n`;
+  writeFileSync(join(repoRoot, input), bytes);
+  const recoveryInputDigest = createHash('sha256').update(bytes).digest('hex');
+  const build = (extra) => buildFinalReviewManifest({
+    ...base, repoRoot, criteriaPath: `${dir}/success-criteria.md`, taskResultIndexPath: `${dir}/task-result-index.md`,
+    branchDiffPath: `${dir}/branch-diff.txt`, standardPaths: ['.apex/standards/scripts.md'], contract: { recoveryInputDigest }, ...extra,
+  });
+  const manifest = build({ recovery: { input, delta } });
+  assert.deepEqual(manifest.recovery, { input, delta });
+  assert.deepEqual(validateContextManifest(manifest, { repoRoot }), manifest);
+  assert.equal(Object.hasOwn(build({}), 'recovery'), false, 'an ordinary final review declares none');
+  for (const [recovery, reason] of [
+    [{ input, delta, paths: delta }, /recovery fields must be exactly input, delta/],
+    [{ input, delta: [...delta].reverse() }, /recovery delta must be sorted unique source paths/],
+    [{ input, delta: ['../escape.md'] }, /recovery delta must be sorted unique source paths/],
+    [{ input, delta: ['src/a.mjs'] }, /recovery delta does not match the recovery input/],
+    [{ input: '.apex/work/tasks/other/recovery-input.json', delta }, /recovery input must be this run's recovery-input\.json/],
+    [{ input: `${dir}/task-result-index.md`, delta }, /recovery input must be this run's recovery-input\.json/],
+  ]) {
+    assert.throws(() => validateContextManifest({ ...manifest, recovery }, { repoRoot }), reason, JSON.stringify(recovery));
+  }
+  for (const contract of [{}, { recoveryInputDigest: '0'.repeat(64) }]) {
+    assert.throws(() => validateContextManifest({ ...manifest, contract }, { repoRoot }), /recovery input digest does not match/);
+  }
+  const reviewer = buildTaskReviewerManifest({ ...base, repoRoot, task: 1, briefPath: `${dir}/task-1-brief.md`,
+    reportPath: `${dir}/task-1-report.md`, taskDiffPath: `${dir}/task-1.diff`, standardPaths: ['.apex/standards/scripts.md'] });
+  assert.throws(() => validateContextManifest({ ...reviewer, recovery: { input, delta } }, { repoRoot }),
+    /only a final-review manifest declares a recovery delta/);
+});
+
 test('criteria materializer writes deterministic attributed criteria-only bytes', (t) => {
   const repoRoot = materialize(t);
   const specPath = '.apex/work/specs/sequential-criteria.md';

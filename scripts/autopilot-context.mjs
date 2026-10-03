@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import {
   existsSync, lstatSync, realpathSync, statSync,
 } from 'node:fs';
@@ -14,6 +15,7 @@ import {
 } from './stable-paths.mjs';
 import { parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
 import { inspectTaskImport, parseTaskResultProjection } from './task-results.mjs';
+import { assertSourcePath } from './source-observation.mjs';
 import { inspectCorrectionEvidence } from './reviewer-response.mjs';
 import { materializeTaskBrief, parseExecutablePlan } from './autopilot-plan.mjs';
 
@@ -58,7 +60,7 @@ const ROLE_PHASE = Object.freeze({
 const TASK_SCOPED_ROLES = new Set(['implementer', 'task-reviewer', 'fix', 'task-review-correction']);
 const MANIFEST_KEYS = new Set([
   'schemaVersion', 'runId', 'scope', 'objective', 'required', 'onDemand', 'outputs',
-  'modelTier', 'attempt', 'testCommand', 'criterionIds', 'contract',
+  'modelTier', 'attempt', 'testCommand', 'criterionIds', 'contract', 'recovery',
 ]);
 const SCOPE_KEYS = new Set(['phase', 'task', 'role']);
 const INPUT_KEYS = new Set(['path', 'purpose', 'read', 'bytes', 'available']);
@@ -650,6 +652,7 @@ function commonManifest(input, { phase, role, task, objective, requiredInputs, o
   if (input.criterionIds !== undefined) manifest.criterionIds = safeStringArray(input.criterionIds, 'criterionIds');
   const contract = scalarContract(input.contract);
   if (contract !== undefined) manifest.contract = contract;
+  if (input.recovery !== undefined) manifest.recovery = input.recovery;
   return validateContextManifest(manifest, { repoRoot });
 }
 
@@ -1076,6 +1079,36 @@ function validateInputEntry(entry, index, list, repoRoot, confinedFamily = null)
   };
 }
 
+// A recovery run's final reviewer gets the delta its recovery input accepted,
+// so a branch-diff path no task changed reads as an explained change. The
+// closed declaration names this run's exact input and repeats its
+// `current.delta`, bound to the input digest the run recorded.
+function recoveryDeclaration(root, value, { role, index, contract }) {
+  if (role !== 'final-review') throw new Error('only a final-review manifest declares a recovery delta');
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).sort().join() !== 'delta,input') throw new Error('recovery fields must be exactly input, delta');
+  let input = null;
+  try { input = parseWorkPath(value.input, 'work-output', 'recovery-input').path; } catch { /* refused below */ }
+  if (input === null || index === undefined || dirname(input) !== dirname(index.path)) {
+    throw new Error('recovery input must be this run\'s recovery-input.json');
+  }
+  try {
+    if (!Array.isArray(value.delta)) throw new Error('not a list');
+    value.delta.forEach(assertSourcePath);
+    if (JSON.stringify([...new Set(value.delta)].sort()) !== JSON.stringify(value.delta)) throw new Error('not sorted');
+  } catch { throw new Error('recovery delta must be sorted unique source paths'); }
+  const bytes = readWorkPath(root, input, { expect: 'work-output', family: 'recovery-input' });
+  if (contract?.recoveryInputDigest !== createHash('sha256').update(bytes).digest('hex')) {
+    throw new Error('recovery input digest does not match contract.recoveryInputDigest');
+  }
+  let declared;
+  try { declared = JSON.parse(bytes.toString('utf8'))?.current?.delta; } catch { /* refused below */ }
+  if (JSON.stringify(declared) !== JSON.stringify(value.delta)) {
+    throw new Error('recovery delta does not match the recovery input current.delta');
+  }
+  return { input, delta: [...value.delta] };
+}
+
 export function validateContextManifest(manifest, { repoRoot }) {
   const root = safeRoot(repoRoot);
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) throw new Error('manifest must be an object');
@@ -1129,6 +1162,11 @@ export function validateContextManifest(manifest, { repoRoot }) {
   if (manifest.testCommand !== undefined) normalized.testCommand = assertSafeLine(manifest.testCommand, 'testCommand');
   if (manifest.criterionIds !== undefined) normalized.criterionIds = safeStringArray(manifest.criterionIds, 'criterionIds');
   if (manifest.contract !== undefined) normalized.contract = scalarContract(manifest.contract);
+  if (manifest.recovery !== undefined) {
+    normalized.recovery = recoveryDeclaration(root, manifest.recovery, {
+      role, index: requiredInputs.find((entry) => entry.purpose === PURPOSES.resultIndex), contract: normalized.contract,
+    });
+  }
   if (role === 'task-review-correction' || role === 'final-review-correction') {
     const final = role === 'final-review-correction';
     if (normalized.attempt === undefined || normalized.contract?.reviewerResponseProtocol !== 3

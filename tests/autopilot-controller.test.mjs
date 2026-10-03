@@ -7,12 +7,13 @@ import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  buildControllerTaskManifest, ensureControllerTaskBrief, writeContextManifest,
+  buildControllerTaskManifest, ensureControllerTaskBrief, reviewPhaseContext, writeContextManifest,
 } from '../scripts/autopilot-context.mjs';
 import { decodePhaseResponse, runController } from '../scripts/autopilot-controller.mjs';
 import { readAutopilotRun } from '../scripts/autopilot-state.mjs';
 import { decodeReviewerResponse } from '../adapters/reviewer-response.mjs';
-import { verifyTaskResults } from '../scripts/task-results.mjs';
+import { parseTaskResultProjection, verifyTaskResults } from '../scripts/task-results.mjs';
+import { assertCanonicalIndexMetadata } from './fixtures/autopilot-controller/index-metadata.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const contextScript = join(here, '..', 'scripts', 'autopilot-context.mjs');
@@ -274,6 +275,42 @@ test('a fresh controller run drives plan, writer, task review, final review, and
   assert.equal(again.code, 0, 'a completed run is an idempotent no-op');
 });
 
+// The index the final reviewer actually receives: captured when the
+// final-review role runs, then checked the way its prompt tells a strict
+// reviewer to check it, and by the existing handoff verifiers.
+test('a fresh run projects the canonical index metadata a strict final reviewer validates, and the handoff verifiers accept it', async (t) => {
+  const repo = repository(t);
+  const seen = {};
+  const attempt = (action) => { try { return action(); } catch (error) { return error; } };
+  const finalReview = ({ manifest, defaults }) => {
+    const indexPath = manifest.required.find(({ purpose }) => purpose === 'plan and task-result index').path;
+    Object.assign(seen, { manifest, indexPath, index: repo.read(indexPath) });
+    seen.cli = spawnSync(process.execPath, [contextScript, '--verify-handoff', '--repo-root', repo.root, '--plan', PLAN,
+      '--task-result-index', indexPath], { encoding: 'utf8' });
+    seen.verified = attempt(() => verifyTaskResults(repo.root, { indexPath, expectedTasks: ['1', '2'], protocol: 2 }));
+    seen.route = attempt(() => reviewPhaseContext(repo.read(PLAN), seen.index, { taskResultIndexProtocol: 2 }));
+    return defaults['final-review']();
+  };
+  const { runner } = scriptedRunner(repo, { tasks: [taskSection(1), taskSection(2)], script: { 'final-review': [finalReview] } });
+  const result = await control(repo, runner);
+  assert.equal(result.code, 0, result.reason);
+  assert.equal(seen.indexPath, `${DIR}/task-result-index.md`);
+  assert.deepEqual(assertCanonicalIndexMetadata(repo.root, seen.indexPath, seen.index),
+    { plan: PLAN, sourceSpec: SPEC, criteria: `${DIR}/success-criteria.md`, branchDiff: `${DIR}/branch-diff.txt` });
+  assert.equal(header(seen.index).status, 'DRAFT', 'the reviewer sees the in-progress index');
+  assert.deepEqual(parseTaskResultProjection(seen.index, { protocol: 2 }).map(({ task }) => task), ['1', '2']);
+  assert.equal(seen.cli.status, 0, seen.cli.stderr);
+  assert.match(seen.cli.stdout, /^handoff OK — 2 reviewed task\(s\): 1, 2$/m);
+  assert.ok(!(seen.verified instanceof Error), seen.verified?.message);
+  assert.deepEqual(seen.verified.entries.map(({ receipt }) => receipt), [`${DIR}/task-1-execution-1`, `${DIR}/task-2-execution-1`]);
+  assert.ok(!(seen.route instanceof Error), seen.route?.message);
+  assert.deepEqual(seen.route.tasks.map(({ task }) => task), ['1', '2']);
+  assert.equal(Object.hasOwn(seen.manifest, 'recovery'), false, 'an ordinary run declares no recovery delta');
+  const consumed = repo.read(seen.indexPath);
+  assert.equal(header(consumed).status, 'CONSUMED');
+  assertCanonicalIndexMetadata(repo.root, seen.indexPath, consumed);
+});
+
 const sequence = (calls) => calls.map(({ role, task, iteration }) => `${role}${task === null ? '' : `:${task}`}@${iteration}`);
 const manifestOf = (repo, roleSequence) => JSON.parse(repo.read(`${DIR}/context/role-${roleSequence}.json`));
 
@@ -397,6 +434,22 @@ const dropLastEvent = (repo) => {
   return JSON.parse(lines.at(-1)).event;
 };
 const subjects = (repo) => repo.git('log', '--format=%s').trim().split('\n');
+
+for (const [label, edit] of [
+  ['lost', (text) => text.replace(/^source-spec: .*\ncriteria: .*\nbranch-diff: .*\n/m, '')],
+  ['changed', (text) => text.replace(`source-spec: ${SPEC}`, 'source-spec: .apex/work/specs/other.md')],
+]) {
+  test(`an index whose canonical metadata was ${label} halts on resume instead of reaching the final reviewer`, async (t) => {
+    const repo = repository(t);
+    await assert.rejects(control(repo, scriptedRunner(repo).runner, { crash: crashAt('result-accepted', { role: 'implementer' }) }), /simulated crash/);
+    repo.put(`${DIR}/task-result-index.md`, edit(repo.read(`${DIR}/task-result-index.md`)));
+    const resumed = scriptedRunner(repo);
+    const result = await control(repo, resumed.runner);
+    assert.deepEqual([result.code, result.halted], [1, true]);
+    assert.match(result.reason, /task-result index metadata does not bind the run spec, criteria, and branch diff/);
+    assert.equal(resumed.calls.length, 0, 'no role is dispatched against the drifted index');
+  });
+}
 
 for (const point of ['response-captured', 'committed', 'task-recorded', 'result-accepted']) {
   test(`a writer interrupted at ${point} resumes from durable evidence without redispatch`, async (t) => {

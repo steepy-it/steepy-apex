@@ -71,7 +71,9 @@ Subagent (reviewer):
     `.apex/work/**` or infer another work artifact from the orchestrator's capability. Validate the
     task-result index's canonical grammar and its exact `source-spec`, `criteria`, and `branch-diff`
     metadata; validate the supporting paths and canonical criteria `Source`/`Heading` attribution
-    without opening the plan or source spec.
+    without opening the plan or source spec. In a recovery run, paths in the manifest's declared
+    recovery delta (`manifest.recovery.delta`) are explained changes accepted by the recovery input,
+    not unattributed task work.
 
     Read the aggregate diff once. Check that task interfaces compose, no task undoes another, all
     success criteria are met, and no cross-cutting problem escaped the task gates.

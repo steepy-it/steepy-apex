@@ -7,10 +7,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspectRecovery, prepareRecovery, recoveryCopies } from '../scripts/autopilot-recovery.mjs';
-import { controllerPlanContext } from '../scripts/autopilot-context.mjs';
+import { controllerPlanContext, reviewPhaseContext } from '../scripts/autopilot-context.mjs';
 import { materializeTaskBrief } from '../scripts/autopilot-plan.mjs';
-import { beginTask, recordTaskResult } from '../scripts/task-results.mjs';
+import { beginTask, parseTaskResultProjection, recordTaskResult, verifyTaskResults } from '../scripts/task-results.mjs';
 import { observeSource } from '../scripts/source-observation.mjs';
+import { assertCanonicalIndexMetadata } from './fixtures/autopilot-controller/index-metadata.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const recoveryScript = join(here, '..', 'scripts', 'autopilot-recovery.mjs');
@@ -471,6 +472,52 @@ test('a recovery run imports reused evidence, reviews it, and dispatches only th
   assert.deepEqual(header(repo.read(NEW_PLAN)), { phase: 'plan', status: 'CONSUMED', next: 'implement', source: NEW_SPEC, 'consumed-by': `${DEST}/task-result-index.md` });
   assert.deepEqual(sourceBytes(repo), before, 'the source run keeps its own incomplete lifecycle');
   assert.equal(writerRoles(repo).length, 1, 'only the residual task has a writer');
+});
+
+// The native defect: a strict final reviewer blocked on an index without its
+// canonical metadata, and on a branch-diff path that no task changed but the
+// recovery input had declared as its explained delta.
+test('a recovery run projects canonical index metadata and hands the final reviewer its declared recovery delta', async (t) => {
+  const repo = repository(t);
+  legacyRun(repo);
+  const explained = '.apex/standards/scripts.md';
+  repo.put(explained, `${repo.read(explained)}\nAccepted between the halted run and its recovery.\n`);
+  repo.git('commit', '-qam', 'explained standard change');
+  writeInput(repo, { delta: [explained] });
+  await prepareRecovery(repo.root, INPUT);
+  const seen = {};
+  const attempt = (action) => { try { return action(); } catch (error) { return error; } };
+  const finalReview = ({ manifest }) => {
+    const indexPath = manifest.required.find(({ purpose }) => purpose === 'plan and task-result index').path;
+    Object.assign(seen, { manifest, indexPath, index: repo.read(indexPath), diff: repo.read(`${DEST}/branch-diff.txt`) });
+    seen.verified = attempt(() => verifyTaskResults(repo.root, { indexPath, expectedTasks: ['1', '2', '3'], protocol: 3 }));
+    seen.route = attempt(() => reviewPhaseContext(repo.read(NEW_PLAN), seen.index, { taskResultIndexProtocol: 3 }));
+    repo.put(`${DEST}/final-review.md`, '# Final review\n\nApproved.\n');
+    return 'status: APPROVED\nsignals: none';
+  };
+  const { runner } = roleRunner(repo, { 'final-review': [finalReview] });
+  const result = await conduct(repo, START, { controllerServices: { runner } });
+  assert.equal(result.code, 0, result.err);
+  assert.deepEqual(assertCanonicalIndexMetadata(repo.root, seen.indexPath, seen.index),
+    { plan: NEW_PLAN, sourceSpec: NEW_SPEC, criteria: `${DEST}/success-criteria.md`, branchDiff: `${DEST}/branch-diff.txt` });
+  assert.ok(!(seen.verified instanceof Error), seen.verified?.message);
+  assert.deepEqual(seen.verified.entries.map(({ task, kind }) => [task, kind]), [['1', 'import'], ['2', 'import'], ['3', 'execution']]);
+  assert.ok(!(seen.route instanceof Error), seen.route?.message);
+  assert.deepEqual(seen.route.tasks.map(({ task }) => task), ['1', '2', '3']);
+  // The final-review manifest carries the accepted delta; no other role does.
+  assert.deepEqual(seen.manifest.recovery, { input: INPUT, delta: [explained] });
+  assert.equal(seen.manifest.contract.recoveryInputDigest, sha(readFileSync(join(repo.root, INPUT))));
+  for (const event of events(repo).filter((item) => item.event === 'ROLE_RESERVED' && item.role !== 'final-review')) {
+    assert.equal(Object.hasOwn(JSON.parse(repo.read(`${DEST}/context/role-${event.roleSequence}.json`)), 'recovery'), false, event.role);
+  }
+  // Every branch-diff path is task work or the declared delta, and the delta
+  // path is exactly the one no task changed.
+  const diffPaths = [...seen.diff.matchAll(/^diff --git a\/(\S+) b\//gm)].map((match) => match[1]);
+  const attributed = new Set(parseTaskResultProjection(seen.index, { protocol: 3 }).flatMap(({ changedPaths }) => changedPaths));
+  assert.ok(diffPaths.includes(explained));
+  assert.equal(attributed.has(explained), false);
+  assert.deepEqual(diffPaths.filter((path) => !attributed.has(path) && !seen.manifest.recovery.delta.includes(path)), []);
+  assertCanonicalIndexMetadata(repo.root, seen.indexPath, repo.read(seen.indexPath));
 });
 
 // Inline markers read the same before and after the merge: only a continuation
