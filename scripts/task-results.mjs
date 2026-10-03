@@ -14,6 +14,11 @@ const VERSION = 2;
 const IMPORT_LINEAGE_VERSION = 3;
 const IMPORT_VERSION = 1;
 const CONFIG_FIELDS = ['runId', 'attempt', 'task', 'execution', 'role', 'report', 'planPath', 'previousState', 'parentState', 'format'];
+// The writer response: exactly these fields (text rows in this order, or JSON
+// keys) and this status domain. The controller states the same contract to
+// its writers, so a role prompt and this decoder cannot drift apart.
+export const WRITER_RESPONSE_FIELDS = Object.freeze(['status', 'artifact', 'signals']);
+export const WRITER_STATUSES = Object.freeze(['DONE', 'DONE_WITH_CONCERNS', 'BLOCKED', 'NEEDS_CONTEXT']);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const digestPattern = /^[a-f0-9]{64}$/;
@@ -191,9 +196,9 @@ function parseResponse(response, config, report, priorSignals = []) {
     if (entries.some((entry) => !entry) || new Set(entries.map((entry) => entry[1])).size !== entries.length) throw new Error('invalid task response fields');
     value = Object.fromEntries(entries.map((entry) => [entry[1], entry[2]]));
   }
-  keys(value, ['status', 'artifact', 'signals', ...(Object.hasOwn(value, 'changed-paths') ? ['changed-paths'] : [])], 'task response');
+  keys(value, [...WRITER_RESPONSE_FIELDS, ...(Object.hasOwn(value, 'changed-paths') ? ['changed-paths'] : [])], 'task response');
   if (Object.hasOwn(value, 'changed-paths') && typeof value['changed-paths'] !== 'string') throw new Error('invalid legacy task telemetry');
-  if (!['DONE', 'DONE_WITH_CONCERNS', 'BLOCKED', 'NEEDS_CONTEXT'].includes(value.status) || value.artifact !== config.report) throw new Error('invalid task response status or artifact');
+  if (!WRITER_STATUSES.includes(value.status) || value.artifact !== config.report) throw new Error('invalid task response status or artifact');
   const signals = Array.isArray(value.signals) && config.format === 'json' ? value.signals
     : typeof value.signals === 'string' ? value.signals === 'none' ? [] : value.signals.split(', ') : null;
   if (!signals || signals.some((signal) => typeof signal !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._-]*$/.test(signal) || signal === 'none')

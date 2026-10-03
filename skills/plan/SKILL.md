@@ -151,8 +151,10 @@ Do not invoke an installed skill by name. Read the manifest first, then every re
 For a modular owning standard, use the declared routing evidence to select the core and every
 matching leaf; read each matching leaf from `onDemand` and record the concrete matching reason
 in the assigned plan/report. Zero matches means core-only context. Never read all leaves as a
-fallback. Finish with the closed `plan/controller-response.schema.json` result: `status` is
-`DONE`, `BLOCKED`, or `NEEDS_CONTEXT`, followed by `signals`. The controller validates the
+fallback. Finish with exactly two plain-text lines, `status: <value>` then `signals: <value>`:
+`status` is `DONE`, `BLOCKED`, or `NEEDS_CONTEXT`; `signals` is `none` or machine IDs separated
+by `, `. `plan/controller-response.schema.json` only defines the allowed values; never return
+JSON, a Markdown fence, or prose. The controller validates the
 assigned output and evidence, owns the ledger, receipts, projection, and lifecycle transitions,
 and publishes the plan. Do not append `autopilot-status.md`, mutate a lifecycle header, or infer
 acceptance from the plan's prose. The Step 4.5 self-review and the Step 5 validation gates still apply,

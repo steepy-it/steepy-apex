@@ -152,9 +152,11 @@ Verify completed work with evidence. Never assert "done" without command output 
 execute this packaged phase directly using its exact required inputs and assigned DRAFT report.
 Do not invoke an installed skill by name. Read the manifest first; selected modular standards
 still require the core plus every matching leaf with a concrete reason for each on-demand read.
-After verifying the assigned criteria and gates, return only the closed
-`review/controller-response.schema.json` result: `status` is `READY_FOR_PR`, `BLOCKED`, or
-`NEEDS_CONTEXT`, followed by `signals`. The controller checks the report and evidence, owns
+After verifying the assigned criteria and gates, return exactly two plain-text lines,
+`status: <value>` then `signals: <value>`: `status` is `READY_FOR_PR`, `BLOCKED`, or
+`NEEDS_CONTEXT`; `signals` is `none` or machine IDs separated by `, `.
+`review/controller-response.schema.json` only defines the allowed values; never return JSON, a
+Markdown fence, or prose. The controller checks the report and evidence, owns
 the ledger, receipts, projection, and lifecycle transitions, and publishes the terminal outcome.
 Do not append `autopilot-status.md`, advance the task-result index, consume a lifecycle header,
 or infer the verdict from report prose. For this selected protocol, later publication and

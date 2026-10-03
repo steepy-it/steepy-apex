@@ -2832,3 +2832,20 @@ test('the glossary scopes the usage ledger and the status entries to their proto
   assert.match(reviewer, /The response status drives the fix loop: `ISSUES_FOUND` sends the work to a fix, and `APPROVED` ends the loop\./);
   assert.doesNotMatch(reviewer, /`Approved \| Issues Found` enum/, 'the report line is not the response enum');
 });
+
+// The first native controller-protocol-2 run returned the plan schema as a JSON
+// object with prose signals. The packaged prose names the plain-text rows the
+// decoders accept; the schema files only define the allowed values.
+test('controller protocol 2 prose states the plain-text response rows, never JSON or prose', () => {
+  for (const [phase, statuses] of [['plan', '`DONE`, `BLOCKED`, or `NEEDS_CONTEXT`'], ['review', '`READY_FOR_PR`, `BLOCKED`, or `NEEDS_CONTEXT`']]) {
+    const text = readFileSync(join(skillsDir, phase, 'SKILL.md'), 'utf8');
+    const step0 = sectionBetween(text, '### Step 0 — Read the gear', '### Ceremony by gear').replace(/\s+/g, ' ');
+    const contract = /\*\*Controller protocol 2:\*\*(.*?)\*\*/.exec(step0)?.[1] ?? '';
+    assert.match(contract, /exactly two plain-text lines, `status: <value>` then `signals: <value>`:/, phase);
+    assert.ok(contract.includes(`\`status\` is ${statuses}; \`signals\` is \`none\` or machine IDs separated by \`, \`.`), phase);
+    assert.ok(contract.includes(`\`${phase}/controller-response.schema.json\` only defines the allowed values; never return JSON, a Markdown fence, or prose.`), phase);
+    assert.doesNotMatch(contract, /closed `[a-z]+\/controller-response\.schema\.json` result/, `${phase} no longer names the schema as the result`);
+  }
+  const shared = flatSkill('implement/controller-role-prompt.md');
+  assert.match(shared, /Return only the selected closed response payload, as plain-text `field: value` rows exactly as the role prompt lists them: never JSON, a Markdown fence, or prose\. Keep all findings in the assigned artifacts\./);
+});

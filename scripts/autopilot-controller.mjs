@@ -27,10 +27,11 @@ import {
 import { parseFixTargets } from './autopilot-plan.mjs';
 import { inspectRecovery, loadRecoveryInput, recoveryCopies } from './autopilot-recovery.mjs';
 import {
-  beginTask, importTaskResult, inspectTaskImport, inspectTaskResult, projectTaskResults, recordTaskResult, resumeTaskResult,
-  verifyTaskResults,
+  WRITER_RESPONSE_FIELDS, WRITER_STATUSES, beginTask, importTaskResult, inspectTaskImport, inspectTaskResult, projectTaskResults,
+  recordTaskResult, resumeTaskResult, verifyTaskResults,
 } from './task-results.mjs';
 import { beginReview, checkReview, inspectReview, reserveRepair, setReviewReference } from './reviewer-response.mjs';
+import { reviewerResponseSchema } from '../adapters/reviewer-response.mjs';
 import { readStableDocument } from './stable-paths.mjs';
 import { mkdirWorkPath, parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
 
@@ -186,6 +187,45 @@ export function decodePhaseResponse(payload, phase) {
   if (!schema.properties.status.enum.includes(value.status)) throw new Error(`${phase} response has invalid status`);
   if (!SIGNALS.test(value.signals)) throw new Error(`${phase} response has invalid signals`);
   return value;
+}
+
+const REVIEWER_ROLES = Object.freeze(['task-reviewer', 'final-review', 'task-review-correction', 'final-review-correction']);
+const SHAPE_SIGNALS = '`signals` is `none` alone or distinct machine IDs separated by a comma and a space; '
+  + 'each ID starts with a letter or digit and uses only letters, digits, and `:._-`; never prose.';
+const SHAPE_DISCOVERY = '`signals` carries `discovery:unplanned` exactly when the report contains that ID, '
+  + 'never with status `DONE`, and keeps it in every later fix of the task.';
+
+// The exact final message a role returns, in the text transport every role
+// uses here. Fields, their order, and the status domain come from the decoder
+// that gates the role: the phase schema (plan, review), the writer protocol
+// (implementer, fix), or reviewer response protocol 3 (reviews, corrections).
+// The signals rule is the strictest of those decoders, so the literal example
+// at the end is accepted by the role's own decoder.
+export function roleResponseShape(role, { artifact = null } = {}) {
+  let fields;
+  let statuses;
+  if (role === 'plan' || role === 'review') {
+    const schema = phaseSchema(role);
+    [fields, statuses] = [schema.required, schema.properties.status.enum];
+  } else if (role === 'implementer' || role === 'fix') {
+    if (typeof artifact !== 'string' || artifact.length === 0) throw new Error(`${role} response shape needs its assigned report path`);
+    [fields, statuses] = [WRITER_RESPONSE_FIELDS, WRITER_STATUSES];
+  } else if (REVIEWER_ROLES.includes(role)) {
+    const schema = reviewerResponseSchema(CONTROLLER_CONTRACT.reviewerResponseProtocol);
+    [fields, statuses] = [schema.required, schema.properties.status.enum];
+  } else throw new Error(`unknown controller role ${role}`);
+  const writer = fields.includes('artifact');
+  const example = fields.map((field) => `${field}: ${{ status: statuses[0], artifact, signals: 'none' }[field]}`).join('\n');
+  const instruction = [
+    `Final message: exactly ${fields.length} plain-text lines in this order, each \`field: value\`: ${fields.map((field) => `\`${field}\``).join(', ')}.`,
+    `\`status\` is one of ${statuses.map((status) => `\`${status}\``).join(', ')}.`,
+    ...(writer ? [`\`artifact\` is exactly \`${artifact}\`.`] : []),
+    SHAPE_SIGNALS,
+    ...(writer ? [SHAPE_DISCOVERY] : []),
+    'No JSON, no Markdown fence, no extra text before or after; put all prose in the assigned artifacts.',
+    'Example (shape only, not your verdict):',
+  ].join(' ');
+  return Object.freeze({ instruction, example });
 }
 
 export function createGitService(run = spawnSync) {
@@ -350,16 +390,19 @@ function contractFor(ctx, roleSequence) {
   };
 }
 
-function rolePrompt(ctx, role, roleSequence, scope, manifestPath) {
+// One instruction line, then the role's literal example rows, unindented, last.
+function rolePrompt(ctx, spec, roleSequence, manifestPath) {
+  const { role, scope } = spec;
   const prompts = ROLE_PROMPTS[role].map((path) => join(ctx.engineRoot, path));
-  return [
+  const shape = roleResponseShape(role, { artifact: spec.responseArtifact ?? null });
+  return `${[
     `Steepy controller protocol 2 role ${role}: run-id \`${ctx.state.runId}\`, role-sequence \`${roleSequence}\`,`,
     `phase \`${scope.phase}\`, attempt \`${scope.attempt}\`, ${scope.task === null ? 'whole-branch scope' : `task \`${scope.task}\``}, iteration \`${scope.iteration}\`.`,
     `Apply the packaged instructions ${prompts.join(' and ')}; do not invoke an installed skill by name.`,
     `Context manifest: ${manifestPath} (authoritative input inventory). Read required inputs; use onDemand only for a concrete missing fact.`,
     'Unattended autopilot: never ask questions or wait for a human; never push, bump versions, open PRs, commit, or write controller state.',
-    'Return only the closed response payload selected by the manifest contract.',
-  ].join(' ');
+    shape.instruction,
+  ].join(' ')}\n${shape.example}`;
 }
 
 function digestOf(ctx, path, family) {
@@ -375,7 +418,7 @@ async function dispatchRole(ctx, spec) {
   const { root, paths } = ctx;
   const roleSequence = ctx.state.roles.length + 1;
   const manifestPath = `${paths.dir}/context/role-${roleSequence}.json`;
-  const prompt = rolePrompt(ctx, spec.role, roleSequence, spec.scope, manifestPath);
+  const prompt = rolePrompt(ctx, spec, roleSequence, manifestPath);
   const displayName = `steepy-${ctx.specName}-${spec.role}-r${roleSequence}-${ctx.state.runId.slice(0, 8).toLowerCase()}`;
   const label = `role ${roleSequence} ${spec.role}`;
   const prepared = refusing(`${label} descriptor`, () => ctx.runner.prepare({
@@ -674,23 +717,26 @@ async function dispatchWriter(ctx, plan, task, role, iteration, fix = null) {
   const prior = writerRoles(ctx, task.task).length;
   const execution = prior + (imported ? 2 : 1);
   const state = `${paths.dir}/task-${task.task}-execution-${execution}`;
+  // One report path binds the writer's begin config, its manifest output, and
+  // the artifact row its role prompt states, which the writer decoder requires.
+  const report = `${paths.dir}/task-${task.task}-report.md`;
   const parent = latestAcceptedWriter(ctx);
   const modelTier = TIER[task.complexity];
   gate(ctx, `Task ${task.task} brief`, () => ensureControllerTaskBrief(taskBinding(ctx, plan, task, 0, modelTier)),
     { reconciliation: true });
   const entry = await dispatchRole(ctx, {
     scope: scopeOf('implement', Number(task.task), iteration), role, modelTier,
-    expectedReceiptPath: `${state}-result.json`,
+    expectedReceiptPath: `${state}-result.json`, responseArtifact: report,
     effects: () => beginTask(root, state, {
       runId: ctx.state.runId, attempt: 1, task: task.task, execution, role,
-      report: `${paths.dir}/task-${task.task}-report.md`, planPath: paths.plan,
+      report, planPath: paths.plan,
       previousState: prior === 0 ? null : `${paths.dir}/task-${task.task}-execution-${execution - 1}`,
       ...(imported && prior === 0 ? { previousImport: imported.path } : {}),
       parentState: parent === null ? null : stateOf(parent), format: 'text',
     }),
     manifest: (roleSequence) => buildControllerTaskManifest(role, {
       ...taskBinding(ctx, plan, task, roleSequence, modelTier),
-      outputs: [`${paths.dir}/task-${task.task}-report.md`],
+      outputs: [report],
       ...(fix === null ? {} : { issuePath: fix.issuePath, taskDiffPath: fix.diffPath() }),
     }),
   });

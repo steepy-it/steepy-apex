@@ -9,8 +9,9 @@ import { fileURLToPath } from 'node:url';
 import {
   buildControllerTaskManifest, ensureControllerTaskBrief, writeContextManifest,
 } from '../scripts/autopilot-context.mjs';
-import { runController } from '../scripts/autopilot-controller.mjs';
+import { decodePhaseResponse, runController } from '../scripts/autopilot-controller.mjs';
 import { readAutopilotRun } from '../scripts/autopilot-state.mjs';
+import { decodeReviewerResponse } from '../adapters/reviewer-response.mjs';
 import { verifyTaskResults } from '../scripts/task-results.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -986,3 +987,130 @@ for (const [label, disturb, reason] of [
     assert.deepEqual(resumed.calls, []);
   });
 }
+
+// ---- Role response shape ---------------------------------------------------
+// Each role prompt states its exact final message. The expected text is written
+// out here, from each decoder's own grammar, so the lock compares the prompt
+// with the decoders rather than with the controller's prompt builder.
+const SHAPE_MARKER = 'Example (shape only, not your verdict):';
+const SIGNALS_RULE = '`signals` is `none` alone or distinct machine IDs separated by a comma and a space; '
+  + 'each ID starts with a letter or digit and uses only letters, digits, and `:._-`; never prose.';
+const NO_EXTRA = 'No JSON, no Markdown fence, no extra text before or after; put all prose in the assigned artifacts.';
+const REVIEWER_SHAPE = {
+  lines: 2, fields: '`status`, `signals`', statuses: '`APPROVED`, `ISSUES_FOUND`, `BLOCKED`, `NEEDS_CONTEXT`',
+  example: 'status: APPROVED\nsignals: none',
+};
+const expectedShape = (role, task) => {
+  const shape = {
+    plan: { lines: 2, fields: '`status`, `signals`', statuses: '`DONE`, `BLOCKED`, `NEEDS_CONTEXT`', example: 'status: DONE\nsignals: none' },
+    review: { lines: 2, fields: '`status`, `signals`', statuses: '`READY_FOR_PR`, `BLOCKED`, `NEEDS_CONTEXT`', example: 'status: READY_FOR_PR\nsignals: none' },
+    'task-reviewer': REVIEWER_SHAPE, 'final-review': REVIEWER_SHAPE,
+    'task-review-correction': REVIEWER_SHAPE, 'final-review-correction': REVIEWER_SHAPE,
+  }[role] ?? {
+    lines: 3, fields: '`status`, `artifact`, `signals`', statuses: '`DONE`, `DONE_WITH_CONCERNS`, `BLOCKED`, `NEEDS_CONTEXT`',
+    artifact: `${DIR}/task-${task}-report.md`, example: `status: DONE\nartifact: ${DIR}/task-${task}-report.md\nsignals: none`,
+  };
+  return [
+    `Final message: exactly ${shape.lines} plain-text lines in this order, each \`field: value\`: ${shape.fields}.`,
+    `\`status\` is one of ${shape.statuses}.`,
+    ...(shape.artifact ? [`\`artifact\` is exactly \`${shape.artifact}\`.`] : []),
+    SIGNALS_RULE,
+    ...(shape.artifact ? ['`signals` carries `discovery:unplanned` exactly when the report contains that ID, never with status `DONE`, and keeps it in every later fix of the task.'] : []),
+    NO_EXTRA, SHAPE_MARKER,
+  ].join(' ') + `\n${shape.example}`;
+};
+// A literal follower returns the prompt's example rows and nothing else.
+const literalExample = (prompt) => {
+  const at = prompt.indexOf(` ${SHAPE_MARKER}\n`);
+  assert.ok(at > 0, `the role prompt states no example: ${prompt}`);
+  return prompt.slice(at + SHAPE_MARKER.length + 2);
+};
+const literally = (role) => (context) => { context.defaults[role](context); return literalExample(context.request.prompt); };
+function recordPrompts(runner) {
+  const prompts = new Map();
+  const prepare = runner.prepare;
+  runner.prepare = (request) => { prompts.set(request.roleSequence, request.prompt); return prepare(request); };
+  return prompts;
+}
+const payloadOf = (repo, roleSequence) => JSON.parse(repo.read(`${DIR}/role-${roleSequence}-response.json`)).payload;
+
+test('every role prompt states its exact response rows, and a literal follower is accepted by that role\'s decoder', async (t) => {
+  const issues = (repo) => ({ task }) => {
+    repo.put(`${DIR}/task-${task}-review.md`, '# Review\n\nIssues found.\n');
+    repo.put(`${DIR}/task-${task}-issues.md`, '# Issues\n\n1. Value must be 2.\n');
+    return 'status: ISSUES_FOUND\nsignals: none';
+  };
+  const reversed = (repo) => ({ task }) => { repo.put(`${DIR}/task-${task}-review.md`, '# Review\n\nApproved after fix.\n'); return 'signals: none\nstatus: APPROVED'; };
+  const fenced = (repo) => () => { repo.put(`${DIR}/final-review.md`, '# Final review\n'); return '```text\nstatus: APPROVED\nsignals: none\n```\n'; };
+  const runs = [
+    {
+      // Triggers (non-literal) reach the fix and both correction roles.
+      label: 'fix and corrections', tasks: [taskSection(1), taskSection(2)],
+      script: (repo) => ({
+        plan: [literally('plan')], implementer: [literally('implementer'), literally('implementer')],
+        'task-reviewer': [issues(repo), reversed(repo), literally('task-reviewer')], fix: [literally('fix')],
+        'task-review-correction': [literally('task-review-correction')], 'final-review': [fenced(repo)],
+        'final-review-correction': [literally('final-review-correction')], review: [literally('review')],
+      }),
+      sequence: ['plan@1', 'implementer:1@1', 'task-reviewer:1@1', 'fix:1@2', 'task-reviewer:1@2', 'task-review-correction:1@2',
+        'implementer:2@1', 'task-reviewer:2@1', 'final-review@1', 'final-review-correction@1', 'review@1'],
+      literal: [1, 2, 4, 6, 7, 8, 10, 11],
+    },
+    {
+      label: 'every role literal', tasks: [taskSection(1)],
+      script: () => Object.fromEntries(['plan', 'implementer', 'task-reviewer', 'final-review', 'review'].map((role) => [role, [literally(role)]])),
+      sequence: ['plan@1', 'implementer:1@1', 'task-reviewer:1@1', 'final-review@1', 'review@1'],
+      literal: [1, 2, 3, 4, 5],
+    },
+  ];
+  const accepted = new Set();
+  for (const run of runs) {
+    const repo = repository(t);
+    const { runner, calls } = scriptedRunner(repo, { tasks: run.tasks, script: run.script(repo) });
+    const prompts = recordPrompts(runner);
+    const result = await control(repo, runner);
+    assert.equal(result.code, 0, `${run.label}: ${result.reason}`);
+    assert.deepEqual(sequence(calls), run.sequence, run.label);
+    for (const entry of journal(repo).roles) {
+      const prompt = prompts.get(entry.roleSequence);
+      assert.equal(prompt.slice(prompt.indexOf('Final message:')), expectedShape(entry.role, entry.scope.task),
+        `${run.label}: role ${entry.roleSequence} ${entry.role} prompt states its exact response rows`);
+      if (!run.literal.includes(entry.roleSequence)) continue;
+      assert.equal(payloadOf(repo, entry.roleSequence), literalExample(prompt), `${run.label}: role ${entry.roleSequence} returned its example`);
+      assert.equal(entry.accepted, true, `${run.label}: literal role ${entry.roleSequence} ${entry.role} is accepted by its decoder`);
+      accepted.add(entry.role);
+    }
+  }
+  assert.deepEqual([...accepted].sort(), ['final-review', 'final-review-correction', 'fix', 'implementer', 'plan', 'review',
+    'task-review-correction', 'task-reviewer']);
+});
+
+// The first native Codex run returned this JSON object with prose signals for
+// the plan role. The decoders stay strict: the role prompt fixes the child.
+const NATIVE_PLAN_PAYLOAD = '{"status":"DONE","signals":"Created DRAFT plan at .apex/work/plans/native-smoke.md. Self-review passed; …"}';
+
+test('a JSON-with-prose plan response is still refused as a terminal halt', async (t) => {
+  const repo = repository(t);
+  const { runner, calls } = scriptedRunner(repo, { script: { plan: [({ defaults, ...context }) => {
+    defaults.plan({ defaults, ...context });
+    return NATIVE_PLAN_PAYLOAD;
+  }] } });
+  const result = await control(repo, runner);
+  assert.deepEqual([result.code, result.halted], [1, true]);
+  assert.equal(result.reason, 'role 1 plan iteration 1 response rejected: plan response must be exactly the ordered fields status, signals');
+  assert.deepEqual(calls.map(({ role }) => role), ['plan']);
+  const state = journal(repo);
+  assert.equal(state.status, 'HALTED');
+  assert.equal(state.roles[0].accepted, false);
+  assert.equal(payloadOf(repo, 1), NATIVE_PLAN_PAYLOAD, 'the original response stays captured');
+});
+
+test('JSON or prose stays outside every role decoder\'s grammar', () => {
+  const prose = 'Created DRAFT plan at .apex/work/plans/native-smoke.md. Self-review passed';
+  for (const phase of ['plan', 'review']) {
+    assert.throws(() => decodePhaseResponse(NATIVE_PLAN_PAYLOAD, phase), new RegExp(`^Error: ${phase} response must be exactly the ordered fields status, signals$`));
+    assert.throws(() => decodePhaseResponse(`status: ${phase === 'plan' ? 'DONE' : 'READY_FOR_PR'}\nsignals: ${prose}`, phase),
+      new RegExp(`^Error: ${phase} response has invalid signals$`));
+  }
+  assert.throws(() => decodeReviewerResponse('{"status":"APPROVED","signals":"none"}', 'text', { protocol: 3 }), /expected ordered reviewer semantic fields/);
+});
