@@ -60,7 +60,9 @@ function closesFence(line, fence) {
 // Fenced lines are verbatim content of their field or notes: a fenced H2 or
 // label is never a boundary. Every other open container fails closed: a fence
 // still open at the section end, a field fence whose list item an unindented
-// line ends, and an HTML comment still open at an H2 or at the section end.
+// line ends, an HTML comment that spans an H2 line, and one still open at the
+// section end. A comment closes at the first `-->` from its own `<!--`, so the
+// overlapping `<!-->` and `<!--->` are complete, as in CommonMark.
 function fieldsOf({ task, body }) {
   const fields = new Map();
   const notes = [];
@@ -77,14 +79,14 @@ function fieldsOf({ task, body }) {
       continue;
     }
     if (/^##[ \t]/.test(line)) {
-      if (comment) throw new Error(`Task ${task} has an unclosed HTML comment`);
+      if (comment) throw new Error(`Task ${task} has an HTML comment that spans an H2 line`);
       break;
     }
     if (comment) {
       comment = !line.includes('-->');
     } else {
       fence = openingFence(line);
-      comment = !fence && /^ {0,3}<!--/.test(line) && !line.slice(line.indexOf('<!--') + 4).includes('-->');
+      comment = !fence && /^ {0,3}<!--/.test(line) && !line.slice(line.indexOf('<!--')).includes('-->');
     }
     const label = FIELD_LABEL.exec(line);
     if (notes.length > 0) {

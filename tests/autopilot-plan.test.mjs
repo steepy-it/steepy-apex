@@ -255,8 +255,21 @@ test('a fence opened in a field value is unclosed when an unindented line ends i
 
 test('an HTML comment still open at an H2 or at the section end fails instead of dropping notes', () => {
   assert.throws(() => parse(`${task(1)}\nNotes.\n\n<!--\n## commented\n-->\n\nMORE REQUIREMENTS\n`),
-    /Task 1 has an unclosed HTML comment/);
+    /^Error: Task 1 has an HTML comment that spans an H2 line$/);
   assert.throws(() => parse(`${task(1)}\nNotes.\n\n<!-- still open\n${task(2)}`), /Task 1 has an unclosed HTML comment/);
   const [closed] = parse(`${task(1)}\nNotes.\n\n<!-- a closed comment -->\n<!--\nspans lines\n-->\n\nMORE REQUIREMENTS\n`).tasks;
   assert.ok(closed.notes.endsWith('MORE REQUIREMENTS'));
+});
+
+// CommonMark ends a comment at the first `-->` from its `<!--`, overlap included.
+test('the overlapping comment forms are complete, and only a comment open at the section end is unclosed', () => {
+  for (const comment of ['<!-->', '<!--->']) {
+    for (const plan of [`${task(1)}\nNotes.\n\n${comment}\n\nMORE REQUIREMENTS\n`,
+      `${task(1)}\nNotes.\n\n${comment}\n\nMORE REQUIREMENTS\n\n## Notes\n\nGlobal.\n`]) {
+      const [parsed] = parse(plan).tasks;
+      assert.equal(parsed.notes, `Notes.\n\n${comment}\n\nMORE REQUIREMENTS`, comment);
+    }
+  }
+  assert.throws(() => parse(`${task(1)}\nNotes.\n\n<!---\nMORE REQUIREMENTS\n`), /^Error: Task 1 has an unclosed HTML comment$/);
+  assert.throws(() => parse(`${task(1)}\nNotes.\n\n<!-- still open\nMORE REQUIREMENTS\n`), /^Error: Task 1 has an unclosed HTML comment$/);
 });
