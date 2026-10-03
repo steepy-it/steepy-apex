@@ -9,8 +9,9 @@
 // Inspection classifies each plan task (imported with a pending review, or
 // residual work) and every condition that needs human reconciliation.
 // Preparation writes deterministic copies of the approved spec and plan with
-// their provenance and recovery authorization recorded in the present; the
-// prepared plan must pass the controller's v2 plan gate first. The source run,
+// their provenance and recovery authorization recorded in the present, merging
+// a task's contiguous repeated Requirements bullets into one recorded field;
+// the prepared plan must pass the controller's v2 plan gate first. The source run,
 // spec, and plan are never rewritten. Importing and dispatch belong to the
 // controller (`autopilot.mjs --recovery-input`).
 import { createHash } from 'node:crypto';
@@ -168,22 +169,79 @@ function prepareSpec(text, loaded) {
     + text.slice(match[0].length);
 }
 
+// The strict v2 grammar takes each field once per task, but a legacy plan may
+// repeat its Requirements bullet. Only a contiguous run of plain inline values
+// is merged: one label at the first occurrence, each value a sub-bullet in
+// source order, its continuation lines re-indented and blank lines kept. A run
+// split by another field, a value that starts on the next line, or one with a
+// fence or comment is refused by name. The scan follows the field list the v2
+// gate reads (labels, then blank or indented continuations, up to the notes or
+// an H2); every other duplicate is left for the gate to refuse.
+const FIELD_LABEL = /^-[ \t]+\*\*([^*]+?)(?::\*\*|\*\*:)[ \t]*(.*)$/;
+const REQUIREMENTS = 'Requirements and deliverables';
+
+function requirementRuns(lines) {
+  const sections = [];
+  let section = null;
+  for (const [index, line] of lines.entries()) {
+    if (/^##[ \t]+Task\b/i.test(line)) {
+      const task = /^##[ \t]+Task[ \t]+([1-9]\d*)\b/i.exec(line)?.[1] ?? null;
+      section = task === null ? null : { task, fields: [] };
+      if (section) sections.push(section);
+      continue;
+    }
+    if (section === null) continue;
+    const label = FIELD_LABEL.exec(line);
+    const last = section.fields.at(-1);
+    if (/^##[ \t]/.test(line)) section = null;
+    else if (label) section.fields.push({ name: label[1], value: label[2], start: index, end: index + 1 });
+    else if (last && (!line.trim() || /^[ \t]/.test(line))) last.end = index + 1;
+    else if (line.trim()) section = null;
+  }
+  return sections.flatMap(({ task, fields }) => {
+    const at = fields.flatMap((field, position) => (field.name === REQUIREMENTS ? [position] : []));
+    if (at.length < 2) return [];
+    const refuse = (reason) => fail(`plan rejected: Task ${task} repeats ${REQUIREMENTS} ${reason}`);
+    if (at.at(-1) - at[0] !== at.length - 1) refuse('around another field; only a contiguous run is merged');
+    const items = at.map((position) => fields[position]);
+    if (items.some((item) => !item.value.trim())) refuse('without an inline value; only inline values are merged');
+    if (items.some((item) => [item.value, ...lines.slice(item.start + 1, item.end)]
+      .some((text) => /<!--|-->|^[ \t]*(?:`{3}|~{3})/.test(text)))) {
+      refuse('with a code fence or HTML comment; only plain values are merged');
+    }
+    return [{ task, items }];
+  });
+}
+
+function mergeRequirements(text) {
+  const lines = text.split('\n');
+  const runs = requirementRuns(lines);
+  for (const { items } of [...runs].reverse()) {
+    const merged = [`- **${REQUIREMENTS}:**`, ...items.flatMap((item) => [`  - ${item.value}`,
+      ...lines.slice(item.start + 1, item.end).map((line) => (line.trim() ? `  ${line}` : line))])];
+    lines.splice(items[0].start, items.at(-1).end - items[0].start, ...merged);
+  }
+  return { text: lines.join('\n'), merges: runs.map(({ task, items }) => `Task ${task} ${REQUIREMENTS}: ${items.length} bullets merged in order`) };
+}
+
 // The approved plan, verbatim but for a READY lifecycle sourced from the new
-// spec. Provenance precedes the first task, so no task text or brief changes.
+// spec and any merged Requirements run. Provenance precedes the first task and
+// names each merge beside the lifecycle changes.
 function preparePlan(text, loaded) {
   const { destination } = loaded.input;
   const header = lifecycle(text, 'source plan');
   if (header !== null && (header.fields.phase !== 'plan' || header.fields.next !== 'implement')) fail('source plan lifecycle is not a plan output');
   const fields = { phase: 'plan', status: 'READY', next: 'implement', source: destination.spec, 'consumed-by': 'none' };
-  const transformation = header === null ? `lifecycle header added with source ${destination.spec}`
+  const body = mergeRequirements(header === null ? text : text.slice(header.match[0].length));
+  const transformation = [...(header === null ? [`lifecycle header added with source ${destination.spec}`]
     : changes(header.fields, fields, {
       source: `lifecycle source rebound to ${destination.spec}`, status: 'lifecycle status reset to READY',
       'consumed-by': 'lifecycle consumed-by reset to none',
-    }).join('; ') || 'none';
+    })), ...body.merges].join('; ') || 'none';
   const note = provenance('plan', loaded, loaded.input.source.plan, header, transformation);
-  if (header === null) return `<!-- steepy-workflow: v1\n${headerText(fields)}\n-->\n${note}\n${text}`;
+  if (header === null) return `<!-- steepy-workflow: v1\n${headerText(fields)}\n-->\n${note}\n${body.text}`;
   const { match } = header;
-  return `${match[1]}${headerText(fields)}${match[3]}\n${note}${text.slice(match[0].length)}`;
+  return `${match[1]}${headerText(fields)}${match[3]}\n${note}${body.text}`;
 }
 
 function declaredText(root, reference, family, label) {

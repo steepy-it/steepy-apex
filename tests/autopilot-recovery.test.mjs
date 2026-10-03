@@ -2,12 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { inspectRecovery, prepareRecovery } from '../scripts/autopilot-recovery.mjs';
+import { inspectRecovery, prepareRecovery, recoveryCopies } from '../scripts/autopilot-recovery.mjs';
 import { controllerPlanContext } from '../scripts/autopilot-context.mjs';
+import { materializeTaskBrief } from '../scripts/autopilot-plan.mjs';
 import { beginTask, recordTaskResult } from '../scripts/task-results.mjs';
 import { observeSource } from '../scripts/source-observation.mjs';
 
@@ -210,6 +211,80 @@ test('a source plan the v2 grammar refuses stops preparation with the named plan
   assert.equal(existsSync(join(repo.root, NEW_SPEC)), false);
 });
 
+// A halted legacy plan may repeat its Requirements bullet inside a task, which
+// the strict v2 grammar refuses. Preparation folds each contiguous run into one
+// field, in order and losslessly, and records the merge as provenance.
+const repeatedRequirements = (id, values) => taskSection(id).replace(`- **Requirements and deliverables:** Set value ${id} to its next number.\n`,
+  values.map((value) => `- **Requirements and deliverables:** ${value}\n`).join(''));
+
+test('preparation merges repeated Requirements bullets in order, records each merge, and stays an exact no-op', async (t) => {
+  const repo = prepared(t, { tasks: [
+    repeatedRequirements(1, ['Set value 1 to its next number.', 'Keep the export name\n  `value` unchanged.', 'Log nothing.']),
+    repeatedRequirements(2, ['Set value 2 to its next number.\n', 'Keep the export.', 'Change no other file.']),
+    taskSection(3),
+  ] });
+  assert.equal(inspectRecovery(repo.root, INPUT).status, 'READY');
+  const result = await prepareRecovery(repo.root, INPUT);
+  assert.equal(result.status, 'READY');
+  const plan = repo.read(NEW_PLAN);
+  assert.match(plan, /^transformation: lifecycle source rebound to \.apex\/work\/specs\/topic-recovery\.md; Task 1 Requirements and deliverables: 3 bullets merged in order; Task 2 Requirements and deliverables: 3 bullets merged in order$/m);
+  assert.ok(plan.includes('- **Requirements and deliverables:**\n  - Set value 1 to its next number.\n  - Keep the export name\n    `value` unchanged.\n  - Log nothing.\n- **Relevant global constraints:**'),
+    'the merged field sits at the first occurrence, with each continuation re-indented under its own sub-bullet');
+  assert.ok(plan.endsWith(taskSection(3)), 'a task without repeats is copied verbatim');
+  const { tasks } = controllerPlanContext({ repoRoot: repo.root, planText: plan });
+  assert.deepEqual(tasks.map(({ requirements }) => requirements), [
+    '\n  - Set value 1 to its next number.\n  - Keep the export name\n    `value` unchanged.\n  - Log nothing.',
+    '\n  - Set value 2 to its next number.\n\n  - Keep the export.\n  - Change no other file.',
+    'Set value 3 to its next number.',
+  ], 'every original value, in order, with a blank line kept where it stood');
+  const brief = materializeTaskBrief(tasks[0], { sourcePlanPath: NEW_PLAN });
+  assert.ok(brief.includes('- **Requirements and deliverables:**\n  - Set value 1 to its next number.\n  - Keep the export name\n    `value` unchanged.\n  - Log nothing.\n'), brief);
+  assert.equal(recoveryCopies(repo.root, INPUT).plan, plan, 'the controller re-derives the prepared bytes exactly');
+  const written = statSync(join(repo.root, NEW_PLAN)).mtimeMs;
+  const again = await prepareRecovery(repo.root, INPUT);
+  assert.equal(again.status, 'READY');
+  assert.equal(repo.read(NEW_PLAN), plan, 'a repeated preparation is byte-identical');
+  assert.equal(statSync(join(repo.root, NEW_PLAN)).mtimeMs, written, 'and writes nothing');
+});
+
+test('a duplicate field other than Requirements still fails preparation with the named plan error', async (t) => {
+  const doubled = (label, line) => repeatedRequirements(1, ['Set value 1 to its next number.', 'Log nothing.'])
+    .replace('- **Success criteria:** SC1\n', `- **Success criteria:** SC1\n${line}`).replace(new RegExp(`^(- \\*\\*${label}:\\*\\*.*\\n)`, 'm'), '$1$1');
+  for (const [label, extra] of [['Relevant global constraints'], ['Surface'], ['Specialist agent'], ['Exact paths'], ['Test command'],
+    ['Dependencies'], ['Complexity'], ['Success criteria'],
+    ['Standard paths', '- **Standard paths:** `.apex/standards/scripts.md`\n'], ['Routing reasons', '- **Routing reasons:** Core only.\n']]) {
+    const repo = prepared(t, { tasks: [doubled(label, extra ?? ''), taskSection(2), taskSection(3)] });
+    const result = inspectRecovery(repo.root, INPUT);
+    assert.deepEqual(result.reconciliation, [`plan rejected: Task 1 has duplicate ${label} field`], label);
+    if (label !== 'Test command') continue;
+    await assert.rejects(prepareRecovery(repo.root, INPUT), /recovery requires reconciliation: plan rejected: Task 1 has duplicate Test command field$/);
+    assert.equal(existsSync(join(repo.root, NEW_PLAN)), false);
+    assert.equal(existsSync(join(repo.root, NEW_SPEC)), false);
+  }
+});
+
+// The merge is narrow: only a contiguous run of plain inline values. Anything
+// else is refused by name for human reconciliation, never moved or re-indented.
+test('repeated Requirements around another field, without an inline value, or with a fence or comment are refused by name', async (t) => {
+  for (const [label, task, reason] of [
+    ['around another field', taskSection(1).replace('- **Surface:**', '- **Requirements and deliverables:** Log nothing.\n- **Surface:**'),
+      /plan rejected: Task 1 repeats Requirements and deliverables around another field; only a contiguous run is merged/],
+    ['without an inline value', repeatedRequirements(1, ['Set value 1 to its next number.', '\n  - Log nothing.']),
+      /plan rejected: Task 1 repeats Requirements and deliverables without an inline value; only inline values are merged/],
+    ['with a code fence', repeatedRequirements(1, ['Set value 1 to its next number.', 'Run it:\n  ```sh\n  npm test\n  ```']),
+      /plan rejected: Task 1 repeats Requirements and deliverables with a code fence or HTML comment; only plain values are merged/],
+    ['with an HTML comment', repeatedRequirements(1, ['Set value 1 to its next number.', 'Log nothing. <!-- reviewer note -->']),
+      /plan rejected: Task 1 repeats Requirements and deliverables with a code fence or HTML comment; only plain values are merged/],
+  ]) {
+    const repo = prepared(t, { tasks: [task, taskSection(2), taskSection(3)] });
+    const result = inspectRecovery(repo.root, INPUT);
+    assert.equal(result.reconciliation.length, 1, label);
+    assert.match(result.reconciliation[0], reason, label);
+    await assert.rejects(prepareRecovery(repo.root, INPUT), reason, label);
+    assert.equal(existsSync(join(repo.root, NEW_PLAN)), false, label);
+  }
+});
+
 for (const [label, mutate, reason] of [
   ['an unexplained delta', (repo) => { repo.put('src/value-3.mjs', 'export const value = 7;\n'); repo.git('commit', '-qam', 'manual edit'); },
     /unexplained source delta requires reconciliation: src\/value-3\.mjs/],
@@ -396,6 +471,20 @@ test('a recovery run imports reused evidence, reviews it, and dispatches only th
   assert.deepEqual(header(repo.read(NEW_PLAN)), { phase: 'plan', status: 'CONSUMED', next: 'implement', source: NEW_SPEC, 'consumed-by': `${DEST}/task-result-index.md` });
   assert.deepEqual(sourceBytes(repo), before, 'the source run keeps its own incomplete lifecycle');
   assert.equal(writerRoles(repo).length, 1, 'only the residual task has a writer');
+});
+
+test('a recovery run from a plan with repeated Requirements bullets binds the merged copy and completes', async (t) => {
+  const repo = await recoveryRepo(t, { tasks: [
+    repeatedRequirements(1, ['Set value 1 to its next number.', 'Log nothing.']),
+    taskSection(2),
+    repeatedRequirements(3, ['Set value 3 to its next number.', 'Keep the export name\n  `value` unchanged.', 'Change no other file.']),
+  ] });
+  const { runner, calls } = roleRunner(repo);
+  const result = await conduct(repo, START, { controllerServices: { runner } });
+  assert.equal(result.code, 0, result.err);
+  assert.deepEqual(calls, ['task-reviewer:1@1', 'task-reviewer:2@1', 'implementer:3@1', 'task-reviewer:3@1', 'final-review@1', 'review@1']);
+  assert.ok(repo.read(`${DEST}/task-3-brief.md`).includes('- **Requirements and deliverables:**\n  - Set value 3 to its next number.\n  - Keep the export name\n    `value` unchanged.\n  - Change no other file.\n'));
+  assert.equal(header(repo.read(NEW_PLAN)).status, 'CONSUMED', 'the merged copy still binds at implement acceptance');
 });
 
 test('a fix after an import is a real execution linked to the imported evidence', async (t) => {

@@ -460,14 +460,19 @@ describe('corrupted durable state is refused, never repaired or accepted', { con
 
 // The legacy fixture, produced by the real protocol-1 driver: two plan tasks,
 // Task 1's first execution recorded through the task-result helpers, no review,
-// and an incomplete historical status after the child exits 1.
+// and an incomplete historical status after the child exits 1. Like the real
+// halted session's plan, each task repeats its Requirements bullet, a shape
+// only the compact parser accepts; the shared fresh-run plans keep one bullet.
 async function legacyFixture(t) {
-  const plan = planText([taskSection(1), taskSection(2)], 'READY');
+  const plan = planText([taskSection(1), taskSection(2)], 'READY').replace(
+    /^- \*\*Requirements and deliverables:\*\* Set value (\d) to its next number\.\n/gm,
+    (line, id) => `${line}- **Requirements and deliverables:** Keep the export of value ${id}.\n- **Requirements and deliverables:** Change no other file.\n`);
   const sb = sandbox(t, { plan });
   script(sb, { plan, steps: { implement: [{ helpers: true, exit: 1 }] } });
   const result = await run(sb, [SPEC, '--controller-protocol', '1']);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /HALTED — run-id=\S+ phase=implement attempt=1: child exited 1/);
+  assert.equal(sb.read(PLAN).match(/^- \*\*Requirements and deliverables:\*\*/gm).length, 6, 'the legacy plan keeps its repeated bullets');
   return sb;
 }
 
@@ -518,6 +523,8 @@ async function preparedRecovery(t) {
   const prepared = recoveryCli(sb, 'prepare');
   assert.equal(prepared.status, 0, prepared.stderr);
   assert.deepEqual(JSON.parse(prepared.stdout).prepared, [NEW_SPEC, NEW_PLAN]);
+  assert.match(sb.read(NEW_PLAN),
+    /^transformation: lifecycle [^\n]*; Task 1 Requirements and deliverables: 3 bullets merged in order; Task 2 Requirements and deliverables: 3 bullets merged in order$/m);
   return sb;
 }
 const RECOVER = [NEW_SPEC, '--recovery-input', INPUT];
