@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "signals"],
+  "properties": {
+    "status": { "enum": ["APPROVED", "ISSUES_FOUND", "BLOCKED", "NEEDS_CONTEXT"] },
+    "signals": { "type": "string", "minLength": 1 }
+  }
+}

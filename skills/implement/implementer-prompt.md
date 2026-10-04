@@ -8,10 +8,25 @@ passed to the child. Its `required` inventory is exactly the task brief and sele
 Otherwise implement inline in a dedicated pass using those same inputs and record the no-task-tool or
 manual no-manifest degradation in the ledger/run output.
 
+When `manifest.contract.controllerProtocol` is `2`, apply the packaged
+`controller-role-prompt.md` along with this writer prompt. The writer owns the assigned source
+edit, TDD evidence, and report; the controller owns the ledger, reservations, receipts, lifecycle
+transitions, Git commits, and projections. Do not stage or commit in controller protocol 2; the
+manual and legacy commit-authorization instructions below remain in force for those paths. Do not
+write controller state or declare the assigned
+report accepted. The writer still uses `taskResultProtocol: 2` and its three-field payload. The
+controller supplies exact packaged prompts and paths; do not invoke an installed skill by name.
+When `manifest.contract.sharedDiff` is `true`, your task diff can include other tasks' work, earlier
+or later, imported or executed in this run, including their fixes. In a recovery run it can also
+include the accepted recovery delta. Fix only this task's issues within its brief and Exact paths,
+and do not revert those changes. A whole-branch fix takes its issues from `final-review-issues.md`
+and reads `branch-diff.txt`, the aggregate branch diff captured for the final review. Fix only the
+finding IDs that its `steepy-fix-targets` block maps to this task, and do not revert other changes.
+
 Protocol selection: `manifest.contract.taskResultProtocol` equal to `2` takes precedence over
 all four-field examples below. In v2 return only `status`, `artifact`, `signals`, in that text order
-(or the same JSON keys when the controller selected JSON). Preserve the role's status and artifact
-rules. A legacy extra `changed-paths` is raw-only telemetry ignored by the gate, never authoritative.
+(or the same JSON keys when the controller selected JSON; always text under controller protocol 2,
+per `manifest.contract.responseFormat`). Preserve the role's status and artifact rules. A legacy extra `changed-paths` is raw-only telemetry ignored by the gate, never authoritative.
 Manual drive and legacy autopilot protocol 1 retain the following four-field response contract:
 
 ```text
@@ -35,7 +50,10 @@ Subagent (<surface>-agent):
     **Manual fallback inputs:** [BRIEF_FILE], [STANDARD_FILE]
     **Commit authorized this run:** [YES|NO]
 
-    In autopilot, read and validate the manifest first. When `manifest.contract.taskResultProtocol`
+    In autopilot, read and validate the manifest first. Under `controllerProtocol: 2`, write only
+    assigned source and report artifacts; the controller owns ledger and receipts, Git commits,
+    lifecycle transitions, and projections. Follow the packaged controller-role instructions.
+    When `manifest.contract.taskResultProtocol`
     is `2`, return only status, artifact, signals; this rule takes precedence over every legacy
     four-field example in this prompt. Do not include a source-path claim. The controller obtains
     paths from Git observations; a legacy extra changed-paths is ignored raw-only telemetry.
@@ -77,8 +95,10 @@ Subagent (<surface>-agent):
     broaden scope beyond the brief.
 
     ## Self-review and commit
-    Verify the brief completely, test quality, names, and pristine output. If commit authorization is
-    YES, commit tests plus implementation only after green; if NO, do not run a mutating git command.
+    Verify the brief completely, test quality, names, and pristine output. Under controller protocol
+    2, leave staging and commits to the controller. In manual drive or legacy autopilot, if commit
+    authorization is YES, commit tests plus implementation only after green; if NO, do not run a
+    mutating git command.
 
     ## Durable report and response
     Write full implementation/fix detail to the manifest-declared [REPORT_FILE], canonically
@@ -94,8 +114,10 @@ Subagent (<surface>-agent):
     repository evidence that closed it. Preserve this occurrence through fix reports and final
     envelopes, even after the code is clean. An explicitly planned discovery deliverable is not
     unplanned discovery; ordinary implementation/source inspection alone does not trigger it.
-    Under protocol 2, a later NEEDS_CONTEXT or BLOCKED response retains earlier discovery in its
-    signals and report; successful completion after retry still requires DONE_WITH_CONCERNS.
+    In a legacy controller protocol 1 run with task-result protocol 2, a later NEEDS_CONTEXT or
+    BLOCKED response retains earlier discovery in its signals and report; successful completion
+    after retry still requires DONE_WITH_CONCERNS. Under controller protocol 2 there is no retry: a
+    NEEDS_CONTEXT or BLOCKED response is a terminal `RUN_HALTED`.
     These two routes never share a trigger: ambiguity you cannot resolve by reading the repository
     stops the task before it starts (`status: NEEDS_CONTEXT`, per "Before you begin"), while a gap
     you did close by discovering the answer in the repository finishes the task and is reported as

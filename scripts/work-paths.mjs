@@ -12,9 +12,9 @@ import {
   realpathSync,
   renameSync,
   unlinkSync,
-  writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
+import { writeAllSync } from './write-all.mjs';
 
 const WORK_TYPES = new Set(['spec', 'goal', 'criteria', 'work-output']);
 const SEGMENT_CHARS = /^[A-Za-z0-9._-]+$/;
@@ -29,6 +29,9 @@ const FIXED_TASK_FILES = new Map([
   ['task-result-index.md', 'task-result-index'],
   ['evidence-report.md', 'evidence'],
   ['review-report.md', 'review-report'],
+  ['autopilot-run.json', 'autopilot-run'],
+  ['autopilot-events.jsonl', 'autopilot-events'],
+  ['recovery-input.json', 'recovery-input'],
 ]);
 const FIXED_LOOP_FILES = new Map([
   ['events.jsonl', 'events'],
@@ -108,6 +111,14 @@ function classifyRest(rest, value) {
     if (!NAME_SEGMENT.test(rest[1])) fail(`invalid task run name in '${value}'`);
     if (rest.length === 2) fail(`'${value}' is not a work artifact file`);
     if (rest.length === 3) {
+      if (/^task-[1-9]\d*-brief\.md$/.test(rest[2])) return { type: 'work-output', family: 'task-brief' };
+      if (/^task-[1-9]\d*-diff\.txt$/.test(rest[2])) return { type: 'work-output', family: 'task-diff' };
+      if (/^task-[1-9]\d*-import\.json$/.test(rest[2])) return { type: 'work-output', family: 'task-import' };
+      if (/^role-[1-9]\d*-reservation\.json$/.test(rest[2])) return { type: 'work-output', family: 'role-reservation' };
+      if (/^role-[1-9]\d*-response\.json$/.test(rest[2])) return { type: 'work-output', family: 'role-response' };
+      if (/^role-[1-9]\d*-receipt\.json$/.test(rest[2])) return { type: 'work-output', family: 'role-receipt' };
+      if (/^role-[1-9]\d*\.raw\.jsonl$/.test(rest[2])) return { type: 'work-output', family: 'role-raw' };
+      if (/^role-[1-9]\d*\.log$/.test(rest[2])) return { type: 'work-output', family: 'role-log' };
       if (/^task-[1-9]\d*-execution-[1-9]\d*-(?:baseline|capture|result)\.json$/.test(rest[2])) return { type: 'work-output', family: 'task-result' };
       if (/^task-[1-9]\d*-execution-[1-9]\d*-report\.md$/.test(rest[2])) return { type: 'work-output', family: 'task-result-report' };
       if (/^task-[1-9]\d*-report\.md$/.test(rest[2])) return { type: 'work-output', family: 'task-report' };
@@ -121,6 +132,9 @@ function classifyRest(rest, value) {
       }
     }
     if (rest.length === 4 && rest[2] === 'context' && MANIFEST_NAME.test(rest[3])) {
+      return { type: 'work-output', family: 'manifest' };
+    }
+    if (rest.length === 4 && rest[2] === 'context' && /^role-[1-9]\d*\.json$/.test(rest[3])) {
       return { type: 'work-output', family: 'manifest' };
     }
   }
@@ -482,7 +496,7 @@ export function writeWorkPath(repoRoot, path, content, options = {}) {
       const opened = fstatSync(fd, { bigint: true });
       if (!opened.isFile()) fail(`staged temp is not a file for '${path}'`);
       stagedIdentity = statIdentity(opened);
-      writeFileSync(fd, bytes);
+      writeAllSync(fd, bytes);
       fchmodSync(fd, bound.mode);
       fsyncSync(fd);
     } finally {
@@ -536,7 +550,7 @@ export function appendWorkPath(repoRoot, path, content, options = {}) {
     if (statIdentity(opened) !== bound.identity) {
       fail(`target identity changed for '${path}'`);
     }
-    writeFileSync(fd, bytes);
+    writeAllSync(fd, bytes);
     fsyncSync(fd);
     const after = lstatSync(bound.target, { bigint: true });
     assertOrdinaryTarget(after, path);

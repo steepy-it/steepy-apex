@@ -2,14 +2,32 @@
 
 If your harness provides a task/subagent tool, dispatch a fresh reviewer after an eligible task's
 implementer reports DONE or DONE_WITH_CONCERNS. In autopilot, pass the validated task-reviewer
-manifest path as the sole file-inventory reference. Its `required` inventory is exactly the task brief, implementer report, task diff, and selected owning standards (a single file, or the exact modular core plus matching leaves). The hub index may be `onDemand` only for a
+manifest path as the sole file-inventory reference. Its `required` inventory is exactly the task brief, implementer report, task diff, and selected owning standards (a single file, or the exact modular core plus matching leaves); an import-bound review (`manifest.contract.reviewedEvidence: import`, controller protocol 2 recovery runs only) also requires the import receipt, and its report input is the imported legacy task report. The hub index may be `onDemand` only for a
 named suspected routing conflict; the controller records that concrete reason before the read.
 Otherwise review inline in a dedicated same-session pass over those same inputs and record the
 no-task-tool or manual no-manifest degradation in the ledger.
 
-Protocol selection: `manifest.contract.taskResultProtocol` equal to `2` takes precedence over
-all four-field examples below. In v2 return only `status`, `artifact`, `signals`, in that text order
-(or the same JSON keys when the controller selected JSON). Preserve the role's status and artifact
+Protocol selection: when `manifest.contract.reviewerResponseProtocol` is `3`, first apply the
+packaged `controller-role-prompt.md` and this role prompt. The controller assigns the review and
+issues artifact paths; write the review, and write issues for `ISSUES_FOUND`. Return exactly
+`status`, `signals` in that order, in the controller-selected text or JSON format (always text
+under controller protocol 2, per `manifest.contract.responseFormat`). The controller owns the verdict gate, receipts, and lifecycle; report prose cannot supply a verdict. A response
+containing `artifact` or `changed-paths` is invalid. Only one reserved response-only correction
+may repair reversed text-line order or one Markdown block around the whole selected payload;
+values and types remain frozen. This v3 branch takes precedence over v2 and legacy examples.
+When `manifest.contract.reviewedEvidence` is `import`, this task's evidence is a controller-verified
+import from a halted legacy run, not a writer execution of this run. The required inventory adds the
+import receipt (`task-N-import.json`), and the report input is the imported task report frozen from
+that run; its claims are unverified, like any implementer report. Read the receipt only to confirm
+what it binds. The import is not approval and no legacy verdict carries over: review the work as
+you would a fresh execution. ISSUES_FOUND sends the task to a fix, which becomes execution 2.
+When `manifest.contract.sharedDiff` is `true`, the task diff can include other tasks' work, earlier
+or later, imported or executed in this run, including their fixes. In a recovery run it can also
+include the accepted recovery delta. Judge only this task's brief and Exact paths, and do not ask
+for those changes to be reverted.
+When `manifest.contract.reviewerResponseProtocol` is not `3`, `manifest.contract.taskResultProtocol`
+equal to `2` takes precedence over all four-field examples below. In v2 return only `status`,
+`artifact`, `signals`, in that text order (or the same JSON keys when the controller selected JSON). Preserve the role's status and artifact
 rules. A legacy extra `changed-paths` is raw-only telemetry ignored by the gate, never authoritative.
 Manual drive and legacy autopilot protocol 1 retain the following four-field response contract:
 
@@ -36,12 +54,19 @@ Subagent (reviewer):
     **Review artifact:** [REVIEW_FILE]
     **Issue artifact:** [ISSUE_FILE]
 
-    In autopilot, read and validate the manifest first. When `manifest.contract.taskResultProtocol`
+    In autopilot, read and validate the manifest first. When `manifest.contract.reviewerResponseProtocol`
+    is `3`, use the packaged controller-role instructions and this role prompt directly. The controller
+    assigns [REVIEW_FILE] and [ISSUE_FILE]. Write the review for every status, and for ISSUES_FOUND
+    write the complete actionable set to [ISSUE_FILE]. Return only status, signals; no artifact or
+    changed-paths field. The controller owns receipts and lifecycle, and validates the verdict from
+    the response rather than the report. Do not invoke an installed skill by name. This branch wins
+    before all v2 and legacy response rules below. Otherwise, when `manifest.contract.taskResultProtocol`
     is `2`, return only status, artifact, signals; this rule takes precedence over every legacy
     four-field example in this prompt. Do not include a source-path claim. The controller obtains
     paths from Git observations; a legacy extra changed-paths is ignored raw-only telemetry.
     Manual drive and legacy protocol 1 retain the four-field grammar below. Read every `required` input: task brief,
-    implementer report, task diff, and owning standard under `.apex/standards/`. Do not preload the
+    implementer report (for an import-bound review, the imported report), task diff, owning standard
+    under `.apex/standards/`, and for an import-bound review the import receipt. Do not preload the
     routing table (`.apex/_INDEX.md`). Read its `onDemand` entry only for a named suspected routing
     conflict, recording the risk and read in [REVIEW_FILE]. Never preload a full spec, plan, transcript,
     conversation, or another work artifact. Ordinary repository source needed to verify the assigned

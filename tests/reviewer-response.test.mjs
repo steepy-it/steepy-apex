@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { beginReview, checkReview, reserveRepair, inspectReview, parseReviewerResponse, verifyImplementReviews, captureRetainedApproval, setReviewReference } from '../scripts/reviewer-response.mjs';
-import { beginTask, recordTaskResult, projectTaskResults } from '../scripts/task-results.mjs';
+import { beginTask, recordTaskResult, projectTaskResults, importTaskResult } from '../scripts/task-results.mjs';
 
 function fixture(fn) {
   const root = mkdtempSync(join(tmpdir(), 'steepy-reviewer-response-'));
@@ -128,6 +129,94 @@ test('response-only correction cannot promote an issues verdict', () => fixture(
   checkReview(root, state, `status: ISSUES_FOUND\nartifact: ${issues}\nchanged-paths: ${report}\nsignals: review:critical\n`);
   reserveRepair(root, state);
   assert.equal(checkReview(root, state, envelope(), true).status, 'BLOCKED');
+}));
+
+test('v3 derives artifact from verdict and repairs only a reversed pair after reservation', () => fixture(({ root, state, config, put, report, issues }) => {
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3 });
+  put(report, 'Review completed.\n');
+  put(issues, 'Recorded issue.\n');
+  const original = checkReview(root, state, 'signals: review:critical\nstatus: ISSUES_FOUND\n');
+  assert.equal(original.status, 'REPAIRABLE');
+  assert.equal(original.accepted, false);
+  const originalBytes = readFileSync(join(root, `${state}-original.json`));
+  assert.equal(inspectReview(root, state).status, 'REPAIRABLE');
+  const reservation = reserveRepair(root, state);
+  assert.equal(reservation.budget, 1);
+  assert.equal(inspectReview(root, state).status, 'BLOCKED');
+  assert.equal(checkReview(root, state, 'status: ISSUES_FOUND\nsignals: review:critical\n', true).accepted, true);
+  assert.equal(inspectReview(root, state).envelope.artifact, issues);
+  assert.deepEqual(readFileSync(join(root, `${state}-original.json`)), originalBytes);
+}));
+
+test('v3 one full Markdown fence is repairable but cannot change status or signals', () => fixture(({ root, state, config, put, report }) => {
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3 });
+  put(report, 'Approved.\n');
+  assert.equal(checkReview(root, state, '```text\nstatus: APPROVED\nsignals: review:clean\n```\n').status, 'REPAIRABLE');
+  reserveRepair(root, state);
+  assert.equal(checkReview(root, state, 'status: ISSUES_FOUND\nsignals: review:clean\n', true).status, 'BLOCKED');
+}));
+
+for (const malformed of [
+  'status: APPROVED\n',
+  'status: APPROVED\nsignals: review:clean\nsignals: review:other\n',
+  'Here is my review:\nstatus: APPROVED\nsignals: review:clean\n',
+  '```text\nstatus: APPROVED\nsignals: review:clean\n```\n```text\nstatus: APPROVED\nsignals: review:clean\n```\n',
+  'status: BLOCKED\nsignals: review:clean\n',
+]) {
+  test(`v3 refuses ambiguous or ineligible correction: ${malformed.slice(0, 28)}`, () => fixture(({ root, state, config, put, report }) => {
+    beginReview(root, state, { ...config, reviewerResponseProtocol: 3 });
+    put(report, 'Review completed.\n');
+    assert.notEqual(checkReview(root, state, malformed).status, 'REPAIRABLE');
+    assert.throws(() => reserveRepair(root, state), /not repairable/);
+  }));
+}
+
+test('v3 requires report for approval and report plus issues for findings', () => fixture(({ root, state, config, put, report, issues }) => {
+  rmSync(join(root, issues));
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3 });
+  assert.equal(checkReview(root, state, 'status: APPROVED\nsignals: none\n').status, 'BLOCKED');
+  const next = state.replace('iteration-2', 'iteration-3');
+  beginReview(root, next, { ...config, iteration: 3, reviewerResponseProtocol: 3 });
+  put(report, 'Review completed.\n');
+  assert.equal(checkReview(root, next, 'status: ISSUES_FOUND\nsignals: review:critical\n').status, 'BLOCKED');
+  const last = state.replace('iteration-2', 'iteration-4');
+  beginReview(root, last, { ...config, iteration: 4, reviewerResponseProtocol: 3 });
+  put(issues, 'Finding.\n');
+  assert.equal(checkReview(root, last, 'status: ISSUES_FOUND\nsignals: review:critical\n').accepted, true);
+}));
+
+test('v3 accepts a strict JSON pair and binds approval to the unchanged report', () => fixture(({ root, state, config, put, report }) => {
+  beginReview(root, state, { ...config, format: 'json', reviewerResponseProtocol: 3 });
+  put(report, 'Approved.\n');
+  const result = checkReview(root, state, JSON.stringify({ status: 'APPROVED', signals: 'review:clean' }));
+  assert.equal(result.accepted, true);
+  assert.equal(result.envelope.artifact, report);
+  assert.equal(inspectReview(root, state).accepted, true);
+  put(report, 'Changed after acceptance.\n');
+  assert.equal(inspectReview(root, state).status, 'BLOCKED');
+}));
+
+test('v3 NEEDS_CONTEXT remains non-repairable when no review report was written', () => fixture(({ root, state, config }) => {
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3 });
+  const result = checkReview(root, state, 'status: NEEDS_CONTEXT\nsignals: review:missing-context\n');
+  assert.equal(result.status, 'NEEDS_CONTEXT');
+  assert.equal(result.accepted, false);
+  assert.throws(() => reserveRepair(root, state), /not repairable/);
+}));
+
+test('v3 captured correction replays after restart; a reserved uncaptured correction cannot redispatch', () => fixture(({ root, state, config, put, report }) => {
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3 });
+  put(report, 'Approved.\n');
+  checkReview(root, state, 'signals: review:clean\nstatus: APPROVED\n');
+  reserveRepair(root, state);
+  assert.equal(inspectReview(root, state).status, 'BLOCKED');
+  assert.throws(() => reserveRepair(root, state), /already exists/);
+  checkReview(root, state, 'status: APPROVED\nsignals: review:clean\n', true);
+  assert.equal(inspectReview(root, state).accepted, true);
+  const saved = JSON.parse(readFileSync(join(root, `${state}-corrected.json`), 'utf8'));
+  saved.envelope.signals = 'review:other';
+  put(`${state}-corrected.json`, JSON.stringify(saved));
+  assert.throws(() => inspectReview(root, state), /review evidence mismatch/);
 }));
 
 test('strict parser rejects wrong fields, paths, status, and extra prose', () => fixture(({ config, envelope }) => {
@@ -448,3 +537,110 @@ test('reference binding creates exactly one reference and preserves CRLF on repl
   assert.ok(text.includes(`Reviewer gate final: ${next}\r\n`));
   assert.equal(text.replace(/\r\n/g, '').includes('\n'), false);
 }));
+
+// A recovery run directory (the fixture's topic run) importing Task 4 from a
+// legacy source run. The plan is mechanical so an import can never take the
+// mechanical review waiver.
+function importFixture(fn) {
+  fixture((ctx) => {
+    const { root, dir, put, git } = ctx;
+    const source = '.apex/work/tasks/old', sourcePlan = '.apex/work/plans/old.md', planPath = '.apex/work/plans/topic.md';
+    const plan = (spec) => `<!-- steepy-workflow: v1\nphase: plan\nstatus: READY\nnext: implement\nsource: ${spec}\nconsumed-by: none\n-->\n# Plan\n\n## Task 4\n- **Surface:** scripts\n- **Complexity:** mechanical\n- **Success criteria:** SC1\n- **Requirements and deliverables:** Preserve ordering.\n- **Exact paths:** code.js\n- **Dependencies:** none\n`;
+    for (const path of ['.apex/work/plans', `${source}/context`, `${dir}/context`]) mkdirSync(join(root, path), { recursive: true });
+    put(sourcePlan, plan('.apex/work/specs/old.md'));
+    const sourceState = `${source}/task-4-execution-1`, sourceReport = `${source}/task-4-report.md`;
+    beginTask(root, sourceState, { runId: 'legacy-run', attempt: 1, task: '4', execution: 1, role: 'implementer', report: sourceReport, planPath: sourcePlan });
+    put('code.js', 'imported implementation\n'); put(sourceReport, 'Imported report.\n');
+    git('add', 'code.js'); git('commit', '-m', 'legacy task 4');
+    recordTaskResult(root, sourceState, `status: DONE\nartifact: ${sourceReport}\nsignals: none\n`);
+    const manifestPath = `${source}/context/phase-implement-attempt-1.json`;
+    put(manifestPath, `${JSON.stringify({ runId: 'legacy-run', attempt: 1, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } })}\n`);
+    put(planPath, plan('.apex/work/specs/topic.md'));
+    put(`${dir}/recovery-input.json`, `${JSON.stringify({ source: { run: source, receipts: [{ task: '4', path: `${sourceState}-result.json`,
+      sha256: createHash('sha256').update(readFileSync(join(root, `${sourceState}-result.json`))).digest('hex') }] } })}\n`);
+    const importPath = `${dir}/task-4-import.json`;
+    const imported = importTaskResult(root, importPath, { runId: ctx.config.runId, task: '4', sourceState, sourceHead: sourceState,
+      manifests: [{ path: manifestPath, sha256: createHash('sha256').update(readFileSync(join(root, manifestPath))).digest('hex') }], explainedDelta: [] });
+    fn({ ...ctx, importPath, imported, planPath, sourceState, indexPath: `${dir}/task-result-index.md` });
+  });
+}
+const v3Approval = 'status: APPROVED\nsignals: none\n';
+
+test('an imported task review binds the verified import digest, never an execution', () => importFixture(({ root, state, config, put, report, importPath, imported, sourceState }) => {
+  const v3 = { ...config, reviewerResponseProtocol: 3, taskResultIndexProtocol: 3 };
+  assert.throws(() => beginReview(root, state, { ...config, reviewerResponseProtocol: 3, import: importPath }), /import-bound review requires task result index protocol 3/);
+  assert.throws(() => beginReview(root, state, { ...config, taskResultIndexProtocol: 3, import: importPath }), /task result index protocol 3 requires reviewer response protocol 3/);
+  assert.throws(() => beginReview(root, state, { ...v3, import: importPath, execution: sourceState }), /exactly one of execution or import/);
+  assert.throws(() => beginReview(root, state, { ...v3, import: `${config.report.slice(0, config.report.lastIndexOf('/'))}/task-5-import.json` }), /wrong task import binding/);
+  beginReview(root, state, { ...v3, import: importPath });
+  const baseline = JSON.parse(readFileSync(join(root, `${state}-baseline.json`), 'utf8'));
+  assert.deepEqual([baseline.version, baseline.implementation, baseline.config.import, baseline.config.taskResultProtocol], [6, imported.digest, importPath, 2]);
+  assert.equal(Object.hasOwn(baseline.config, 'execution'), false);
+  put(report, 'Approved imported evidence.\n');
+  assert.equal(checkReview(root, state, v3Approval).accepted, true);
+  assert.equal(inspectReview(root, state).accepted, true);
+  const receipt = JSON.parse(readFileSync(join(root, importPath), 'utf8'));
+  writeFileSync(join(root, importPath), `${JSON.stringify({ ...receipt, delta: ['code.js'] })}\n`);
+  assert.deepEqual([inspectReview(root, state).status, inspectReview(root, state).reason], ['BLOCKED', 'review evidence drift on resume']);
+}));
+
+test('the final gate requires an import-bound approval for every imported task, even a mechanical one', () => importFixture(({ root, dir, state, config, put, report, importPath, planPath, indexPath }) => {
+  const finalState = `${dir}/final-review-guard-attempt-3-iteration-1`;
+  const finalConfig = { ...config, reviewerResponseProtocol: 3, taskResultIndexProtocol: 3, task: 'final', iteration: 1, report: `${dir}/final-review.md`,
+    issues: `${dir}/final-review-issues.md`, plan: planPath, index: indexPath };
+  put(indexPath, `# Results\nReviewer gate final: ${finalState}\n`);
+  projectTaskResults(root, { indexPath, states: [], imports: [importPath], protocol: 3 });
+  assert.throws(() => beginReview(root, finalState, { ...finalConfig, taskResultIndexProtocol: undefined }),
+    /task result index protocol 3 does not match required protocol 2/, 'an unselected final gate refuses a v3 index');
+  assert.throws(() => beginReview(root, finalState, finalConfig), /missing reviewer gate for Task 4/);
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3, taskResultIndexProtocol: 3, import: importPath });
+  put(report, 'Approved imported evidence.\n');
+  checkReview(root, state, v3Approval);
+  setReviewReference(root, { indexPath, state });
+  beginReview(root, finalState, finalConfig);
+  put(finalConfig.report, 'Approved branch.\n');
+  assert.equal(checkReview(root, finalState, v3Approval).accepted, true);
+  assert.equal(inspectReview(root, finalState).accepted, true);
+}));
+
+test('an execution-bound approval cannot approve an imported task', () => importFixture(({ root, dir, state, config, put, report, importPath, planPath, indexPath }) => {
+  const execution = `${dir}/task-4-execution-2`, taskReport = `${dir}/task-4-report.md`;
+  // A real (report-only) fix continues the import; approving that execution never approves the import entry.
+  beginTask(root, execution, { runId: config.runId, attempt: 1, task: '4', execution: 2, role: 'fix', report: taskReport, planPath, previousImport: importPath });
+  put(taskReport, 'Fix report: no source change was needed.\n');
+  recordTaskResult(root, execution, `status: DONE\nartifact: ${taskReport}\nsignals: none\n`);
+  beginReview(root, state, { ...config, reviewerResponseProtocol: 3, taskResultIndexProtocol: 3, execution });
+  put(report, 'Approved the fix.\n');
+  checkReview(root, state, v3Approval);
+  const finalState = `${dir}/final-review-guard-attempt-3-iteration-1`;
+  put(indexPath, `# Results\nReviewer gate Task 4: ${state}\nReviewer gate final: ${finalState}\n`);
+  const finalConfig = { ...config, reviewerResponseProtocol: 3, taskResultIndexProtocol: 3, task: 'final', iteration: 1, report: `${dir}/final-review.md`,
+    issues: `${dir}/final-review-issues.md`, plan: planPath, index: indexPath };
+  writeFileSync(join(root, indexPath), `# Results\nReviewer gate Task 4: ${state}\nReviewer gate final: ${finalState}\n<!-- steepy-task-results: v3 -->\n\`\`\`json\n${JSON.stringify([{ task: '4', kind: 'import', status: 'IMPORTED',
+    artifact: `.apex/work/tasks/old/task-4-execution-1-report.md`, changedPaths: ['code.js'], signals: [], receipt: importPath }], null, 2)}\n\`\`\`\n<!-- /steepy-task-results -->\n`);
+  assert.throws(() => beginReview(root, finalState, finalConfig), /task review does not approve current import for Task 4/);
+}));
+
+for (const mixed of [false, true]) {
+  test(`the legacy implement gate refuses a v3 index (${mixed ? 'mixed import and execution' : 'import only'}) with a protocol error`, () => importFixture(({ root, dir, state, config, put, report, importPath, indexPath }) => {
+    const planPath = '.apex/work/plans/topic.md';
+    put(`${dir}/context/phase-implement-attempt-3.json`, JSON.stringify({ runId: config.runId, attempt: 3, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } }));
+    beginReview(root, state, { ...config, reviewerResponseProtocol: 3, taskResultIndexProtocol: 3, import: importPath });
+    put(report, 'Approved imported evidence.\n');
+    checkReview(root, state, v3Approval);
+    const finalState = `${dir}/final-review-guard-attempt-3-iteration-1`;
+    const entries = [{ task: '4', kind: 'import', status: 'IMPORTED', artifact: '.apex/work/tasks/old/task-4-execution-1-report.md',
+      changedPaths: ['code.js'], signals: [], receipt: importPath }];
+    if (mixed) {
+      put(planPath, `${readFileSync(join(root, planPath), 'utf8')}\n## Task 5\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n`);
+      entries.push({ task: '5', kind: 'execution', status: 'DONE', artifact: `${dir}/task-5-report.md`, changedPaths: [], signals: [], receipt: `${dir}/task-5-execution-1` });
+    }
+    put(indexPath, `# Results\nReviewer gate Task 4: ${state}\nReviewer gate final: ${finalState}\n<!-- steepy-task-results: v3 -->\n\`\`\`json\n${JSON.stringify(entries, null, 2)}\n\`\`\`\n<!-- /steepy-task-results -->\n`);
+    assert.throws(() => verifyImplementReviews(root, { planPath, indexPath, runId: config.runId, attempt: 3 }),
+      /task result index protocol 3 does not match required protocol 2/);
+    const cli = spawnSync(process.execPath, [new URL('../scripts/reviewer-response.mjs', import.meta.url).pathname, '--repo-root', root,
+      '--action', 'verify-handoff', '--plan', planPath, '--task-result-index', indexPath, '--run-id', config.runId, '--attempt', '3'], { encoding: 'utf8' });
+    assert.equal(cli.status, 1);
+    assert.match(cli.stderr, /task result index protocol 3 does not match required protocol 2/);
+  }));
+}

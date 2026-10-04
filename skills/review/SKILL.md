@@ -148,6 +148,29 @@ Verify completed work with evidence. Never assert "done" without command output 
 
 ### Step 0 — Read the gear
 
+**Controller protocol 2:** When the exact phase manifest selects `controllerProtocol: 2`,
+execute this packaged phase directly using its exact required inputs and assigned DRAFT report.
+Do not invoke an installed skill by name. Read the manifest first; selected modular standards
+still require the core plus every matching leaf with a concrete reason for each on-demand read.
+After verifying the assigned criteria and gates, return exactly two plain-text lines,
+`status: <value>` then `signals: <value>`: `status` is `READY_FOR_PR`, `BLOCKED`, or
+`NEEDS_CONTEXT`; `signals` is `none` or machine IDs separated by `, `.
+`review/controller-response.schema.json` only defines the allowed values; never return JSON, a
+Markdown fence, or prose. The controller checks the report and evidence, owns
+the ledger, receipts, projection, and lifecycle transitions, and publishes the terminal outcome.
+Do not append `autopilot-status.md`, advance the task-result index, consume a lifecycle header,
+or infer the verdict from report prose. For this selected protocol, later publication and
+status-appending instructions are replaced by this return contract. The regular manual,
+historical legacy autopilot, and Gear-4 paths below retain their existing lifecycle and handoff rules.
+The controller accepts the report only with fresh evidence from this role: the manifest's
+`testCommand` (the plan's exact surface test command) and `validate-hub`, both exiting 0 with no
+signal or spawn error. With several distinct test commands, the review manifest carries no single
+`testCommand` and this skill takes one `--test-command`. No manifest field names the plan's
+commands then: use the `.apex/testing-and-checklist.md` command of a surface whose standard the
+manifest lists, which is one of the plan's commands when the plan passed the plan skill's self-review check 2,
+and return `NEEDS_CONTEXT` if none applies. The evidence gate refuses a command that is not one of
+the plan's; that refusal and `NEEDS_CONTEXT` both halt the run.
+
 **Autopilot preflight:** When the conductor-supplied phase manifest is present, read that
 manifest before any other task input. Validate its role and scope against the review phase and the
 supplied correlation identity. Eagerly read every `required` input before acting. Do not preload `onDemand`;
@@ -175,6 +198,20 @@ the index is a projection, and a captured execution alone is never approval. Thi
 reviewer permission to open receipt bodies, task reports, the plan, or the progress ledger. Missing
 or drifted evidence fails closed; never infer historical baselines or silently upgrade a legacy run.
 Manual drive and Gear 4 retain their existing grammar and capabilities.
+
+**Index protocol 3 (recovery runs).** A recovery run pins `manifest.contract.taskResultIndexProtocol: 3`;
+a fresh controller run keeps index protocol 2. The `steepy-task-results: v3` block gives every entry a
+`kind`. An entry with `kind: execution` is a writer execution of this run. An entry with
+`kind: import` has `status: IMPORTED`: the run reused that task's execution from a halted legacy
+run. Its `artifact` is the imported task report and its `signals` are the source execution's
+signals. The import is not approval. Before this phase, the controller required an import-bound task
+review in this run for every imported task, whatever its complexity, plus the whole-branch review.
+A task fixed after its import shows `kind: execution` instead; its first fix is execution 2.
+Judge the criteria from the index and branch diff as usual; do not open the import receipt or the
+source run. Paths in the manifest's declared recovery delta (`manifest.recovery.delta`) are
+explained changes accepted by the recovery input, not unattributed task work or missing evidence.
+A delta path explains only the change no task claims, so a task's own edits to that path still
+need review.
 
 **Manual/no-manifest:** Validate the manual handoff before reading any work artifact. Regular Gear-3
 review fresh entry accepts exactly `criteria`, `task-results`, and `branch-diff` with `onDemand: none`;

@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   buildFinalReviewManifest,
+  buildFinalReviewCorrectionManifest,
   buildFixManifest,
   buildImplementManifest,
   buildImplementerManifest,
@@ -19,6 +20,9 @@ import {
   buildReviewManifest,
   buildTaskManifest,
   buildTaskReviewerManifest,
+  buildTaskReviewCorrectionManifest,
+  buildControllerTaskManifest,
+  controllerTaskContext,
   deriveImplicatedStandardPaths,
   manifestReferencePrompt,
   materializeSuccessCriteria,
@@ -29,8 +33,12 @@ import {
   standardsBySurfaceFromRouting,
   validateContextManifest,
   writeContextManifest,
+  writeControllerTaskBrief,
 } from '../scripts/autopilot-context.mjs';
 import { phasePrompt } from '../scripts/autopilot.mjs';
+import { beginReview, checkReview, reserveRepair } from '../scripts/reviewer-response.mjs';
+import { beginTask, importTaskResult, recordTaskResult } from '../scripts/task-results.mjs';
+import { createHash } from 'node:crypto';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const scriptPath = join(here, '..', 'scripts', 'autopilot-context.mjs');
@@ -52,6 +60,37 @@ function materialize(t) {
   return repoRoot;
 }
 
+function correctionGateFixture(t) {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'steepy-correction-context-'));
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  git('init'); git('config', 'user.email', 'test@example.com'); git('config', 'user.name', 'Test');
+  writeFileSync(join(repoRoot, '.gitignore'), '.apex/work/\n');
+  writeFileSync(join(repoRoot, 'code.js'), 'committed source\n');
+  git('add', '.'); git('commit', '-m', 'base');
+  const dir = '.apex/work/tasks/context-efficient';
+  mkdirSync(join(repoRoot, dir), { recursive: true });
+  const make = (task) => {
+    const stem = task === 'final' ? 'final' : `task-${task}`;
+    const state = `${dir}/${stem}-review-guard-attempt-2-iteration-1`;
+    const report = `${dir}/${stem}-review.md`;
+    const issues = `${dir}/${task === 'final' ? 'final-review' : stem}-issues.md`;
+    const config = { runId: base.runId, attempt: 2, iteration: 1, task, report, issues, reviewerResponseProtocol: 3 };
+    beginReview(repoRoot, state, config);
+    writeFileSync(join(repoRoot, report), 'Review report.\n');
+    writeFileSync(join(repoRoot, issues), 'Frozen finding.\n');
+    assert.equal(checkReview(repoRoot, state, 'signals: review:critical\nstatus: ISSUES_FOUND\n').status, 'REPAIRABLE');
+    reserveRepair(repoRoot, state);
+    const input = { ...base, repoRoot, attempt: 2, originalReceiptPath: `${state}-original.json`, reportPath: report,
+      issuePath: issues, ...(task === 'final' ? {} : { task: Number(task) }) };
+    return { state, report, issues, input };
+  };
+  return { repoRoot, dir, make };
+}
+
 const base = {
   runId: 'run-2026-08-13',
   modelTier: 'most-capable',
@@ -59,6 +98,49 @@ const base = {
   criterionIds: ['SC3', 'SC5'],
   outputs: ['.apex/work/tasks/context-efficient/task-1-report.md'],
 };
+
+test('controller protocol 2 selects a fully bound task; legacy keeps the compact parser', () => {
+  const plan = '# Plan\n\n## Task 1 — implement\n\n- **Requirements and deliverables:** Add the parser.\n- **Relevant global constraints:** Preserve old parsing.\n- **Surface:** scripts\n- **Specialist agent:** scripts-agent\n- **Exact paths:** scripts/autopilot-plan.mjs, tests/autopilot-plan.test.mjs\n- **Test command:** npm test\n- **Dependencies:** none\n- **Complexity:** design\n- **Success criteria:** SC1\n';
+  const routingText = '| `scripts` | [scripts](standards/scripts.md) | `scripts-agent` | — |\n';
+  const bound = controllerTaskContext({ controllerProtocol: 2, planText: plan, routingText,
+    standardsBySurface: { scripts: '.apex/standards/scripts.md' }, taskId: '1' });
+  assert.deepEqual(bound.standardPaths, ['.apex/standards/scripts.md']);
+  assert.equal(bound.testCommand, 'npm test');
+  assert.deepEqual(bound.criterionIds, ['SC1']);
+  assert.match(bound.brief, /Add the parser\./);
+  assert.throws(() => controllerTaskContext({ controllerProtocol: 2,
+    planText: plan.replace('- **Specialist agent:** scripts-agent\n', ''), routingText,
+    standardsBySurface: { scripts: '.apex/standards/scripts.md' }, taskId: '1' }), /missing Specialist agent/i);
+  const legacy = controllerTaskContext({ controllerProtocol: 1,
+    planText: '# Plan\n\n## Task 1\n- **Surface:** scripts\n- **Complexity:** design\n- **Success criteria:** SC1\n', taskId: '1' });
+  assert.equal(legacy.task.owningSurface, 'scripts');
+  assert.equal(legacy.brief, undefined);
+});
+
+test('controller v2 publishes a create-only brief then builds the existing role inventory without choosing a model', (t) => {
+  const repoRoot = materialize(t);
+  const planText = '# Plan\n\n## Task 2 — implement\n\n- **Requirements and deliverables:** Add parser behavior.\n- **Relevant global constraints:** Keep legacy entry points.\n- **Surface:** scripts\n- **Specialist agent:** scripts-agent\n- **Exact paths:** scripts/autopilot-plan.mjs\n- **Test command:** npm test\n- **Dependencies:** none\n- **Complexity:** design\n- **Success criteria:** SC1\n';
+  const binding = { controllerProtocol: 2, repoRoot, planText, taskId: '2',
+    routingText: '| `scripts` | [scripts](standards/scripts.md) | `scripts-agent` | — |\n',
+    standardsBySurface: { scripts: '.apex/standards/scripts.md' },
+    briefPath: '.apex/work/tasks/context-efficient/task-2-brief.md' };
+  const prepared = writeControllerTaskBrief(binding);
+  assert.equal(prepared.briefPath, binding.briefPath);
+  assert.match(readFileSync(join(repoRoot, binding.briefPath), 'utf8'), /Add parser behavior\./);
+  assert.throws(() => writeControllerTaskBrief(binding), /already exists/i);
+  const manifest = buildControllerTaskManifest('implementer', {
+    ...binding, runId: base.runId, modelTier: 'most-capable',
+  });
+  assert.equal(manifest.modelTier, 'most-capable');
+  assert.deepEqual(manifest.required.map(({ path }) => path), [binding.briefPath, '.apex/standards/scripts.md']);
+  assert.equal(manifest.testCommand, 'npm test');
+  assert.deepEqual(manifest.criterionIds, ['SC1']);
+  assert.throws(() => buildControllerTaskManifest('implementer', { ...binding, runId: base.runId }), /modelTier/i);
+  assert.throws(() => buildControllerTaskManifest('implementer', {
+    ...binding, runId: base.runId, modelTier: 'standard',
+    briefPath: '.apex/work/tasks/context-efficient/task-1-brief.md',
+  }), /brief path does not match Task 2/i);
+});
 
 test('implementer manifest records bytes, preserves order, and keeps upstream artifacts non-eager', (t) => {
   const repoRoot = materialize(t);
@@ -89,6 +171,102 @@ test('implementer manifest records bytes, preserves order, and keeps upstream ar
     '.apex/_INDEX.md',
   ]);
   assert.ok(!JSON.stringify(manifest).includes('Node built-ins only'));
+});
+
+test('correction manifests expose only the bound original receipt and frozen review artifacts', (t) => {
+  const { repoRoot, make } = correctionGateFixture(t);
+  const taskGate = make('1');
+  const finalGate = make('final');
+  const task = buildTaskReviewCorrectionManifest(taskGate.input);
+  const final = buildFinalReviewCorrectionManifest(finalGate.input);
+  for (const [manifest, role, paths] of [
+    [task, 'task-review-correction', [taskGate.input.originalReceiptPath, taskGate.report, taskGate.issues]],
+    [final, 'final-review-correction', [finalGate.input.originalReceiptPath, finalGate.report, finalGate.issues]],
+  ]) {
+    assert.equal(manifest.scope.role, role);
+    assert.deepEqual(manifest.required.map((entry) => entry.path), paths);
+    assert.deepEqual(manifest.onDemand, []);
+    assert.deepEqual(manifest.outputs, []);
+    assert.equal(manifest.contract.reviewerResponseProtocol, 3);
+    assert.equal(manifest.testCommand, undefined);
+    assert.equal(manifest.criterionIds, undefined);
+    assert.deepEqual(validateContextManifest(manifest, { repoRoot }), manifest);
+    assert.throws(() => validateContextManifest({ ...manifest, testCommand: 'npm test' }, { repoRoot }), /correction manifest/);
+  }
+  assert.throws(() => buildTaskReviewCorrectionManifest({ ...taskGate.input, originalReceiptPath: finalGate.input.originalReceiptPath }), /receipt|task/);
+  assert.throws(() => buildFinalReviewCorrectionManifest({ ...finalGate.input, originalReceiptPath: taskGate.input.originalReceiptPath }), /receipt|final/);
+});
+
+test('correction manifests require a consumed valid reservation and frozen artifacts', (t) => {
+  const { repoRoot, make } = correctionGateFixture(t);
+  const gate = make('1');
+  const build = () => buildTaskReviewCorrectionManifest(gate.input);
+  const manifest = build();
+  const reservedPath = `${gate.state}-reserved.json`;
+  const reserved = readFileSync(join(repoRoot, reservedPath));
+  rmSync(join(repoRoot, reservedPath));
+  assert.throws(build, /reservation|reserved|missing/);
+  assert.throws(() => validateContextManifest(manifest, { repoRoot }), /reservation|reserved|missing/);
+  writeFileSync(join(repoRoot, reservedPath), reserved);
+  const tampered = JSON.parse(reserved);
+  tampered.budget = 2;
+  writeFileSync(join(repoRoot, reservedPath), JSON.stringify(tampered));
+  assert.throws(build, /reservation|correlation|budget/);
+  writeFileSync(join(repoRoot, reservedPath), reserved);
+  const originalPath = gate.input.originalReceiptPath;
+  const original = readFileSync(join(repoRoot, originalPath));
+  writeFileSync(join(repoRoot, originalPath), JSON.stringify({ version: 5, status: 'REPAIRABLE', accepted: false,
+    config: { runId: base.runId, attempt: 2, task: '1', report: gate.report, issues: gate.issues, reviewerResponseProtocol: 3 } }));
+  assert.throws(build, /review|evidence|schema|observation/);
+  writeFileSync(join(repoRoot, originalPath), original);
+  const report = readFileSync(join(repoRoot, gate.report));
+  writeFileSync(join(repoRoot, gate.report), 'Drifted review.\n');
+  assert.throws(build, /drift|changed|review/);
+  assert.throws(() => validateContextManifest(manifest, { repoRoot }), /drift|changed|review|confined/);
+  writeFileSync(join(repoRoot, gate.report), report);
+  writeFileSync(join(repoRoot, gate.issues), 'Drifted finding.\n');
+  assert.throws(build, /drift|changed|review/);
+  assert.throws(() => validateContextManifest(manifest, { repoRoot }), /drift|changed|review|confined/);
+});
+
+for (const target of ['report', 'issues', 'run-ancestor', 'baseline', 'original', 'reserved']) {
+  test(`correction manifest refuses linked ${target} before publication`, (t) => {
+    const { repoRoot, dir, make } = correctionGateFixture(t);
+    const gate = make('1');
+    const manifest = buildTaskReviewCorrectionManifest(gate.input);
+    const outside = join(repoRoot, '..', `steepy-correction-outside-${Date.now()}-${Math.random()}`);
+    t.after(() => rmSync(outside, { recursive: true, force: true }));
+    if (target === 'run-ancestor') {
+      cpSync(join(repoRoot, dir), outside, { recursive: true });
+      rmSync(join(repoRoot, dir), { recursive: true });
+      symlinkSync(outside, join(repoRoot, dir));
+    } else {
+      const path = target === 'baseline' ? `${gate.state}-baseline.json`
+        : target === 'reserved' ? `${gate.state}-reserved.json`
+          : target === 'original' ? `${gate.state}-original.json` : gate[target];
+      writeFileSync(outside, readFileSync(join(repoRoot, path)));
+      rmSync(join(repoRoot, path));
+      symlinkSync(outside, join(repoRoot, path));
+    }
+    assert.throws(() => buildTaskReviewCorrectionManifest(gate.input), /symlink|unsafe|review|changed|work path/);
+    assert.throws(() => validateContextManifest(manifest, { repoRoot }), /symlink|unsafe|review|changed|work path/);
+  });
+}
+
+test('captured correction stays verifiable without another correction dispatch', (t) => {
+  const { repoRoot, make } = correctionGateFixture(t);
+  const gate = make('1');
+  const manifest = buildTaskReviewCorrectionManifest(gate.input);
+  assert.equal(checkReview(repoRoot, gate.state, 'status: ISSUES_FOUND\nsignals: review:critical\n', true).accepted, true);
+  assert.throws(() => buildTaskReviewCorrectionManifest(gate.input), /captured correction.*without another dispatch/);
+  assert.deepEqual(validateContextManifest(manifest, { repoRoot }), manifest);
+  const correctedPath = `${gate.state}-corrected.json`;
+  const outside = join(repoRoot, '..', `steepy-correction-outside-${Date.now()}-${Math.random()}`);
+  t.after(() => rmSync(outside, { force: true }));
+  writeFileSync(outside, readFileSync(join(repoRoot, correctedPath)));
+  rmSync(join(repoRoot, correctedPath));
+  symlinkSync(outside, join(repoRoot, correctedPath));
+  assert.throws(() => validateContextManifest(manifest, { repoRoot }), /symlink|unsafe|review|work path/);
 });
 
 test('validator rejects traversal, absolute paths, unknown roles, and missing required inputs', (t) => {
@@ -292,6 +470,51 @@ test('task role builders expose exactly the approved eager inventories', (t) => 
       ? { ...entry, path: '.apex/work/specs/context-efficient.md', bytes: specStat.size }
       : entry),
   }, { repoRoot }), /criteria-only artifact.*is a spec path/i);
+});
+
+test('only a final-review or review manifest declares a recovery delta, in its closed shape bound to the run\'s recovery input', (t) => {
+  const repoRoot = materialize(t);
+  const dir = '.apex/work/tasks/context-efficient';
+  const input = `${dir}/recovery-input.json`;
+  const delta = ['.apex/standards/scripts.md', 'src/a.mjs'];
+  const bytes = `${JSON.stringify({ current: { delta } })}\n`;
+  writeFileSync(join(repoRoot, input), bytes);
+  const recoveryInputDigest = createHash('sha256').update(bytes).digest('hex');
+  const build = (extra) => buildFinalReviewManifest({
+    ...base, repoRoot, criteriaPath: `${dir}/success-criteria.md`, taskResultIndexPath: `${dir}/task-result-index.md`,
+    branchDiffPath: `${dir}/branch-diff.txt`, standardPaths: ['.apex/standards/scripts.md'], contract: { recoveryInputDigest }, ...extra,
+  });
+  const manifest = build({ recovery: { input, delta } });
+  assert.deepEqual(manifest.recovery, { input, delta });
+  assert.deepEqual(validateContextManifest(manifest, { repoRoot }), manifest);
+  assert.equal(Object.hasOwn(build({}), 'recovery'), false, 'an ordinary final review declares none');
+  for (const [recovery, reason] of [
+    [{ input, delta, paths: delta }, /recovery fields must be exactly input, delta/],
+    [{ input, delta: [...delta].reverse() }, /recovery delta must be sorted unique source paths/],
+    [{ input, delta: ['../escape.md'] }, /recovery delta must be sorted unique source paths/],
+    [{ input, delta: ['src/a.mjs'] }, /recovery delta does not match the recovery input/],
+    [{ input: '.apex/work/tasks/other/recovery-input.json', delta }, /recovery input must be this run's recovery-input\.json/],
+    [{ input: `${dir}/task-result-index.md`, delta }, /recovery input must be this run's recovery-input\.json/],
+  ]) {
+    assert.throws(() => validateContextManifest({ ...manifest, recovery }, { repoRoot }), reason, JSON.stringify(recovery));
+  }
+  for (const contract of [{}, { recoveryInputDigest: '0'.repeat(64) }]) {
+    assert.throws(() => validateContextManifest({ ...manifest, contract }, { repoRoot }), /recovery input digest does not match/);
+  }
+  // The review phase reads the same branch diff, so it takes the same
+  // declaration under the same digest binding.
+  const review = buildReviewManifest({
+    ...base, repoRoot, criteriaPath: `${dir}/success-criteria.md`, taskResultIndexPath: `${dir}/task-result-index.md`,
+    branchDiffPath: `${dir}/branch-diff.txt`, tasks: [{ owningSurface: 'scripts' }], standardsBySurface: fixture.surfaces,
+    contract: { recoveryInputDigest }, recovery: { input, delta },
+  });
+  assert.deepEqual(review.recovery, { input, delta });
+  assert.deepEqual(validateContextManifest(review, { repoRoot }), review);
+  assert.throws(() => validateContextManifest({ ...review, contract: {} }, { repoRoot }), /recovery input digest does not match/);
+  const reviewer = buildTaskReviewerManifest({ ...base, repoRoot, task: 1, briefPath: `${dir}/task-1-brief.md`,
+    reportPath: `${dir}/task-1-report.md`, taskDiffPath: `${dir}/task-1.diff`, standardPaths: ['.apex/standards/scripts.md'] });
+  assert.throws(() => validateContextManifest({ ...reviewer, recovery: { input, delta } }, { repoRoot }),
+    /only a final-review or review manifest declares a recovery delta/);
 });
 
 test('criteria materializer writes deterministic attributed criteria-only bytes', (t) => {
@@ -1514,4 +1737,137 @@ test('a routed single-file standard is verified on metadata before any child can
   rmSync(join(repoRoot, '.apex', 'standards', 'scripts.md'));
   assert.deepEqual(standardsBySurfaceFromRouting(routing, { repoRoot }), { scripts: '.apex/standards/scripts.md' },
     'a missing single-file standard stays for the manifest builder to report');
+});
+
+test('controller v2 selects routed modular leaves from the core without reading a leaf body', (t) => {
+  const repoRoot = modularRepo(t);
+  const routingText = fs.readFileSync(join(repoRoot, '.apex/_INDEX.md'), 'utf8');
+  const plan = (selection) => `# Plan\n\n## Task 1 — sessions\n\n- **Requirements and deliverables:** Add sessions.\n- **Relevant global constraints:** Keep the routed standard.\n- **Surface:** \`web\`\n- **Specialist agent:** \`web-agent\`\n- **Exact paths:** \`web/session.mjs\`\n- **Test command:** \`npm test\`\n- **Dependencies:** none\n- **Complexity:** integration\n- **Success criteria:** SC1\n${selection}`;
+  const context = (planText) => controllerTaskContext({ controllerProtocol: 2, repoRoot, routingText, planText, taskId: 1 });
+  assert.throws(() => context(plan('')), /Standard paths required for modular core web/u,
+    'a historical plan without a selection needs explicit preparation');
+  const selection = `- **Standard paths:** \`${CORE}\`, \`${AUTH}\`\n- **Routing reasons:** \`web-auth.md\` matches session handling.\n`;
+  const { result, error, accesses } = recordFsAccess(() => context(plan(selection)));
+  assert.equal(error, undefined);
+  assert.deepEqual(result.standardPaths, [CORE, AUTH]);
+  assert.doesNotMatch(result.brief, /web-data\.md/u);
+  assert.ok(accesses.some(({ path }) => path.endsWith('web-core.md')), 'the recorder observes the core read');
+  assert.deepEqual(accesses.filter(({ path }) => /web-(?:auth|data)\.md$/u.test(path)), []);
+});
+
+test('controller task manifests select the protocol explicitly and bind every supported task role', (t) => {
+  const repoRoot = materialize(t);
+  const dir = '.apex/work/tasks/context-efficient';
+  const planText = '# Plan\n\n## Task 2 — implement\n\n- **Requirements and deliverables:** Add parser behavior.\n- **Relevant global constraints:** Keep legacy entry points.\n- **Surface:** scripts\n- **Specialist agent:** scripts-agent\n- **Exact paths:** scripts/autopilot-plan.mjs\n- **Test command:** npm test\n- **Dependencies:** none\n- **Complexity:** design\n- **Success criteria:** SC1\n';
+  const binding = { controllerProtocol: 2, repoRoot, planText, taskId: '2', runId: base.runId, modelTier: 'standard',
+    routingText: '| `scripts` | [scripts](standards/scripts.md) | `scripts-agent` | — |\n',
+    standardsBySurface: { scripts: '.apex/standards/scripts.md' }, briefPath: `${dir}/task-2-brief.md` };
+  assert.throws(() => writeControllerTaskBrief({ ...binding, controllerProtocol: 1 }), /controllerProtocol 2/);
+  writeControllerTaskBrief(binding);
+  const reportPath = `${dir}/task-2-report.md`;
+  const taskDiffPath = `${dir}/task-2.diff`;
+  const issuePath = `${dir}/task-2-issues.md`;
+  for (const path of [reportPath, taskDiffPath, issuePath]) writeFileSync(join(repoRoot, path), 'evidence\n');
+
+  const reviewer = buildControllerTaskManifest('task-reviewer', { ...binding, reportPath, taskDiffPath });
+  assert.deepEqual(reviewer.required.map(({ path }) => path),
+    [binding.briefPath, reportPath, taskDiffPath, '.apex/standards/scripts.md']);
+  const fix = buildControllerTaskManifest('fix', { ...binding, issuePath, taskDiffPath });
+  assert.deepEqual(fix.required.map(({ path }) => path),
+    [binding.briefPath, issuePath, taskDiffPath, '.apex/standards/scripts.md']);
+  for (const manifest of [reviewer, fix]) {
+    assert.equal(manifest.scope.task, 2);
+    assert.equal(manifest.testCommand, 'npm test');
+    assert.deepEqual(manifest.criterionIds, ['SC1']);
+  }
+  assert.throws(() => buildControllerTaskManifest('final-review', binding), /does not support role final-review/);
+
+  for (const controllerProtocol of [3, '2', 0, null]) {
+    assert.throws(() => buildControllerTaskManifest('implementer', { ...binding, controllerProtocol }),
+      /controllerProtocol must be 1 or 2/, String(controllerProtocol));
+  }
+  const legacy = { ...base, repoRoot, task: 1, briefPath: `${dir}/task-1-brief.md`,
+    standardPaths: ['.apex/standards/scripts.md'] };
+  for (const controllerProtocol of [undefined, 1]) {
+    assert.deepEqual(buildControllerTaskManifest('implementer', { ...legacy, controllerProtocol }),
+      buildTaskManifest('implementer', legacy), String(controllerProtocol));
+  }
+});
+
+test('review routing reads v3 projections only when protocol 3 is selected explicitly', (t) => {
+  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** web\n- **Complexity:** mechanical\n- **Success criteria:** SC1\n\n## Task 2\n\n- **Surface:** web\n- **Complexity:** integration\n- **Success criteria:** SC2\n';
+  const entries = [
+    { task: '1', kind: 'import', status: 'IMPORTED', artifact: '.apex/work/tasks/old/task-1-execution-1-report.md',
+      changedPaths: ['src/one.ts'], signals: [], receipt: '.apex/work/tasks/topic/task-1-import.json' },
+    { task: '2', kind: 'execution', status: 'DONE', artifact: '.apex/work/tasks/topic/task-2-report.md',
+      changedPaths: ['src/two.ts'], signals: [], receipt: '.apex/work/tasks/topic/task-2-execution-1' },
+  ];
+  const index = (value) => `# Results\n<!-- steepy-task-results: v3 -->\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\`\n<!-- /steepy-task-results -->\n`;
+  const selected = { taskResultIndexProtocol: 3 };
+  assert.throws(() => reviewPhaseContext(plan, index(entries)), /task result index protocol 3 does not match required protocol 2/,
+    'the legacy and manual routing never accept an unselected v3 index');
+  assert.deepEqual(reviewPhaseContext(plan, index(entries), selected).tasks.map(({ task }) => task), ['1', '2']);
+  assert.throws(() => reviewPhaseContext(plan, index([{ ...entries[0], status: 'DONE' }, entries[1]]), selected), /projection entry/);
+  assert.throws(() => reviewPhaseContext(plan, index([{ ...entries[0], kind: 'replay' }, entries[1]]), selected), /projection entry kind/);
+  assert.throws(() => reviewPhaseContext(plan, index([{ ...entries[0], artifact: '.apex/work/tasks/topic/task-1-execution-1-report.md' }, entries[1]]), selected), /correlation mismatch/);
+  const repoRoot = materialize(t);
+  const planPath = '.apex/work/plans/topic.md';
+  const indexPath = '.apex/work/tasks/topic/task-result-index.md';
+  for (const [path, text] of [[planPath, plan], [indexPath, index(entries)]]) {
+    mkdirSync(dirname(join(repoRoot, path)), { recursive: true });
+    writeFileSync(join(repoRoot, path), text);
+  }
+  const cli = spawnSync(process.execPath, [scriptPath, '--verify-handoff', '--repo-root', repoRoot, '--plan', planPath, '--task-result-index', indexPath], { encoding: 'utf8' });
+  assert.equal(cli.status, 1);
+  assert.match(cli.stderr, /handoff rejected: task result index protocol 3 does not match required protocol 2/);
+});
+
+test('an imported task reviewer manifest names the verified import receipt and its frozen source report', (t) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'steepy-import-context-'));
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  const put = (path, text) => { mkdirSync(dirname(join(repoRoot, path)), { recursive: true }); writeFileSync(join(repoRoot, path), text); };
+  git('init'); git('config', 'user.email', 'test@example.com'); git('config', 'user.name', 'Test');
+  put('.gitignore', '.apex/work/\n'); put('code.js', 'base\n'); put('.apex/standards/scripts.md', '# Scripts\n');
+  git('add', '.'); git('commit', '-m', 'base');
+  const task = '## Task 1 — one\n\n- **Requirements and deliverables:** Update code.\n- **Relevant global constraints:** None.\n- **Surface:** scripts\n- **Specialist agent:** scripts-agent\n- **Exact paths:** code.js\n- **Test command:** npm test\n- **Dependencies:** none\n- **Complexity:** mechanical\n- **Success criteria:** SC1\n';
+  const plan = (spec) => `<!-- steepy-workflow: v1\nphase: plan\nstatus: READY\nnext: implement\nsource: ${spec}\nconsumed-by: none\n-->\n# Plan\n\n${task}`;
+  const source = '.apex/work/tasks/old', dir = '.apex/work/tasks/topic';
+  put('.apex/work/plans/old.md', plan('.apex/work/specs/old.md'));
+  const sourceState = `${source}/task-1-execution-1`;
+  beginTask(repoRoot, sourceState, { runId: 'legacy-run', attempt: 1, task: '1', execution: 1, role: 'implementer', report: `${source}/task-1-report.md`, planPath: '.apex/work/plans/old.md' });
+  put('code.js', 'imported\n'); put(`${source}/task-1-report.md`, 'Imported report.\n'); git('commit', '-qam', 'legacy');
+  recordTaskResult(repoRoot, sourceState, `status: DONE\nartifact: ${source}/task-1-report.md\nsignals: none\n`);
+  const manifestPath = `${source}/context/phase-implement-attempt-1.json`;
+  put(manifestPath, `${JSON.stringify({ runId: 'legacy-run', attempt: 1, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } })}\n`);
+  put('.apex/work/plans/topic.md', plan('.apex/work/specs/topic.md'));
+  put(`${dir}/recovery-input.json`, `${JSON.stringify({ source: { run: source, receipts: [{ task: '1', path: `${sourceState}-result.json`,
+    sha256: createHash('sha256').update(readFileSync(join(repoRoot, `${sourceState}-result.json`))).digest('hex') }] } })}\n`);
+  const importPath = `${dir}/task-1-import.json`;
+  const imported = importTaskResult(repoRoot, importPath, { runId: base.runId, task: '1', sourceState, sourceHead: sourceState,
+    manifests: [{ path: manifestPath, sha256: createHash('sha256').update(readFileSync(join(repoRoot, manifestPath))).digest('hex') }], explainedDelta: [] });
+  const binding = { controllerProtocol: 2, repoRoot, planText: plan('.apex/work/specs/topic.md'), taskId: '1',
+    routingText: '| `scripts` | [scripts](standards/scripts.md) | `scripts-agent` | — |\n',
+    standardsBySurface: { scripts: '.apex/standards/scripts.md' }, briefPath: `${dir}/task-1-brief.md`,
+    runId: base.runId, modelTier: 'standard', attempt: 1, outputs: [`${dir}/task-1-review.md`, `${dir}/task-1-issues.md`],
+    taskDiffPath: `${dir}/task-1-diff.txt`, contract: { controllerProtocol: 2, taskResultIndexProtocol: 3 } };
+  writeControllerTaskBrief(binding);
+  put(binding.taskDiffPath, 'diff\n');
+  const manifest = buildControllerTaskManifest('task-reviewer', { ...binding, importPath, reportPath: imported.report.path });
+  assert.deepEqual(manifest.required.map(({ path, purpose }) => [path, purpose]), [
+    [binding.briefPath, 'task contract'], [`${sourceState}-report.md`, 'implementer report'], [importPath, 'imported task evidence'],
+    [binding.taskDiffPath, 'current task diff'], ['.apex/standards/scripts.md', 'owning standard']]);
+  assert.equal(manifest.contract.reviewedEvidence, 'import');
+  assert.equal(buildControllerTaskManifest('task-reviewer', { ...binding, reportPath: imported.report.path }).contract.reviewedEvidence, 'execution');
+  assert.throws(() => buildControllerTaskManifest('task-reviewer', { ...binding, importPath, reportPath: `${dir}/task-1-report.md` }),
+    /imported task review must read the imported report/);
+  assert.throws(() => buildControllerTaskManifest('task-reviewer', { ...binding, runId: 'other-run', importPath, reportPath: imported.report.path }),
+    /imported evidence does not bind this task review/);
+  assert.throws(() => buildControllerTaskManifest('fix', { ...binding, importPath, issuePath: `${dir}/task-1-issues.md` }),
+    /only a task reviewer binds imported evidence/);
+  put(importPath, readFileSync(join(repoRoot, importPath), 'utf8').replace('"delta":[]', '"delta":["code.js"]'));
+  assert.throws(() => buildControllerTaskManifest('task-reviewer', { ...binding, importPath, reportPath: imported.report.path }), /task import delta mismatch/);
 });

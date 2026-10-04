@@ -155,6 +155,13 @@ Narrate at most one short line between tasks (e.g. "Task 2 approved, moving to T
 first and follow its phase-manifest, correlation, status-marker, and task-local manifest protocol; it
 takes precedence over the manual prose below for the steps it names.
 
+**Controller protocol 2:** under `drive: autopilot`, controller protocol 2 is the default for fresh
+autopilot runs, and no implement-phase child runs this skill. The controller
+(`scripts/autopilot-controller.mjs`) keeps dispatch, response capture, receipts, workflow events, and
+task commits. It dispatches the implementer, fix, and reviewer roles with their packaged prompts.
+Roles never write state. This skill's steps and the phase-child protocol in `autopilot-protocol.md`
+apply only to legacy controller protocol 1 and to manual drive.
+
 When `manifest.contract.taskResultProtocol` is `2`, also follow `task-results-protocol.md`:
 its semantic response, execution receipt, and generated JSON index rules take precedence over
 the four-field and comma-list examples below. Manual drive and legacy autopilot protocol 1 keep
@@ -456,8 +463,8 @@ its action status requires the next decision; otherwise it passes the artifact r
 the next consumer. The ledger and task-result index record only the compact outcome and artifact reference,
 never full detail.
 
-In Gear-3 autopilot, before every task or whole-branch reviewer dispatch, read and follow
-`reviewer-recovery.md`: establish the deterministic baseline and gate even a valid response.
+In a legacy controller protocol 1 Gear-3 autopilot run, before every task or whole-branch reviewer
+dispatch, read and follow `reviewer-recovery.md`: establish the deterministic baseline and gate even a valid response.
 Protocol 1 allows at most one reserved response-only correction. Its reviewer `changed-paths` is
 literal `none`, excluding the authorized review/issue artifacts; never normalize that legacy field
 automatically. Protocol 2 uses status/artifact/signals, ignores legacy path telemetry, and derives

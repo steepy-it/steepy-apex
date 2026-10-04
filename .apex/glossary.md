@@ -199,16 +199,45 @@
   records each justified `onDemand` read. It controls eager upstream context, not repository access:
   code discovery and source reads needed for implementation, tests, and verification remain normal.
 - **Artifact-first completion** — the child-completion protocol: write the detailed, durable
-  report first, then return exactly `status`, `artifact`, `changed-paths`, and `signals` to the
-  parent. The parent retains the four-field envelope, opening the artifact only for a decision or
-  action; no report body or transcript is copied into controller context.
+  report first, then return only a closed response to the parent. Manual drive and task-result
+  protocol 1 return exactly `status`, `artifact`, `changed-paths`, and `signals`; under task-result
+  protocol 2, writers (and legacy controller protocol 1 reviewers) return `status`, `artifact`, and
+  `signals`; reviewers under reviewer response protocol 3, like the controller protocol 2 plan and
+  review roles, return `status` and `signals`. The parent retains that envelope, opening the
+  artifact only for a decision or action; no report body or transcript is copied into controller
+  context.
 - **Resource-usage ledger** — an observational JSONL ledger scoped to one run, phase, and attempt.
+  Only legacy controller protocol 1 runs write it; controller protocol 2 writes none, a known
+  limitation (see [Architecture](../docs/architecture.md) → "Gear-3 controller protocol 2").
   It records direct provider usage evidence with source provenance and one canonical measurement
   per event, so summaries cannot double-count it. It informs efficiency analysis only; it never
   imposes a healthy-work quota or stop condition.
 - **Conductor** — the deterministic engine script (`scripts/autopilot.mjs`) that runs
   the gear-3 chain phases as fresh headless sessions under an autopilot contract,
   halting on anything that needs a human.
+- **Controller protocol** — which engine drives a Gear-3 autopilot run, fixed for the run's life.
+  Controller protocol 2, the default for a fresh run, has `scripts/autopilot-controller.mjs`
+  reserve, dispatch, capture, and gate every role, while roles never write state. Legacy controller
+  protocol 1 (`--controller-protocol 1`, or an existing legacy status) spawns one model child per
+  phase. Existing state keeps its protocol; nothing migrates.
+- **Role invocation** — one reserved controller protocol 2 dispatch, numbered by a positive
+  `roleSequence` across the run, not by task. It owns a durable `role-N-reservation.json`, the
+  controller-written `role-N-response.json`, the `role-N.raw.jsonl` capture, the readable
+  `role-N.log`, and its context manifest. Run, phase, attempt, task or whole-branch scope, and
+  iteration stay separate fields.
+- **Task-result index protocol** — the version of the generated task-result index. Protocol 2 lists
+  one execution entry per task; protocol 3 gives each entry `kind: execution` or `kind: import`, with
+  `status: IMPORTED` for an import. Fresh controller runs use index protocol 2 and recovery runs index
+  protocol 3. It is separate from the writer's task-result protocol and the reviewer response protocol.
+- **Recovery input** — `recovery-input.json` in a new run's task directory: the exact, digest-bound
+  declaration of a halted legacy run's spec, plan, phase manifests, and execution receipts, the tasks
+  to reuse, the accepted current branch, HEAD, observation, and delta, and the new destinations.
+  `scripts/autopilot-recovery.mjs` inspects and prepares it; `--recovery-input` starts the recovery
+  run explicitly, and a resume never passes it again but rechecks that the bound input is unchanged.
+- **Import receipt** — `task-N-import.json`: the controller's verified, digest-bound record that a
+  recovery run reuses one legacy execution of task N. It projects as an `IMPORTED` index entry and is
+  never approval: the task still needs this run's import-bound review, and its first fix is
+  execution 2.
 - **Event bridge** — the normalization, persistence, and rendering boundary that carries
   harness streams into source-grounded events and user evidence.
 - **Agent task events** — decoded subagent lifecycle events (`agent.started`, `agent.completed`,
@@ -229,9 +258,14 @@
   (`.apex/work/tasks/<plan-basename>/task-N-brief.md`) handed verbatim to the implementer
   subagent.
 - **Implementer status** — the `DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT` enum
-  an implementer returns; the orchestrator dispatches on it.
-- **Reviewer status** — the `Approved | Issues Found` enum a code reviewer returns;
-  `Issues Found` drives the fix loop.
+  an implementer returns. In manual drive and legacy controller protocol 1, the orchestrator
+  dispatches on it. Under controller protocol 2 the controller dispatches, and NEEDS_CONTEXT or
+  BLOCKED is a terminal `RUN_HALTED`.
+- **Reviewer status** — two values a code reviewer produces. The review report's `Status:` line
+  (`Approved` or `Issues Found`) is the human-readable verdict in the review file. The reviewer
+  response status (`APPROVED | ISSUES_FOUND | BLOCKED | NEEDS_CONTEXT`) is what the parent acts on.
+  The response status drives the fix loop: `ISSUES_FOUND` sends the work to a fix, and `APPROVED`
+  ends the loop.
 - **Human gate** — mandatory user approval of a written prose artifact (spec/plan) before
   the chain proceeds in manual drive; in gear-3 autopilot the plan gate collapses to a
   non-blocking checkpoint (the contract carries the pre-authorization); see

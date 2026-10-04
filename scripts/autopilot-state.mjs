@@ -1,0 +1,576 @@
+import { createHash } from 'node:crypto';
+import { TextDecoder } from 'node:util';
+import { appendWorkPath, parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
+import {
+  assertNextWorkflowSequence, correlateRun, normalizeWorkflowEnvelope, selectBaseline,
+} from './workflow-state.mjs';
+import { verifyAutopilotRuntime } from './autopilot-runtime.mjs';
+
+export const AUTOPILOT_EVENT_SCHEMA_VERSION = 2;
+export const AUTOPILOT_RUN_SCHEMA_VERSION = 1;
+// A recovery run binds its kind at creation: run identity schema 2 adds the
+// exact recovery input path and digest. Ordinary runs keep schema 1 bytes.
+export const AUTOPILOT_RECOVERY_RUN_SCHEMA_VERSION = 2;
+export const AUTOPILOT_RESERVATION_SCHEMA_VERSION = 2;
+export const AUTOPILOT_CONTROLLER_PROTOCOL = 2;
+export const AUTOPILOT_ROLES = Object.freeze([
+  'plan', 'review', 'implementer', 'task-reviewer', 'fix', 'final-review',
+  'task-review-correction', 'final-review-correction',
+]);
+const PHASES = new Set(['plan', 'implement', 'review', 'final-review']);
+const ROLES = new Set(AUTOPILOT_ROLES);
+const SHA256 = /^[0-9a-f]{64}$/u;
+const GIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+const COMMON = ['schemaVersion', 'sequence', 'runId', 'timestamp', 'event'];
+const SCHEMAS = Object.freeze({
+  RUN_STARTED: ['baseline', 'branch', 'runtimeFingerprint'],
+  PHASE_RESERVED: ['scope'],
+  PHASE_ACCEPTED: ['scope'],
+  ROLE_RESERVED: ['scope', 'roleSequence', 'role', 'reservationPath', 'reservationDigest', 'expectedReceiptPath', 'requestedModel', 'descriptorModel', 'degradationReason'],
+  RESPONSE_CAPTURED: ['scope', 'roleSequence', 'responsePath', 'responseDigest', 'observedModel'],
+  RESULT_ACCEPTED: ['scope', 'roleSequence', 'receiptPath', 'receiptDigest'],
+  REPAIR_RESERVED: ['scope', 'roleSequence', 'role', 'correctionOf', 'reservationPath', 'reservationDigest', 'expectedReceiptPath', 'requestedModel', 'descriptorModel', 'degradationReason'],
+  RECOVERY_IMPORTED: ['scope', 'importPath', 'importDigest'],
+  RECONCILIATION_REQUIRED: ['scope', 'reason'],
+  RUN_HALTED: ['reason'],
+  RUN_COMPLETED: [],
+});
+const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const fail = (message) => { throw new Error(`autopilot state: ${message}`); };
+const positive = (value) => Number.isSafeInteger(value) && value > 0;
+const line = (value) => typeof value === 'string' && value.length > 0
+  && value.trim() === value && !/[\u0000-\u001f]/u.test(value);
+const bytesOf = (value) => Buffer.isBuffer(value) ? value : Buffer.from(value);
+const keyOf = (scope) => JSON.stringify([scope.phase, scope.attempt, scope.task, scope.iteration]);
+const paths = (dir) => ({ run: `${dir}/autopilot-run.json`, events: `${dir}/autopilot-events.jsonl`, status: `${dir}/autopilot-status.md` });
+
+function exact(value, names, label) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).sort().join(',') !== [...names].sort().join(',')) {
+    fail(`${label} fields must be closed: ${names.join(', ')}`);
+  }
+}
+
+function digest(value, label) { if (typeof value !== 'string' || !SHA256.test(value)) fail(`${label} must be SHA-256`); }
+function optionalModel(value, label) { if (value !== null && !line(value)) fail(`${label} must be a model ID or null`); }
+function scopeOf(scope) {
+  exact(scope, ['phase', 'attempt', 'task', 'iteration'], 'scope');
+  if (!PHASES.has(scope.phase) || !positive(scope.attempt) || !positive(scope.iteration)
+    || !(scope.task === null || positive(scope.task))) fail('invalid phase/attempt/task/iteration scope');
+  if (['plan', 'final-review'].includes(scope.phase) && scope.task !== null) fail('whole-branch phase requires null task');
+  return Object.freeze({ ...scope });
+}
+
+function roleReceipt(dir, scope, role, path, roleSequence) {
+  const runName = dir.split('/').at(-1);
+  let family;
+  let expected;
+  let source = null;
+  if (role === 'plan') {
+    if (scope.phase !== 'plan' || scope.task !== null) fail('plan role scope mismatch');
+    if (!positive(roleSequence)) fail('plan receipt requires role sequence');
+    family = 'role-receipt'; expected = `${dir}/role-${roleSequence}-receipt.json`;
+    source = { path: `.apex/work/plans/${runName}.md`, family: 'plan' };
+  } else if (role === 'review') {
+    if (scope.phase !== 'review' || scope.task !== null) fail('review phase role scope mismatch');
+    if (!positive(roleSequence)) fail('review receipt requires role sequence');
+    family = 'role-receipt'; expected = `${dir}/role-${roleSequence}-receipt.json`;
+    source = { path: `${dir}/review-report.md`, family: 'review-report' };
+  } else if (role === 'implementer' || role === 'fix') {
+    if (scope.phase !== 'implement' || !positive(scope.task)) fail('writer role scope mismatch');
+    family = 'task-result';
+    const prefix = `${dir}/task-${scope.task}-execution-`;
+    if (role === 'implementer') expected = `${prefix}1-result.json`;
+    else if (typeof path === 'string' && path.startsWith(prefix) && /^\d+-result\.json$/u.test(path.slice(prefix.length))) {
+      const execution = Number(path.slice(prefix.length, -'-result.json'.length));
+      if (!Number.isSafeInteger(execution) || execution < 2 || String(execution) !== path.slice(prefix.length, -'-result.json'.length)) fail('fix execution identity mismatch');
+      expected = path;
+    } else fail('fix requires a task execution receipt path');
+  } else {
+    const final = role === 'final-review' || role === 'final-review-correction';
+    const correction = role === 'task-review-correction' || role === 'final-review-correction';
+    if (final ? scope.phase !== 'final-review' || scope.task !== null
+      : scope.phase !== 'review' || !positive(scope.task)) fail('reviewer role scope mismatch');
+    family = 'review-guard';
+    const stem = final ? 'final' : `task-${scope.task}`;
+    expected = `${dir}/${stem}-review-guard-attempt-${scope.attempt}-iteration-${scope.iteration}-${correction ? 'corrected' : 'original'}.json`;
+  }
+  if (path !== undefined && path !== expected) fail('receipt path does not bind this role invocation');
+  parseWorkPath(expected, 'work-output', family);
+  return Object.freeze({ family, path: expected, source });
+}
+
+function runtimeOf(runtime) {
+  exact(runtime, ['fingerprint', 'files'], 'runtime identity');
+  digest(runtime.fingerprint, 'runtime fingerprint');
+  if (!Array.isArray(runtime.files) || runtime.files.length === 0) fail('runtime file inventory required');
+  let previous = '';
+  for (const file of runtime.files) {
+    exact(file, ['path', 'sha256'], 'runtime file');
+    if (!line(file.path) || file.path <= previous || !/^(?:scripts|adapters|skills)\/[A-Za-z0-9._/-]+$|^package\.json$|^\.claude-plugin\/[A-Za-z0-9._-]+$|^\.codex-plugin\/[A-Za-z0-9._-]+$|^cordis\.patch\.yml$/u.test(file.path)
+      || file.path.split('/').some((part) => part === '.' || part === '..' || part === '')) fail('invalid runtime file path or order');
+    digest(file.sha256, 'runtime file digest');
+    previous = file.path;
+  }
+  if (runtime.fingerprint !== sha(Buffer.from(JSON.stringify(runtime.files.map((file) => [file.path, file.sha256]))))) {
+    fail('runtime fingerprint does not match its file inventory');
+  }
+  return runtime;
+}
+
+function eventOf(candidate) {
+  normalizeWorkflowEnvelope(candidate, { schemaVersion: AUTOPILOT_EVENT_SCHEMA_VERSION });
+  const fields = SCHEMAS[candidate.event];
+  if (!fields) fail(`unknown Gear 3 event ${String(candidate.event)}`);
+  exact(candidate, [...COMMON, ...fields], candidate.event);
+  if (candidate.event === 'RUN_STARTED') {
+    if (!line(candidate.branch) || !GIT_ID.test(candidate.baseline)) fail('invalid branch or baseline');
+    digest(candidate.runtimeFingerprint, 'runtime fingerprint');
+  }
+  if (Object.hasOwn(candidate, 'scope') && candidate.scope !== null) scopeOf(candidate.scope);
+  if (['PHASE_RESERVED', 'PHASE_ACCEPTED', 'ROLE_RESERVED', 'REPAIR_RESERVED', 'RESPONSE_CAPTURED', 'RESULT_ACCEPTED', 'RECOVERY_IMPORTED'].includes(candidate.event) && candidate.scope === null) fail('event requires scope');
+  if (Object.hasOwn(candidate, 'roleSequence') && !positive(candidate.roleSequence)) fail('invalid role sequence');
+  if (['ROLE_RESERVED', 'REPAIR_RESERVED'].includes(candidate.event)) {
+    if (!ROLES.has(candidate.role)) fail('unknown role');
+    if (!line(candidate.reservationPath)) fail('invalid reservation path');
+    parseWorkPath(candidate.reservationPath, 'work-output', 'role-reservation');
+    const dir = candidate.reservationPath.slice(0, candidate.reservationPath.lastIndexOf('/'));
+    if (candidate.reservationPath !== `${dir}/role-${candidate.roleSequence}-reservation.json`) fail('reservation path identity mismatch');
+    roleReceipt(dir, candidate.scope, candidate.role, candidate.expectedReceiptPath, candidate.roleSequence);
+    if (candidate.event === 'REPAIR_RESERVED'
+      ? !['task-review-correction', 'final-review-correction'].includes(candidate.role)
+      : ['task-review-correction', 'final-review-correction'].includes(candidate.role)) fail('correction role requires its matching event');
+    digest(candidate.reservationDigest, 'reservation digest');
+    optionalModel(candidate.requestedModel, 'requested model');
+    optionalModel(candidate.descriptorModel, 'descriptor model');
+    if (candidate.degradationReason !== null && !line(candidate.degradationReason)) fail('invalid degradation reason');
+    if (candidate.event === 'REPAIR_RESERVED' && !positive(candidate.correctionOf)) fail('invalid correction target');
+  }
+  for (const [pathField, digestField] of [
+    ['responsePath', 'responseDigest'], ['receiptPath', 'receiptDigest'], ['importPath', 'importDigest'],
+  ]) {
+    if (Object.hasOwn(candidate, pathField)) {
+      if (!line(candidate[pathField])) fail(`invalid ${pathField}`);
+      digest(candidate[digestField], digestField);
+    }
+  }
+  if (Object.hasOwn(candidate, 'observedModel')) optionalModel(candidate.observedModel, 'observed model');
+  if (Object.hasOwn(candidate, 'reason') && !line(candidate.reason)) fail('invalid reason');
+  return Object.freeze({ ...candidate });
+}
+
+export function validateAutopilotEvent(candidate) { return eventOf(candidate); }
+
+function parseJson(bytes, label) {
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { fail(`${label} has invalid UTF-8`); }
+  let value;
+  try { value = JSON.parse(text); } catch { fail(`${label} is invalid JSON`); }
+  if (`${JSON.stringify(value)}\n` !== text) fail(`${label} must be canonical JSON with final newline`);
+  return value;
+}
+
+function journal(input) {
+  const bytes = bytesOf(input);
+  if (bytes.length === 0 || bytes.at(-1) !== 10) fail('journal is empty or missing final newline');
+  const entries = [];
+  let start = 0;
+  for (let index = 0; index < bytes.length; index += 1) {
+    if (bytes[index] !== 10) continue;
+    const end = index + 1;
+    const event = eventOf(parseJson(bytes.subarray(start, end), 'journal line'));
+    entries.push({ event, start, end });
+    start = end;
+  }
+  if (start !== bytes.length) fail('truncated journal');
+  return entries;
+}
+
+export function parseAutopilotJsonl(input) { return Object.freeze(journal(input).map(({ event }) => event)); }
+
+export function createAutopilotState() {
+  return { runId: null, branch: null, baseline: null, runtimeFingerprint: null,
+    lastSequence: 0, lastTimestamp: null, status: 'ABSENT', phases: [], roles: [], imports: [], reason: null,
+    reconciliationPending: false };
+}
+
+export function reduceAutopilotEvent(current, candidate) {
+  const event = eventOf(candidate);
+  assertNextWorkflowSequence(current.lastSequence, event);
+  if (current.lastTimestamp !== null && event.timestamp < current.lastTimestamp) fail('reordered timestamp');
+  if (current.runId === null) {
+    if (event.event !== 'RUN_STARTED') fail('first event must be RUN_STARTED');
+    selectBaseline(null, event.baseline);
+    return { ...current, runId: event.runId, branch: event.branch, baseline: event.baseline,
+      runtimeFingerprint: event.runtimeFingerprint, lastSequence: event.sequence,
+      lastTimestamp: event.timestamp, status: 'RUNNING' };
+  }
+  correlateRun(current.runId, event);
+  if (current.status !== 'RUNNING') fail('terminal run cannot accept more events');
+  if (current.reconciliationPending && event.event !== 'RUN_HALTED') fail('reconciliation must halt the run');
+  if (event.event === 'RUN_STARTED') fail('duplicate run identity');
+  const next = { ...current, lastSequence: event.sequence, lastTimestamp: event.timestamp };
+  const scoped = event.scope && keyOf(event.scope);
+  const phase = current.phases.find((item) => keyOf(item.scope) === scoped);
+  const role = current.roles.find((item) => item.roleSequence === event.roleSequence);
+  switch (event.event) {
+    case 'PHASE_RESERVED':
+      if (phase) fail('phase already reserved');
+      next.phases = [...current.phases, { scope: event.scope, accepted: false }];
+      break;
+    case 'PHASE_ACCEPTED':
+      if (!phase || phase.accepted) fail('phase cannot be accepted');
+      if (current.roles.some((item) => keyOf(item.scope) === scoped && !item.accepted && !item.superseded)) fail('phase has unaccepted role');
+      next.phases = current.phases.map((item) => item === phase ? { ...item, accepted: true } : item);
+      break;
+    case 'ROLE_RESERVED':
+    case 'REPAIR_RESERVED': {
+      if (event.roleSequence !== current.roles.length + 1) fail('role sequence is not contiguous');
+      const active = current.roles.find((item) => !item.accepted && !item.superseded);
+      if (active && (event.event !== 'REPAIR_RESERVED' || active.roleSequence !== event.correctionOf || !active.responseCaptured)) {
+        fail('active role reservation cannot be reused');
+      }
+      if (phase?.accepted) fail('phase already accepted');
+      if (current.roles.some((item) => keyOf(item.scope) === scoped && item.role === event.role)) fail('role identity already reserved in scope');
+      if (event.event === 'REPAIR_RESERVED') {
+        if (!active || active.roleSequence !== event.correctionOf || !active.responseCaptured
+          || current.roles.some((item) => item.correctionOf === event.correctionOf)) fail('repair target has no single captured response');
+        if (keyOf(event.scope) !== keyOf(active.scope)) fail('correction scope does not match the captured review');
+        const expectedRole = active.role === 'task-reviewer' ? 'task-review-correction'
+          : active.role === 'final-review' ? 'final-review-correction' : null;
+        if (event.role !== expectedRole) fail('correction role does not match the captured review');
+      }
+      const priorRoles = event.event === 'REPAIR_RESERVED'
+        ? current.roles.map((item) => item === active ? { ...item, superseded: true } : item)
+        : current.roles;
+      next.roles = [...priorRoles, { scope: event.scope, roleSequence: event.roleSequence,
+        role: event.role, reservationPath: event.reservationPath, reservationDigest: event.reservationDigest,
+        expectedReceiptPath: event.expectedReceiptPath,
+        responseCaptured: false, accepted: false, correctionOf: event.correctionOf ?? null }];
+      break;
+    }
+    case 'RESPONSE_CAPTURED':
+      if (!role || role.responseCaptured || keyOf(role.scope) !== scoped) fail('response does not match active role');
+      next.roles = current.roles.map((item) => item === role ? { ...item, responseCaptured: true,
+        responsePath: event.responsePath, responseDigest: event.responseDigest, observedModel: event.observedModel } : item);
+      break;
+    case 'RESULT_ACCEPTED':
+      if (!role || !role.responseCaptured || role.accepted || role.superseded || keyOf(role.scope) !== scoped) fail('result requires a captured, unsuperseded response');
+      if (event.receiptPath !== role.expectedReceiptPath) fail('receipt does not match reserved invocation');
+      next.roles = current.roles.map((item) => item === role ? { ...item, accepted: true,
+        receiptPath: event.receiptPath, receiptDigest: event.receiptDigest } : item);
+      break;
+    case 'RECOVERY_IMPORTED':
+      if (current.imports.some((item) => keyOf(item.scope) === scoped)) fail('recovery already imported for scope');
+      next.imports = [...current.imports, { scope: event.scope, path: event.importPath, digest: event.importDigest }];
+      break;
+    case 'RECONCILIATION_REQUIRED':
+      next.reason = event.reason; next.reconciliationPending = true;
+      break;
+    case 'RUN_HALTED':
+      next.status = 'HALTED'; next.reason = event.reason;
+      break;
+    case 'RUN_COMPLETED':
+      if (current.roles.some((item) => !item.accepted && !item.superseded) || current.phases.some((item) => !item.accepted)) fail('cannot complete with unaccepted work');
+      next.status = 'COMPLETED';
+      break;
+    default: fail('unknown transition');
+  }
+  return next;
+}
+
+export function reduceAutopilotEvents(events) {
+  if (!Array.isArray(events) || events.length === 0) fail('journal has no RUN_STARTED event');
+  return events.reduce(reduceAutopilotEvent, createAutopilotState());
+}
+
+export function renderAutopilotStatus(state) {
+  if (state.runId === null) fail('cannot project absent run');
+  return `# Autopilot status\n\nRun: ${state.runId}\nStatus: ${state.status}\nBranch: ${state.branch}\nBaseline: ${state.baseline}\nLast event: ${state.lastSequence}\nRoles: ${state.roles.length}\n${state.reason === null ? '' : `Reason: ${state.reason}\n`}`;
+}
+
+export function projectAutopilotStatus(root, dir) {
+  const { state } = readAutopilotRun(root, dir);
+  writeWorkPath(root, paths(dir).status, renderAutopilotStatus(state), { family: 'status' });
+  return state;
+}
+
+function optionalRead(root, path, family) {
+  try { return readWorkPath(root, path, { family }); } catch (error) {
+    if (/missing work artifact/u.test(error.message)) return null;
+    throw error;
+  }
+}
+
+function verifyBytes(root, path, family, expected) {
+  const actual = readWorkPath(root, path, { family });
+  if (sha(actual) !== expected) fail(`artifact digest mismatch: ${path}`);
+  return actual;
+}
+
+function recoveryOf(dir, recovery) {
+  if (recovery === null || typeof recovery !== 'object' || Array.isArray(recovery)
+    || Object.keys(recovery).sort().join(',') !== 'path,sha256'
+    || recovery.path !== `${dir}/recovery-input.json` || typeof recovery.sha256 !== 'string' || !SHA256.test(recovery.sha256)) {
+    fail('recovery input binding must name this run directory input and its SHA-256');
+  }
+  parseWorkPath(recovery.path, 'work-output', 'recovery-input');
+  return Object.freeze({ path: recovery.path, sha256: recovery.sha256 });
+}
+
+function readIdentity(root, dir, engineRoot) {
+  const run = parseJson(readWorkPath(root, paths(dir).run, { family: 'autopilot-run' }), 'run identity');
+  const recovery = run?.schemaVersion === AUTOPILOT_RECOVERY_RUN_SCHEMA_VERSION;
+  exact(run, ['schemaVersion', 'controllerProtocol', 'runId', 'branch', 'baseline', 'runtime', ...(recovery ? ['recovery'] : [])], 'run identity');
+  if (recovery) recoveryOf(dir, run.recovery);
+  if (![AUTOPILOT_RUN_SCHEMA_VERSION, AUTOPILOT_RECOVERY_RUN_SCHEMA_VERSION].includes(run.schemaVersion)
+    || run.controllerProtocol !== AUTOPILOT_CONTROLLER_PROTOCOL
+    || !line(run.runId) || !line(run.branch) || !GIT_ID.test(run.baseline)) fail('invalid run identity');
+  runtimeOf(run.runtime);
+  if (engineRoot !== undefined) verifyAutopilotRuntime(engineRoot, run.runtime);
+  return run;
+}
+
+function readRun(root, dir, { engineRoot, allowOrphanReservation = false } = {}) {
+  const p = paths(dir);
+  const run = readIdentity(root, dir, engineRoot);
+  const journalBytes = readWorkPath(root, p.events, { family: 'autopilot-events' });
+  const entries = journal(journalBytes);
+  const state = reduceAutopilotEvents(entries.map((entry) => entry.event));
+  if (state.runId !== run.runId || state.branch !== run.branch || state.baseline !== run.baseline
+    || state.runtimeFingerprint !== run.runtime.fingerprint) fail('journal RUN_STARTED mismatches immutable run');
+  for (const entry of entries) {
+    const { event } = entry;
+    if (['ROLE_RESERVED', 'REPAIR_RESERVED'].includes(event.event)) {
+      const expectedPath = `${dir}/role-${event.roleSequence}-reservation.json`;
+      if (event.reservationPath !== expectedPath) fail('reservation path mismatch');
+      const reservationBytes = verifyBytes(root, expectedPath, 'role-reservation', event.reservationDigest);
+      const reservation = parseJson(reservationBytes, 'role reservation');
+      exact(reservation, ['schemaVersion', 'runId', 'roleSequence', 'scope', 'role', 'prefixBytes', 'prefixDigest', 'runtimeFingerprint', 'expectedReceiptPath', 'requestedModel', 'descriptorModel', 'degradationReason', 'correctionOf'], 'role reservation');
+      if (reservation.schemaVersion !== AUTOPILOT_RESERVATION_SCHEMA_VERSION || reservation.runId !== run.runId || reservation.roleSequence !== event.roleSequence
+        || keyOf(reservation.scope) !== keyOf(event.scope) || reservation.role !== event.role
+        || reservation.expectedReceiptPath !== event.expectedReceiptPath
+        || reservation.prefixBytes !== entry.start || reservation.prefixDigest !== sha(journalBytes.subarray(0, entry.start))
+        || reservation.runtimeFingerprint !== run.runtime.fingerprint
+        || reservation.requestedModel !== event.requestedModel || reservation.descriptorModel !== event.descriptorModel
+        || reservation.degradationReason !== event.degradationReason || reservation.correctionOf !== (event.correctionOf ?? null)) {
+        fail('reservation journal prefix or identity mismatch');
+      }
+    }
+    if (event.event === 'RESPONSE_CAPTURED') {
+      if (event.responsePath !== `${dir}/role-${event.roleSequence}-response.json`) fail('response path mismatch');
+      verifyBytes(root, event.responsePath, 'role-response', event.responseDigest);
+    }
+    if (event.event === 'RESULT_ACCEPTED') {
+      const role = state.roles.find((item) => item.roleSequence === event.roleSequence);
+      if (!role) fail('result has no reserved role');
+      const receipt = roleReceipt(dir, role.scope, role.role, event.receiptPath, role.roleSequence);
+      if (event.receiptPath !== role.expectedReceiptPath) fail('result receipt mismatches reservation');
+      const receiptBytes = verifyBytes(root, event.receiptPath, receipt.family, event.receiptDigest);
+      if (receipt.source !== null) {
+        const proof = parseJson(receiptBytes, 'phase receipt');
+        exact(proof, ['schemaVersion', 'runId', 'roleSequence', 'role', 'scope', 'responseDigest',
+          'receiptPath', 'receiptDigest', 'sourcePath', 'sourceDigest', 'runtimeFingerprint', 'accepted'], 'phase receipt');
+        if (proof.schemaVersion !== 1 || proof.runId !== run.runId || proof.roleSequence !== role.roleSequence
+          || proof.role !== role.role || keyOf(proof.scope) !== keyOf(role.scope)
+          || proof.responseDigest !== role.responseDigest || proof.receiptPath !== event.receiptPath
+          || proof.receiptDigest !== null || proof.sourcePath !== receipt.source.path
+          || proof.runtimeFingerprint !== run.runtime.fingerprint || proof.accepted !== true) fail('phase receipt invocation mismatch');
+        digest(proof.sourceDigest, 'historical DRAFT digest');
+      }
+    }
+    if (event.event === 'RECOVERY_IMPORTED') {
+      if (event.importPath !== `${dir}/task-${event.scope.task}-import.json`) fail('recovery import path mismatch');
+      verifyBytes(root, event.importPath, 'task-import', event.importDigest);
+    }
+  }
+  const orphanPath = `${dir}/role-${state.roles.length + 1}-reservation.json`;
+  const orphanReservation = optionalRead(root, orphanPath, 'role-reservation');
+  if (orphanReservation !== null && !allowOrphanReservation) fail('orphan role reservation requires reconciliation');
+  const pendingResponses = state.roles.filter((item) => !item.responseCaptured
+    && optionalRead(root, `${dir}/role-${item.roleSequence}-response.json`, 'role-response') !== null)
+    .map((item) => item.roleSequence);
+  return Object.freeze({ run, state, events: Object.freeze(entries.map(({ event }) => event)),
+    journalBytes, orphanReservation, pendingResponses: Object.freeze(pendingResponses) });
+}
+
+export function readAutopilotRun(root, dir, { engineRoot } = {}) { return readRun(root, dir, { engineRoot }); }
+
+// The validated immutable run identity alone: no journal read, replay, or
+// reconciliation, so a caller can check it before any start effect.
+export function readAutopilotIdentity(root, dir) { return readIdentity(root, dir); }
+
+export function resumeAutopilotRun(root, dir, engineRoot) {
+  if (typeof engineRoot !== 'string' || engineRoot.length === 0) fail('selected engine root is required for resume');
+  return readRun(root, dir, { engineRoot });
+}
+
+export function reconcileAutopilotStart(root, dir, engineRoot) {
+  if (typeof engineRoot !== 'string' || engineRoot.length === 0) fail('selected engine root is required for start reconciliation');
+  const run = readIdentity(root, dir, engineRoot);
+  const p = paths(dir);
+  if (optionalRead(root, p.events, 'autopilot-events') !== null) return resumeAutopilotRun(root, dir, engineRoot);
+  if (optionalRead(root, `${dir}/role-1-reservation.json`, 'role-reservation') !== null) fail('role reservation exists without a journal');
+  const first = eventOf({ schemaVersion: AUTOPILOT_EVENT_SCHEMA_VERSION, sequence: 1, runId: run.runId, timestamp: new Date().toISOString(),
+    event: 'RUN_STARTED', branch: run.branch, baseline: run.baseline, runtimeFingerprint: run.runtime.fingerprint });
+  writeWorkPath(root, p.events, `${JSON.stringify(first)}\n`, { createOnly: true, family: 'autopilot-events' });
+  const state = reduceAutopilotEvents([first]);
+  writeWorkPath(root, p.status, renderAutopilotStatus(state), { family: 'status' });
+  return readRun(root, dir, { engineRoot });
+}
+
+// A complete orphan reservation is adopted as a spent identity. No child is
+// dispatched by this operation; the caller must reconcile captured evidence.
+export function reconcileAutopilotReservation(root, dir, options = {}) {
+  const { run, state, journalBytes, orphanReservation } = readRun(root, dir, {
+    ...options, allowOrphanReservation: true,
+  });
+  if (orphanReservation === null) fail('no orphan reservation to reconcile');
+  const reservation = parseJson(orphanReservation, 'orphan role reservation');
+  exact(reservation, ['schemaVersion', 'runId', 'roleSequence', 'scope', 'role', 'prefixBytes', 'prefixDigest', 'runtimeFingerprint', 'expectedReceiptPath', 'requestedModel', 'descriptorModel', 'degradationReason', 'correctionOf'], 'orphan role reservation');
+  if (reservation.schemaVersion !== AUTOPILOT_RESERVATION_SCHEMA_VERSION || reservation.runId !== run.runId
+    || reservation.roleSequence !== state.roles.length + 1
+    || reservation.prefixBytes !== journalBytes.length || reservation.prefixDigest !== sha(journalBytes)
+    || reservation.runtimeFingerprint !== run.runtime.fingerprint) fail('orphan reservation prefix or identity mismatch');
+  scopeOf(reservation.scope);
+  const reservationPath = `${dir}/role-${reservation.roleSequence}-reservation.json`;
+  const event = eventFrom(state, { event: reservation.correctionOf === null ? 'ROLE_RESERVED' : 'REPAIR_RESERVED',
+    scope: reservation.scope, roleSequence: reservation.roleSequence, role: reservation.role,
+    ...(reservation.correctionOf === null ? {} : { correctionOf: reservation.correctionOf }),
+    reservationPath, reservationDigest: sha(orphanReservation), expectedReceiptPath: reservation.expectedReceiptPath,
+    requestedModel: reservation.requestedModel, descriptorModel: reservation.descriptorModel,
+    degradationReason: reservation.degradationReason });
+  publishEvent(root, dir, state, event);
+  return event;
+}
+
+function nextTimestamp(previous) {
+  const now = Date.now();
+  return new Date(Math.max(now, previous === null ? 0 : Date.parse(previous))).toISOString();
+}
+
+function eventFrom(state, fields) {
+  return eventOf({ schemaVersion: AUTOPILOT_EVENT_SCHEMA_VERSION, sequence: state.lastSequence + 1,
+    runId: state.runId, timestamp: nextTimestamp(state.lastTimestamp), ...fields });
+}
+
+function publishEvent(root, dir, state, event) {
+  const next = reduceAutopilotEvent(state, event);
+  appendWorkPath(root, paths(dir).events, `${JSON.stringify(event)}\n`, { family: 'autopilot-events' });
+  writeWorkPath(root, paths(dir).status, renderAutopilotStatus(next), { family: 'status' });
+  return next;
+}
+
+export function createAutopilotRun(root, dir, identity, { engineRoot } = {}) {
+  const recovery = Object.hasOwn(identity ?? {}, 'recovery');
+  exact(identity, ['runId', 'branch', 'baseline', 'runtime', ...(recovery ? ['recovery'] : [])], 'start identity');
+  if (!line(identity.runId) || !line(identity.branch) || !GIT_ID.test(identity.baseline)) fail('invalid start identity');
+  runtimeOf(identity.runtime);
+  if (recovery) recoveryOf(dir, identity.recovery);
+  if (engineRoot !== undefined) verifyAutopilotRuntime(engineRoot, identity.runtime);
+  const run = { schemaVersion: recovery ? AUTOPILOT_RECOVERY_RUN_SCHEMA_VERSION : AUTOPILOT_RUN_SCHEMA_VERSION,
+    controllerProtocol: AUTOPILOT_CONTROLLER_PROTOCOL, ...identity };
+  const p = paths(dir);
+  writeWorkPath(root, p.run, `${JSON.stringify(run)}\n`, { createOnly: true, family: 'autopilot-run' });
+  const first = eventOf({ schemaVersion: AUTOPILOT_EVENT_SCHEMA_VERSION, sequence: 1, runId: run.runId, timestamp: new Date().toISOString(),
+    event: 'RUN_STARTED', branch: run.branch, baseline: run.baseline, runtimeFingerprint: run.runtime.fingerprint });
+  writeWorkPath(root, p.events, `${JSON.stringify(first)}\n`, { createOnly: true, family: 'autopilot-events' });
+  const state = reduceAutopilotEvents([first]);
+  writeWorkPath(root, p.status, renderAutopilotStatus(state), { family: 'status' });
+  return Object.freeze({ run, state });
+}
+
+export function appendAutopilotEvent(root, dir, fields, options = {}) {
+  if (['RUN_STARTED', 'ROLE_RESERVED', 'REPAIR_RESERVED', 'RESPONSE_CAPTURED', 'RESULT_ACCEPTED'].includes(fields.event)) {
+    fail('event requires its dedicated durable publication operation');
+  }
+  const { state } = readAutopilotRun(root, dir, options);
+  const event = eventFrom(state, fields);
+  if (event.event === 'RECOVERY_IMPORTED') {
+    if (event.importPath !== `${dir}/task-${event.scope.task}-import.json`) fail('recovery import path mismatch');
+    verifyBytes(root, event.importPath, 'task-import', event.importDigest);
+  }
+  publishEvent(root, dir, state, event);
+  return event;
+}
+
+export function reserveAutopilotRole(root, dir, {
+  scope, role, correctionOf = null, expectedReceiptPath,
+  requestedModel = null, descriptorModel = null, degradationReason = null,
+}, options = {}) {
+  scopeOf(scope);
+  if (!ROLES.has(role)) fail('unknown role');
+  const { run, state, journalBytes } = readAutopilotRun(root, dir, options);
+  const roleSequence = state.roles.length + 1;
+  const receipt = roleReceipt(dir, scope, role, expectedReceiptPath, roleSequence);
+  const reservationPath = `${dir}/role-${roleSequence}-reservation.json`;
+  const reservation = { schemaVersion: AUTOPILOT_RESERVATION_SCHEMA_VERSION, runId: run.runId, roleSequence, scope, role,
+    prefixBytes: journalBytes.length, prefixDigest: sha(journalBytes),
+    runtimeFingerprint: run.runtime.fingerprint, expectedReceiptPath: receipt.path,
+    requestedModel, descriptorModel,
+    degradationReason, correctionOf };
+  const event = eventFrom(state, { event: correctionOf === null ? 'ROLE_RESERVED' : 'REPAIR_RESERVED',
+    scope, roleSequence, role, ...(correctionOf === null ? {} : { correctionOf }), reservationPath,
+    reservationDigest: sha(Buffer.from(`${JSON.stringify(reservation)}\n`)),
+    expectedReceiptPath: receipt.path, requestedModel, descriptorModel, degradationReason });
+  // Validate the transition before publishing the create-only reservation.
+  reduceAutopilotEvent(state, event);
+  writeWorkPath(root, reservationPath, `${JSON.stringify(reservation)}\n`, { createOnly: true, family: 'role-reservation' });
+  publishEvent(root, dir, state, event);
+  return Object.freeze(reservation);
+}
+
+export function captureAutopilotResponse(root, dir, roleSequence, response, { observedModel = null, engineRoot } = {}) {
+  const { state } = readAutopilotRun(root, dir, { engineRoot });
+  const role = state.roles.find((item) => item.roleSequence === roleSequence);
+  if (!role || role.responseCaptured) fail('response does not match an uncaptured role');
+  const bytes = bytesOf(response);
+  // The captured response is opaque JSON: its semantics belong to the selected response gate.
+  try { JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch { fail('response is not valid UTF-8 JSON'); }
+  const responsePath = `${dir}/role-${roleSequence}-response.json`;
+  const existing = optionalRead(root, responsePath, 'role-response');
+  if (existing === null) writeWorkPath(root, responsePath, bytes, { createOnly: true, family: 'role-response' });
+  else if (!existing.equals(bytes)) fail('captured response collision');
+  const event = eventFrom(state, { event: 'RESPONSE_CAPTURED', scope: role.scope, roleSequence,
+    responsePath, responseDigest: sha(bytes), observedModel });
+  publishEvent(root, dir, state, event);
+  return event;
+}
+
+export function acceptAutopilotResult(root, dir, roleSequence, receipt, { verifyReceipt, engineRoot } = {}) {
+  if (typeof verifyReceipt !== 'function') fail('receipt verifier is required before acceptance');
+  const { state } = readAutopilotRun(root, dir, { engineRoot });
+  const role = state.roles.find((item) => item.roleSequence === roleSequence);
+  if (!role || !role.responseCaptured || role.accepted || role.superseded) fail('result requires a captured, unsuperseded response');
+  exact(receipt, ['path', 'digest'], 'receipt reference');
+  digest(receipt.digest, 'receipt digest');
+  const rule = roleReceipt(dir, role.scope, role.role, role.expectedReceiptPath, roleSequence);
+  if (rule.source === null && receipt.path !== rule.path) fail('receipt does not match reserved invocation');
+  if (rule.source !== null && receipt.path !== rule.source.path) fail('DRAFT source does not match reserved invocation');
+  const bytes = verifyBytes(root, receipt.path, rule.source?.family ?? rule.family, receipt.digest);
+  const invocation = Object.freeze({ runId: state.runId, roleSequence, role: role.role,
+    scope: role.scope, responseDigest: role.responseDigest,
+    receiptPath: rule.path, receiptDigest: rule.source === null ? receipt.digest : null,
+    sourcePath: rule.source === null ? null : receipt.path,
+    sourceDigest: rule.source === null ? null : receipt.digest,
+    runtimeFingerprint: state.runtimeFingerprint });
+  const proof = verifyReceipt(bytes, receipt.path, invocation);
+  exact(proof, [...Object.keys(invocation), 'accepted'], 'receipt semantic proof');
+  if (proof.accepted !== true || Object.keys(invocation).some((key) => key === 'scope'
+    ? keyOf(proof.scope) !== keyOf(invocation.scope)
+    : JSON.stringify(proof[key]) !== JSON.stringify(invocation[key]))) {
+    fail('receipt semantic proof does not bind this invocation');
+  }
+  let resultDigest = receipt.digest;
+  if (rule.source !== null) {
+    const receiptBytes = Buffer.from(`${JSON.stringify({ schemaVersion: 1, ...proof })}\n`);
+    const previous = optionalRead(root, rule.path, 'role-receipt');
+    if (previous === null) writeWorkPath(root, rule.path, receiptBytes, { createOnly: true, family: 'role-receipt' });
+    else if (!previous.equals(receiptBytes)) fail('phase receipt collision');
+    resultDigest = sha(receiptBytes);
+  }
+  const event = eventFrom(state, { event: 'RESULT_ACCEPTED', scope: role.scope, roleSequence,
+    receiptPath: rule.path, receiptDigest: resultDigest });
+  publishEvent(root, dir, state, event);
+  return event;
+}

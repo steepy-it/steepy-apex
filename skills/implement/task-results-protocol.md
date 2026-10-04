@@ -1,16 +1,23 @@
 # Task execution receipts (Gear 3 autopilot v2)
 
-Read this protocol only when `manifest.contract.taskResultProtocol` is `2`. The conductor records
-`TASK_RESULT_PROTOCOL` once for a fresh run and pins the value in every phase manifest; propagate
+Read this protocol only when `manifest.contract.taskResultProtocol` is `2`. In a legacy controller
+protocol 1 run, the conductor records `TASK_RESULT_PROTOCOL` once for a fresh run and pins the value
+in every phase manifest; propagate
 `--task-result-protocol 2` to every task-role manifest. Retained legacy autopilot runs stay on
 protocol 1. Never silently upgrade a run or manufacture a historical baseline. Manual drive and
 Gear 4 retain their existing response and index grammar. These v2 instructions take precedence
 over the four-field and comma-list examples in the implementation skill and child prompts.
 
+Under controller protocol 2 the controller performs begin, record, resume, project, and verify itself,
+and pins writer task-result protocol 2 in every role manifest. Writers return only the semantic
+payload below; no role runs these commands, writes a receipt, or edits the index. The commands in
+this file are for legacy controller protocol 1 runs that pin task-result protocol 2.
+
 ## Semantic response and source evidence
 
 Implementer and fix responses contain exactly these ordered text fields (or the same JSON keys
-when `--format json` was selected before dispatch):
+when `--format json` was selected before dispatch; always text under controller protocol 2, per
+`manifest.contract.responseFormat`):
 
 ```text
 status: <DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT>
@@ -103,6 +110,9 @@ review merely to handle ignored legacy path telemetry. Legacy protocol 1 recover
 by its original reviewer gate; it does not acquire historical task receipts.
 
 ## Continue a valid non-success response
+
+This path exists only in legacy controller protocol 1 runs. Under controller protocol 2 a writer's
+NEEDS_CONTEXT or BLOCKED is a terminal `RUN_HALTED`, and no retry execution is begun.
 
 A captured semantic NEEDS_CONTEXT or BLOCKED result is not task completion. Inspect its derived
 `retryable` fact. If true, resolve the question from authorized context or choose a concrete remedy

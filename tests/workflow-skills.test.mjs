@@ -1053,6 +1053,38 @@ test('plan: Step 4.5 checklist adds the discovery criterion without renumbering 
   assert.match(item8, /split|discovery task/i, 'checklist item 8 must name the split-or-precede-with-discovery remedy');
 });
 
+test('plan: every behavior task is a vertical TDD slice in the task format and the self-review', () => {
+  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const step3 = sectionBetween(text, '### Step 3', '### Step 4').replace(/\s+/g, ' ');
+  assert.match(step3, /vertical TDD slice/i, 'Step 3 must make each behavior task a vertical TDD slice');
+  assert.match(step3, /failing test and the implementation that makes it pass belong to the same task/i,
+    'Step 3 must keep the failing test and its implementation in the same task');
+  assert.match(step3, /Exact paths list both/i, 'Step 3 must make the task Exact paths include both test and implementation');
+  assert.match(step3, /Never plan a task that only adds a failing \(red\) test/i, 'Step 3 must forbid a red-only task');
+  assert.match(step3, /only implements behavior whose test lives in another task/i,
+    'Step 3 must forbid an implementation-only task whose test lives in another task');
+  assert.match(step3, /test first, then the implementation[^.]*order inside one task, not two tasks/i,
+    'Step 3 must read a test-first spec as the order inside one task');
+  assert.match(step3, /Docs-only or pure-refactor tasks[^.]*unaffected/i,
+    'Step 3 must leave docs-only and pure-refactor tasks unaffected');
+  assert.match(step3, /keeps the implementation's Surface and Specialist agent even when its test file sits under another surface/i,
+    'Step 3 must keep a slice whole when its test file sits under another surface');
+  const rule = step3.search(/vertical TDD slice/i);
+  const v2 = step3.indexOf('**Controller protocol 2 plans.**');
+  assert.ok(v2 !== -1 && rule < v2, 'the vertical-slice rule must precede the controller protocol 2 subsection so every drive keeps it');
+  const step45 = sectionBetween(text, '### Step 4.5', '### Step 5');
+  const item9 = step45.match(/9\.\s+\*\*[^\n]*/)?.[0] ?? '';
+  assert.match(item9, /^9\.\s+\*\*Vertical TDD slices\*\*/, 'self-review item 9 must check vertical TDD slices');
+  assert.match(item9, /Exact paths include both its failing test and its implementation/i,
+    'self-review item 9 must check that Exact paths carry both test and implementation');
+  assert.match(item9, /no task only adds a failing \(red\) test/i, 'self-review item 9 must reject a red-only task');
+  assert.match(item9, /no task only implements behavior whose test lives in another task/i,
+    'self-review item 9 must reject an implementation-only task whose test lives elsewhere');
+  const item6 = step45.match(/6\.\s+\*\*Safe repository-relative paths\*\*[^\n]*/)?.[0] ?? '';
+  assert.match(item6, /owned by the task's declared surface, except the task's own failing test file \(item 9\)/i,
+    'self-review item 6 must except only the slice test file from surface ownership, so it never forces a red-only split');
+});
+
 test('review: autopilot manifest and manual capability inventories are authoritative and exclude transcripts', () => {
   const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
   const step0 = sectionBetween(text, '### Step 0', '### Ceremony');
@@ -2618,6 +2650,66 @@ test('v2 prompts override four-field legacy examples without changing manual or 
   assert.equal(schema.additionalProperties, false);
 });
 
+test('controller protocol 2 selects closed phase results and preserves legacy phase ownership', () => {
+  for (const [phase, statuses] of [
+    ['plan', ['DONE', 'BLOCKED', 'NEEDS_CONTEXT']],
+    ['review', ['READY_FOR_PR', 'BLOCKED', 'NEEDS_CONTEXT']],
+  ]) {
+    const schema = JSON.parse(readFileSync(join(skillsDir, phase, 'controller-response.schema.json'), 'utf8'));
+    assert.deepEqual(schema.required, ['status', 'signals']);
+    assert.equal(schema.additionalProperties, false);
+    assert.deepEqual(schema.properties.status.enum, statuses);
+    assert.equal(schema.properties.signals.type, 'string');
+    const prompt = readFileSync(join(skillsDir, phase, 'SKILL.md'), 'utf8');
+    assert.match(prompt, /controllerProtocol[^]*2/);
+    assert.match(prompt, /status[^]*signals/);
+    assert.match(prompt, /controller[^]*lifecycle/i);
+    assert.match(prompt, /legacy|historical/i);
+    assert.match(prompt, /Do not invoke an installed skill by name/i);
+  }
+  const plan = readFileSync(join(skillsDir, 'plan/SKILL.md'), 'utf8');
+  assert.match(plan, /modular[^]*matching leaf/i);
+  assert.match(plan, /matching reason/i);
+});
+
+test('reviewer protocol 3 is a two-field verdict with controller-owned artifacts and one format correction', () => {
+  const schema = JSON.parse(readFileSync(join(skillsDir, 'implement/reviewer-response-v3.schema.json'), 'utf8'));
+  assert.deepEqual(schema.required, ['status', 'signals']);
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.properties.status.enum, ['APPROVED', 'ISSUES_FOUND', 'BLOCKED', 'NEEDS_CONTEXT']);
+  assert.equal(schema.properties.signals.type, 'string');
+  assert.equal(schema.properties.artifact, undefined);
+  assert.equal(schema.properties['changed-paths'], undefined);
+  for (const file of ['task-reviewer-prompt.md', 'final-review-prompt.md']) {
+    const prompt = readFileSync(join(skillsDir, 'implement', file), 'utf8');
+    assert.ok(prompt.indexOf('reviewerResponseProtocol') < prompt.indexOf('taskResultProtocol'), file);
+    assert.match(prompt, /reviewerResponseProtocol[^]*3/);
+    assert.match(prompt, /controller[^]*assign[^]*artifact/i);
+    assert.match(prompt, /legacy|manual/i);
+    assert.match(prompt, /ISSUES_FOUND[^]*issues/i);
+  }
+  const final = readFileSync(join(skillsDir, 'implement/final-review-prompt.md'), 'utf8');
+  assert.match(final, /steepy-fix-targets: v1/);
+  assert.match(final, /issueIds/);
+  const shared = readFileSync(join(skillsDir, 'implement/controller-role-prompt.md'), 'utf8');
+  assert.match(shared, /manifest[^]*required/i);
+  assert.match(shared, /controller[^]*receipts/i);
+  assert.match(shared, /do not[^]*state/i);
+  const correction = readFileSync(join(skillsDir, 'implement/reviewer-correction-prompt.md'), 'utf8');
+  assert.match(correction, /single[^]*correction/i);
+  assert.match(correction, /reverse[^]*order/i);
+  assert.match(correction, /Markdown[^]*block/i);
+  assert.match(correction, /frozen[^]*status[^]*signals/i);
+  assert.match(correction, /no[^]*new review/i);
+  assert.match(correction, /validated[^]*report[^]*Git state/i);
+  assert.match(correction, /APPROVED[^]*ISSUES_FOUND/);
+  assert.match(correction, /BLOCKED[^]*NEEDS_CONTEXT[^]*not repairable/i);
+  assert.match(correction, /crash[^]*does not replenish/i);
+  const writer = readFileSync(join(skillsDir, 'implement/implementer-prompt.md'), 'utf8');
+  assert.match(writer, /controllerProtocol[^]*2/);
+  assert.match(writer, /controller[^]*ledger[^]*receipts/i);
+});
+
 test('docs/workflow.md says the greenfield path precedes the hub and spec means the brainstorm artifact', () => {
   const workflow = readFileSync(join(root, 'docs', 'workflow.md'), 'utf8');
   const flat = workflow.replace(/\s+/g, ' ');
@@ -2628,4 +2720,235 @@ test('docs/workflow.md says the greenfield path precedes the hub and spec means 
     'workflow.md must disambiguate "spec" as the brainstorm artifact');
   assert.match(flat, /inception's own project write-up is a different document/i);
   assert.match(flat, /not a sixth skill/i, 'workflow.md must deny inception is a sixth chain skill');
+});
+
+// Controller protocol 2 is the fresh-run default. These content locks keep the
+// skill prose truthful about who owns what; they prove no model behavior.
+const flatSkill = (path) => readFileSync(join(skillsDir, path), 'utf8').replace(/\s+/g, ' ');
+
+test('implement prose scopes the controller-owned path and keeps the legacy and manual paths explicit', () => {
+  const skill = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const step0 = sectionBetween(skill, '### Step 0', '### Ceremony').replace(/\s+/g, ' ');
+  assert.match(step0, /controller protocol 2 is the default for fresh autopilot runs/i);
+  assert.match(step0, /no implement-phase child runs this skill/i);
+  assert.match(step0, /dispatch, response capture, receipts, workflow events, and task commits/i);
+  assert.match(step0, /Roles never write state/);
+  assert.match(step0, /apply only to legacy controller protocol 1 and to manual drive/i);
+  const protocol = flatSkill('implement/autopilot-protocol.md');
+  const controller = protocol.match(/## Controller protocol 2\b(.*?)## Step 0/)?.[1] ?? '';
+  assert.ok(controller, 'autopilot-protocol.md must describe the controller path before the legacy steps');
+  assert.match(controller, /no implement-phase child exists/i);
+  assert.match(controller, /A writer edits only its assigned source paths under TDD and writes its assigned report/);
+  assert.match(controller, /Roles never write state/);
+  assert.match(controller, /keeps dispatch, the durable capture of each response before any gate, task-result receipts/);
+  assert.match(controller, /task reviewer runs at most-capable for a design task and at standard otherwise/i);
+  assert.match(controller, /final review runs at most-capable when any task is design/i);
+  assert.match(controller, /response-only correction runs at standard/i);
+  assert.match(controller, /gate refusal after an effect is a terminal `RUN_HALTED`/i);
+  assert.match(controller, /exact surface test command and `validate-hub`, both exiting 0/i);
+  assert.match(controller, /Legacy controller protocol 1 \(`--controller-protocol 1`/);
+  const recovery = flatSkill('implement/reviewer-recovery.md');
+  assert.match(recovery, /In legacy controller protocol 1, the implement skill orchestrates dispatch/);
+  assert.match(recovery, /Under controller protocol 2 the controller runs this gate itself/);
+  const results = flatSkill('implement/task-results-protocol.md');
+  assert.match(results, /Under controller protocol 2 the controller performs begin, record, resume, project, and verify itself/);
+  assert.match(results, /legacy controller protocol 1 runs/i);
+});
+
+test('implement prose states the known controller limitations', () => {
+  const protocol = flatSkill('implement/autopilot-protocol.md');
+  assert.match(protocol, /Controller protocol 2 writes no `resource-usage\.jsonl` usage ledger, so `scripts\/cost-report\.mjs` reports no headless usage for these runs/);
+  assert.match(protocol, /several distinct test commands[^.]*no single `testCommand`[^.]*one `--test-command`/i);
+  assert.match(protocol, /finding-ID inventory[^.]*fix-target block itself/i);
+  assert.match(protocol, /`role-N-response\.json` gained `rawDigest` under response record schema 1[^.]*unreleased/i);
+  const review = flatSkill('review/SKILL.md');
+  assert.match(review, /several distinct test commands[^.]*no single `testCommand`[^.]*one `--test-command`/i);
+  assert.match(review, /the manifest's `testCommand` \(the plan's exact surface test command\)/);
+  assert.match(review, /`\.apex\/testing-and-checklist\.md` command of a surface whose standard the manifest lists[^.]*return `NEEDS_CONTEXT` if none applies/);
+});
+
+test('plan prose states the strict v2 grammar and runs the protocol-matched plan gate', () => {
+  const plan = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const step3 = sectionBetween(plan, '### Step 3', '### Step 4 ').replace(/\s+/g, ' ');
+  assert.match(step3, /Use each field label exactly once per task/);
+  assert.match(step3, /sub-bullets or sentences inside the single \*\*Requirements and deliverables\*\* field/);
+  assert.match(step3, /never name `\.apex`, `\.apex\/work\/\*\*`, `\.apex\/inception\/\*\*`, or Git metadata/);
+  assert.match(step3, /top-level `specs\/<name>\.md`[^.]*cannot be an Exact path/);
+  assert.match(step3, /no spec-section capability[^.]*refused at plan acceptance/i);
+  assert.match(step3, /outside every `## Task` section is not carried into a v2 brief/);
+  assert.match(step3, /Repeat each relevant global constraint in the task's own/);
+  assert.match(step3, /unclosed code fence, or an unclosed HTML comment fails the plan closed/);
+  assert.match(step3, /Manual drive and legacy controller protocol 1 keep/);
+  const selfReview = sectionBetween(plan, '### Step 4.5', '### Step 5').replace(/\s+/g, ' ');
+  assert.match(selfReview, /1\. \*\*Every mandatory field\*\*[^]*each field exactly once/);
+  const gate = sectionBetween(plan, '### Step 5', '### Step 6');
+  assert.ok(gate.includes('node <engine-root>/scripts/autopilot-context.mjs --verify-plan --repo-root . --plan <authoritative-manifest-output-path> --controller-protocol 2'),
+    'protocol 2 runs the strict v2 plan check');
+  assert.ok(gate.includes('node <engine-root>/scripts/autopilot-context.mjs --verify-plan --repo-root . --plan <authoritative-manifest-output-path>\n'),
+    'legacy protocol 1 keeps the compact check');
+  assert.match(gate.replace(/\s+/g, ' '), /`manifest\.contract\.controllerProtocol: 2`[^]*plan OK — controller protocol 2/);
+  const step0 = sectionBetween(plan, '### Step 0', '### Ceremony').replace(/\s+/g, ' ');
+  assert.match(step0, /Step 4\.5 self-review and the Step 5 validation gates still apply/);
+});
+
+test('review prose reads index protocol 3 import entries without treating an import as approval', () => {
+  const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const step0 = sectionBetween(review, '### Step 0', '### Ceremony').replace(/\s+/g, ' ');
+  assert.match(step0, /recovery run pins `manifest\.contract\.taskResultIndexProtocol: 3`/);
+  assert.match(step0, /fresh controller run keeps index protocol 2/i);
+  assert.match(step0, /`kind: import` has `status: IMPORTED`/);
+  assert.match(step0, /The import is not approval/);
+  assert.match(step0, /import-bound task review/);
+  assert.match(step0, /first fix[^.]*execution 2/i);
+  assert.match(step0, /do not open the import receipt or the source run/i);
+  assert.match(step0, /`testCommand` \(the plan's exact surface test command\) and `validate-hub`, both exiting 0/i);
+});
+
+test('brainstorm states that exact capture needs a legacy run', () => {
+  const brainstorm = flatSkill('brainstorm/SKILL.md');
+  assert.match(brainstorm, /Exact capture needs a legacy run[^.]*`--controller-protocol 1`[^.]*refuses `log-mode: exact` before any effect/);
+});
+
+test('brainstorm reports the artifacts the default controller run actually writes', () => {
+  const brainstorm = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const item = brainstorm.split('\n').find((line) => line.startsWith("4. Report the run's status path")) ?? '';
+  assert.match(item, /`role-<N>\.log`/);
+  assert.match(item, /`role-<N>\.raw\.jsonl`/);
+  assert.match(item, /authoritative journal `autopilot-events\.jsonl`/);
+  const legacy = item.indexOf('--controller-protocol 1');
+  assert.ok(legacy > 0, 'item 4 must scope the phase logs to a legacy run');
+  assert.ok(item.indexOf('phase-<n>-attempt-<m>') > legacy, 'phase-attempt logs appear only after the legacy selection');
+});
+
+test('the task reviewer prompt explains an import-bound review', () => {
+  const prompt = readFileSync(join(skillsDir, 'implement', 'task-reviewer-prompt.md'), 'utf8');
+  const flat = prompt.replace(/\s+/g, ' ');
+  assert.match(flat, /`manifest\.contract\.reviewedEvidence` is `import`/);
+  assert.match(flat, /required inventory adds the import receipt \(`task-N-import\.json`\)/);
+  assert.match(flat, /The import is not approval/);
+  assert.match(flat, /ISSUES_FOUND sends the task to a fix, which becomes execution 2/);
+  assert.match(flat, /for an import-bound review the import receipt/);
+  assert.match(flat, /When `manifest\.contract\.reviewerResponseProtocol` is not `3`, `manifest\.contract\.taskResultProtocol` equal to `2`/,
+    'the v2 reviewer grammar applies only outside reviewer response protocol 3');
+  assert.doesNotMatch(flat, /Otherwise, `manifest\.contract\.taskResultProtocol` equal to `2`/);
+  assert.match(flat, /required` inventory is exactly the task brief, implementer report, task diff, and selected owning standards/,
+    'the ordinary inventory statement stays intact');
+});
+
+// Review fix iteration 2 sweep: the retry path and the v2 reviewer grammar are legacy-only.
+test('implement prose scopes the retry path and the v2 reviewer grammar to legacy runs', () => {
+  const results = flatSkill('implement/task-results-protocol.md');
+  assert.match(results, /In a legacy controller protocol 1 run, the conductor records `TASK_RESULT_PROTOCOL` once/);
+  const retry = results.slice(results.indexOf('## Continue a valid non-success response'));
+  assert.match(retry, /Under controller protocol 2 a writer's NEEDS_CONTEXT or BLOCKED is a terminal `RUN_HALTED`/);
+  const protocol = flatSkill('implement/autopilot-protocol.md');
+  assert.match(protocol, /A writer's or reviewer's NEEDS_CONTEXT or BLOCKED is also a terminal `RUN_HALTED`; protocol 2 has no retry execution/);
+  assert.match(flatSkill('implement/reviewer-recovery.md'),
+    /In a legacy controller protocol 1 run, for `manifest\.contract\.taskResultProtocol: 2`, the semantic contract takes precedence/);
+  const implementer = flatSkill('implement/implementer-prompt.md');
+  assert.match(implementer, /In a legacy controller protocol 1 run with task-result protocol 2, a later NEEDS_CONTEXT or BLOCKED response retains earlier discovery in its signals and report; successful completion after retry still requires DONE_WITH_CONCERNS\. Under controller protocol 2 there is no retry: a NEEDS_CONTEXT or BLOCKED response is a terminal `RUN_HALTED`\./);
+  assert.doesNotMatch(implementer, /Under protocol 2, a later NEEDS_CONTEXT or BLOCKED/, 'the retry sentence is never unscoped');
+});
+
+test('the glossary scopes the usage ledger and the status entries to their protocols', () => {
+  const glossary = readFileSync(join(root, '.apex', 'glossary.md'), 'utf8').replace(/\s+/g, ' ');
+  const entry = (term) => new RegExp(`- \\*\\*${term}\\*\\* — (.*?)(?= - \\*\\*|$)`).exec(glossary)?.[1] ?? '';
+  const ledger = entry('Resource-usage ledger');
+  assert.match(ledger, /Only legacy controller protocol 1 runs write it; controller protocol 2 writes none/);
+  assert.match(ledger, /known limitation[^.]*\[Architecture\]\(\.\.\/docs\/architecture\.md\)/);
+  const implementer = entry('Implementer status');
+  assert.match(implementer, /In manual drive and legacy controller protocol 1, the orchestrator dispatches on it\. Under controller protocol 2 the controller dispatches, and NEEDS_CONTEXT or BLOCKED is a terminal `RUN_HALTED`\./);
+  const reviewer = entry('Reviewer status');
+  assert.match(reviewer, /review report's `Status:` line \(`Approved` or `Issues Found`\)/);
+  assert.match(reviewer, /reviewer response status \(`APPROVED \| ISSUES_FOUND \| BLOCKED \| NEEDS_CONTEXT`\)/);
+  assert.match(reviewer, /The response status drives the fix loop: `ISSUES_FOUND` sends the work to a fix, and `APPROVED` ends the loop\./);
+  assert.doesNotMatch(reviewer, /`Approved \| Issues Found` enum/, 'the report line is not the response enum');
+});
+
+// The first native controller-protocol-2 run returned the plan schema as a JSON
+// object with prose signals. The packaged prose names the plain-text rows the
+// decoders accept; the schema files only define the allowed values.
+test('controller protocol 2 prose states the plain-text response rows, never JSON or prose', () => {
+  for (const [phase, statuses] of [['plan', '`DONE`, `BLOCKED`, or `NEEDS_CONTEXT`'], ['review', '`READY_FOR_PR`, `BLOCKED`, or `NEEDS_CONTEXT`']]) {
+    const text = readFileSync(join(skillsDir, phase, 'SKILL.md'), 'utf8');
+    const step0 = sectionBetween(text, '### Step 0 — Read the gear', '### Ceremony by gear').replace(/\s+/g, ' ');
+    const contract = /\*\*Controller protocol 2:\*\*(.*?)\*\*/.exec(step0)?.[1] ?? '';
+    assert.match(contract, /exactly two plain-text lines, `status: <value>` then `signals: <value>`:/, phase);
+    assert.ok(contract.includes(`\`status\` is ${statuses}; \`signals\` is \`none\` or machine IDs separated by \`, \`.`), phase);
+    assert.ok(contract.includes(`\`${phase}/controller-response.schema.json\` only defines the allowed values; never return JSON, a Markdown fence, or prose.`), phase);
+    assert.doesNotMatch(contract, /closed `[a-z]+\/controller-response\.schema\.json` result/, `${phase} no longer names the schema as the result`);
+  }
+  const shared = flatSkill('implement/controller-role-prompt.md');
+  assert.match(shared, /Return only the selected closed response payload, as plain-text `field: value` rows exactly as the role prompt lists them: never JSON, a Markdown fence, or prose\. Keep all findings in the assigned artifacts\./);
+  // The text-or-JSON choice is a legacy selection; controller protocol 2 pins text.
+  for (const [file, site] of [
+    ['task-reviewer-prompt.md', 'in the controller-selected text or JSON format (always text under controller protocol 2, per `manifest.contract.responseFormat`).'],
+    ['final-review-prompt.md', 'in the controller-selected text or JSON format (always text under controller protocol 2, per `manifest.contract.responseFormat`).'],
+    ['implementer-prompt.md', '(or the same JSON keys when the controller selected JSON; always text under controller protocol 2, per `manifest.contract.responseFormat`).'],
+    ['task-results-protocol.md', '(or the same JSON keys when `--format json` was selected before dispatch; always text under controller protocol 2, per `manifest.contract.responseFormat`):'],
+  ]) {
+    assert.ok(flatSkill(`implement/${file}`).includes(site), file);
+  }
+});
+
+// A native recovery run's final reviewer blocked on a branch-diff path the
+// recovery input had accepted as its explained delta, which it could not see.
+// A delta path that a task also changed still needs review of that task's edits.
+const DELTA_OVERLAP = 'A delta path explains only the change no task claims, so a task\'s own edits to that path still need review.';
+
+test('the final-review prompt reads a recovery run\'s declared delta as explained changes, not unattributed task work', () => {
+  const prompt = flatSkill('implement/final-review-prompt.md');
+  const sentence = 'In a recovery run, paths in the manifest\'s declared recovery delta (`manifest.recovery.delta`) are explained changes accepted by the recovery input, not unattributed task work.';
+  assert.ok(prompt.includes(`${sentence} ${DELTA_OVERLAP}`), 'the overlap rule follows the delta rule');
+  const metadata = prompt.indexOf('Validate the task-result index\'s canonical grammar and its exact `source-spec`, `criteria`, and `branch-diff` metadata');
+  assert.ok(metadata !== -1 && prompt.indexOf(sentence) > metadata, 'the delta rule sits beside the index validation in the reviewer prompt');
+});
+
+// The review phase reads the same branch diff, so it gets the same rule in
+// its index protocol 3 paragraph.
+test('the review skill reads a recovery run\'s declared delta as explained changes inside its index protocol 3 paragraph', () => {
+  const review = flatSkill('review/SKILL.md');
+  const sentence = 'Paths in the manifest\'s declared recovery delta (`manifest.recovery.delta`) are explained changes accepted by the recovery input, not unattributed task work or missing evidence.';
+  assert.ok(review.includes(`${sentence} ${DELTA_OVERLAP}`), 'the overlap rule follows the delta rule');
+  const start = review.indexOf('**Index protocol 3 (recovery runs).**');
+  const judge = review.indexOf('Judge the criteria from the index and branch diff as usual', start);
+  const end = review.indexOf('**Manual/no-manifest:**', start);
+  const at = review.indexOf(sentence);
+  assert.ok(start !== -1 && judge > start && end > judge, 'the index protocol 3 paragraph keeps its shape');
+  assert.ok(at > judge && at < end, 'the delta rule sits beside the criteria judgment in the index protocol 3 paragraph');
+});
+
+// A task role's diff can hold work its task does not own: an imported task's
+// diff starts at the import's task baseline, and after a final review asks for
+// whole-branch fixes every fixer and re-review reads other tasks' commits. One
+// contract fact tells the reviewer and the fixer; neither reverts that work.
+const SHARED_GATE = 'When `manifest.contract.sharedDiff` is `true`,';
+const SHARED_WORK = 'other tasks\' work, earlier or later, imported or executed in this run, including their fixes. In a recovery run it can also include the accepted recovery delta.';
+
+test('the task reviewer prompt explains a shared task diff with one rule outside its template', () => {
+  const prompt = flatSkill('implement/task-reviewer-prompt.md');
+  const rule = `${SHARED_GATE} the task diff can include ${SHARED_WORK} Judge only this task's brief and Exact paths, and do not ask for those changes to be reverted.`;
+  assert.ok(prompt.includes(rule), 'the shared-diff rule');
+  assert.equal(prompt.split(SHARED_GATE).length, 2, 'the rule appears once');
+  assert.doesNotMatch(prompt, /importLineage/);
+  const imported = prompt.indexOf('When `manifest.contract.reviewedEvidence` is `import`');
+  const fix = prompt.indexOf('ISSUES_FOUND sends the task to a fix, which becomes execution 2.');
+  const legacy = prompt.indexOf('When `manifest.contract.reviewerResponseProtocol` is not `3`');
+  const at = prompt.indexOf(rule);
+  assert.ok(imported !== -1 && fix > imported && legacy > fix, 'the import paragraph keeps its shape');
+  assert.ok(at > fix && at < legacy, 'the rule follows the import paragraph, outside its import-only gate');
+  assert.ok(at < prompt.indexOf('Subagent (reviewer):'), 'the rule sits outside the subagent template');
+});
+
+test('the implementer prompt tells a fixer with a shared diff, and a whole-branch fixer, what not to revert', () => {
+  const prompt = flatSkill('implement/implementer-prompt.md');
+  const rule = `${SHARED_GATE} your task diff can include ${SHARED_WORK} Fix only this task's issues within its brief and Exact paths, and do not revert those changes.`
+    + ' A whole-branch fix takes its issues from `final-review-issues.md` and reads `branch-diff.txt`, the aggregate branch diff captured for the final review.'
+    + ' Fix only the finding IDs that its `steepy-fix-targets` block maps to this task, and do not revert other changes.';
+  assert.ok(prompt.includes(rule), 'the fixer rule');
+  assert.equal(prompt.split(SHARED_GATE).length, 2, 'the rule appears once');
+  assert.doesNotMatch(prompt, /importLineage/);
+  const at = prompt.indexOf(rule);
+  assert.ok(at > prompt.indexOf('When `manifest.contract.controllerProtocol` is `2`') && at < prompt.indexOf('Subagent (<surface>-agent):'),
+    'the rule sits with the controller protocol 2 writer rules, outside the subagent template');
 });

@@ -1,12 +1,21 @@
 # Final Review Prompt (steepy)
 
 After the last task, if your harness provides a task/subagent tool, dispatch a fresh reviewer for the
-whole branch before handing off to the `review` skill (invoke it the way your harness invokes skills). In autopilot, pass the validated
+whole branch. Legacy autopilot then hands off to the `review` skill through its native skill invocation;
+controller protocol 2 uses the packaged review prompt directly. In autopilot, pass the validated
 final-review manifest path as the sole file-inventory reference. Its `required` inventory is exactly the success-criteria source, task-result index, aggregate branch diff, and relevant standards. The success-criteria source is the deterministic task-local criteria-only artifact, never the full spec.
 Otherwise perform this review in a fresh dedicated pass over the same inputs and record the
 no-task-tool or manual no-manifest degradation in the ledger.
 
-Protocol selection: `manifest.contract.taskResultProtocol` equal to `2` takes precedence over
+Protocol selection: when `manifest.contract.reviewerResponseProtocol` is `3`, first apply the
+packaged `controller-role-prompt.md` and this role prompt. The controller assigns the review and
+issues artifact paths; write the review, and write issues for `ISSUES_FOUND`. Return exactly
+`status`, `signals` in that order, in the controller-selected text or JSON format (always text
+under controller protocol 2, per `manifest.contract.responseFormat`). The controller owns the verdict gate, receipts, and lifecycle; report prose cannot supply a verdict. A response
+containing `artifact` or `changed-paths` is invalid. Only one reserved response-only correction
+may repair reversed text-line order or one Markdown block around the whole selected payload;
+values and types remain frozen. This v3 branch takes precedence over v2 and legacy examples.
+Otherwise, `manifest.contract.taskResultProtocol` equal to `2` takes precedence over
 all four-field examples below. In v2 return only `status`, `artifact`, `signals`, in that text order
 (or the same JSON keys when the controller selected JSON). Preserve the role's status and artifact
 rules. A legacy extra `changed-paths` is raw-only telemetry ignored by the gate, never authoritative.
@@ -36,7 +45,17 @@ Subagent (reviewer):
     **Review artifact:** [FINAL_REVIEW_FILE]
     **Issue artifact:** [FINAL_ISSUE_FILE]
 
-    In autopilot, read and validate the manifest first. When `manifest.contract.taskResultProtocol`
+    In autopilot, read and validate the manifest first. When `manifest.contract.reviewerResponseProtocol`
+    is `3`, use the packaged controller-role instructions and this role prompt directly. The controller
+    assigns [FINAL_REVIEW_FILE] and [FINAL_ISSUE_FILE]. Write the review for every status, and for
+    ISSUES_FOUND write the complete actionable set to [FINAL_ISSUE_FILE]. In that issue artifact,
+    include exactly one fenced JSON block immediately following a `steepy-fix-targets: v1` line.
+    Its payload is an array of `{task, issueIds}` objects: each task is an ID in the assigned task
+    index and each issueIds array names explicit finding IDs in this issue artifact. Missing,
+    duplicated, or unknown task or issue IDs block the fix. Return only status, signals; no artifact
+    or changed-paths field. The controller owns receipts and lifecycle, and validates the verdict
+    from the response rather than the report. Do not invoke an installed skill by name. This branch
+    wins before all v2 and legacy response rules below. Otherwise, when `manifest.contract.taskResultProtocol`
     is `2`, return only status, artifact, signals; this rule takes precedence over every legacy
     four-field example in this prompt. Do not include a source-path claim. The controller obtains
     paths from Git observations; a legacy extra changed-paths is ignored raw-only telemetry.
@@ -52,7 +71,10 @@ Subagent (reviewer):
     `.apex/work/**` or infer another work artifact from the orchestrator's capability. Validate the
     task-result index's canonical grammar and its exact `source-spec`, `criteria`, and `branch-diff`
     metadata; validate the supporting paths and canonical criteria `Source`/`Heading` attribution
-    without opening the plan or source spec.
+    without opening the plan or source spec. In a recovery run, paths in the manifest's declared
+    recovery delta (`manifest.recovery.delta`) are explained changes accepted by the recovery input,
+    not unattributed task work. A delta path explains only the change no task claims, so a task's
+    own edits to that path still need review.
 
     Read the aggregate diff once. Check that task interfaces compose, no task undoes another, all
     success criteria are met, and no cross-cutting problem escaped the task gates.

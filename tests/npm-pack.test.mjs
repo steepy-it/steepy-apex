@@ -226,3 +226,59 @@ test('npm pack dry-run leaves no repository tarball behind', () => {
 test('npm tarball includes both harness hook manifests', () => {
   assertPacked(['hooks/hooks.json', 'hooks/hooks-codex.json']);
 });
+
+test('npm tarball includes the controller runtime payload the conductor fingerprints and binds', async () => {
+  assertPacked([
+    'scripts/autopilot-controller.mjs',
+    'scripts/autopilot-recovery.mjs',
+    'scripts/autopilot-state.mjs',
+    'scripts/autopilot-runtime.mjs',
+    'scripts/reviewer-response.mjs',
+    'scripts/headless-runner.mjs',
+    'adapters/headless-response.mjs',
+    'skills/implement/controller-role-prompt.md',
+    'skills/implement/reviewer-correction-prompt.md',
+    'skills/implement/reviewer-response-v3.schema.json',
+    'skills/plan/controller-response.schema.json',
+    'skills/review/controller-response.schema.json',
+  ], 'controller payload');
+  // Every file a run's immutable identity fingerprints must ship, or an
+  // installed engine could never resume a run it started.
+  const { fingerprintAutopilotRuntime } = await import('../scripts/autopilot-runtime.mjs');
+  assertPacked(fingerprintAutopilotRuntime(root).files.map(({ path }) => path), 'fingerprinted runtime file');
+  // The controller and recovery CLIs load only Node built-ins and packaged modules.
+  const seen = new Set();
+  const visit = (path) => {
+    if (seen.has(path)) return;
+    seen.add(path);
+    assertPacked([path], 'controller import closure');
+    for (const specifier of moduleSpecifiers(readFileSync(join(root, path), 'utf8'))) {
+      if (specifier.startsWith('node:')) continue;
+      assert.match(specifier, /^\.\.?\//, `${path} must import only Node built-ins and packaged modules, got '${specifier}'`);
+      visit(join(dirname(path), specifier).split('\\').join('/'));
+    }
+  };
+  for (const entry of ['scripts/autopilot.mjs', 'scripts/autopilot-controller.mjs', 'scripts/autopilot-recovery.mjs']) visit(entry);
+});
+
+// The skills invoke engine scripts by `<engine-root>/scripts/<name>.mjs`; an
+// installed engine must carry each one, including the plan skill's v2 gate.
+test('npm tarball includes every engine script the packaged skills invoke', () => {
+  const skillFiles = paths.filter((path) => path.startsWith('skills/') && path.endsWith('.md'));
+  const invoked = new Set(skillFiles.flatMap((path) => [...readFileSync(join(root, path), 'utf8')
+    .matchAll(/<engine-root>\/(scripts\/[a-z0-9-]+\.mjs)/g)].map((match) => match[1])));
+  for (const script of ['scripts/autopilot-context.mjs', 'scripts/task-results.mjs', 'scripts/reviewer-response.mjs',
+    'scripts/capture-review-evidence.mjs', 'scripts/validate-hub.mjs']) {
+    assert.ok(invoked.has(script), `the skills must still invoke ${script}`);
+  }
+  assertPacked([...invoked].sort(), 'skill-invoked engine script');
+  assertPacked(['scripts/autopilot-plan.mjs'], 'v2 plan grammar behind --verify-plan --controller-protocol 2');
+});
+
+test('npm tarball excludes the synthetic controller fixtures and the opt-in native smoke driver', () => {
+  for (const path of ['tests/fixtures/autopilot-controller/fake-harness.mjs', 'tests/fixtures/autopilot-controller/native-smoke.mjs']) {
+    assert.ok(existsSync(join(root, path)), `${path} must exist in the repository`);
+    assert.equal(paths.includes(path), false, `${path} is test-only and must not ship`);
+  }
+  assert.deepEqual(paths.filter((path) => path.startsWith('tests/')), [], 'no test file ships in the payload');
+});

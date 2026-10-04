@@ -308,12 +308,13 @@ export function selectBaseline(selectedBaseline, candidateBaseline, options = {}
 // domain-specific reducer runs. Unlike validateWorkflowEvent(), this boundary
 // intentionally leaves event-specific fields to the adapter/reducer and may
 // carry null run correlation for historical observational records.
-export function normalizeWorkflowEnvelope(candidate, { allowUncorrelated = false } = {}) {
+export function normalizeWorkflowEnvelope(candidate, { allowUncorrelated = false, schemaVersion = WORKFLOW_EVENT_SCHEMA_VERSION } = {}) {
   assertPlainObject(candidate, 'workflow envelope');
+  assertPositiveInteger(schemaVersion, 'expected schemaVersion');
   if (!Object.hasOwn(candidate, 'schemaVersion')) {
     fail('MISSING_FIELD', "missing field 'schemaVersion'");
   }
-  if (candidate.schemaVersion !== WORKFLOW_EVENT_SCHEMA_VERSION) {
+  if (candidate.schemaVersion !== schemaVersion) {
     fail('UNKNOWN_VERSION', `unsupported schemaVersion ${String(candidate.schemaVersion)}`);
   }
   if (!Object.hasOwn(candidate, 'sequence')) fail('MISSING_FIELD', "missing field 'sequence'");
@@ -577,6 +578,26 @@ export function correlateAttempt(expectedAttempt, event) {
       'ATTEMPT_CORRELATION',
       `${qualifier}attempt correlation expected ${expectedAttempt}, got ${event.attempt}`,
     );
+  }
+  return event;
+}
+
+// Shared by finite controllers whose event domains and reducers remain separate.
+export function assertNextWorkflowSequence(lastSequence, event) {
+  if (!Number.isSafeInteger(lastSequence) || lastSequence < 0) {
+    fail('INVALID_SEQUENCE', 'last sequence must be a non-negative safe integer');
+  }
+  assertCorrelationEvent(event);
+  assertPositiveInteger(event.sequence, 'event sequence');
+  const expectedSequence = lastSequence + 1;
+  if (event.sequence < expectedSequence) {
+    if (event.sequence === lastSequence) {
+      fail('DUPLICATE_IDENTITY', `duplicate sequence identity ${event.sequence}`);
+    }
+    fail('REORDERED_SEQUENCE', `reordered sequence identity ${event.sequence}; expected ${expectedSequence}`);
+  }
+  if (event.sequence > expectedSequence) {
+    fail('TRUNCATED_STREAM', `truncated stream before event ${event.sequence}; expected sequence ${expectedSequence}`);
   }
   return event;
 }
@@ -906,22 +927,7 @@ function advancedState(state, event, patch = {}) {
 }
 
 function validateSequenceAndCorrelation(state, event) {
-  const expectedSequence = state.lastSequence + 1;
-  if (event.sequence < expectedSequence) {
-    if (event.sequence === state.lastSequence) {
-      fail('DUPLICATE_IDENTITY', `duplicate sequence identity ${event.sequence}`);
-    }
-    fail(
-      'REORDERED_SEQUENCE',
-      `reordered sequence identity ${event.sequence}; expected ${expectedSequence}`,
-    );
-  }
-  if (event.sequence > expectedSequence) {
-    fail(
-      'TRUNCATED_STREAM',
-      `truncated stream before event ${event.sequence}; expected sequence ${expectedSequence}`,
-    );
-  }
+  assertNextWorkflowSequence(state.lastSequence, event);
   if (state.runId === null) {
     if (event.event !== 'RUN_STARTED') {
       fail('IMPOSSIBLE_TRANSITION', 'first event must be RUN_STARTED');

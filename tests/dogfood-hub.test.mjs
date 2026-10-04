@@ -799,6 +799,10 @@ test('standards/skills.md Conventions states the plan task-cutting criterion (di
   const section = match[1];
   assert.match(section, /`plan`[\s\S]{0,120}discover/i, "Conventions must state plan's task-cutting criterion");
   assert.match(section, /mis-cut/i, 'the criterion must name a mis-cut task');
+  const flat = section.replace(/\s+/g, ' ');
+  assert.match(flat, /vertical TDD slice: its failing test and the implementation that makes it pass share one task and its Exact paths/i,
+    'Conventions must keep each behavior task a vertical TDD slice');
+  assert.match(flat, /never plan a red-only task/i, 'Conventions must forbid a red-only plan task');
 });
 
 test('docs/inception.md documents the greenfield path end to end and stays self-sufficient', () => {
@@ -1154,4 +1158,185 @@ test('hub rules lock the planned pauses, exact output file, terse return, and ex
     assert.match(flat, /at most 15 lines/i, `${name} must cap the return`);
     assert.match(flat, /research and experiments `standard`[^.]*bootstrap parts `most-capable`/i, `${name} must name the tiers`);
   }
+});
+
+test('docs/architecture.md rows for autopilot-controller and autopilot-recovery match their public CLIs', () => {
+  const architecture = readFileSync(join(repoRoot, 'docs', 'architecture.md'), 'utf8');
+  const row = (script) => architecture.split('\n').find((line) => line.startsWith(`| \`${script}.mjs\` |`)) ?? '';
+  for (const script of ['autopilot-controller', 'autopilot-recovery']) {
+    assert.ok(existsSync(join(repoRoot, 'scripts', `${script}.mjs`)), `scripts/${script}.mjs must exist`);
+    assert.notEqual(row(script), '', `docs/architecture.md must have a ${script}.mjs row`);
+  }
+  const controller = row('autopilot-controller');
+  assert.match(controller, /the default for a fresh run[^|]*`--controller-protocol 1` still starts a legacy run[^|]*existing state keeps its recorded protocol/,
+    'the controller row must name the fresh-run default and the legacy selection');
+  assert.doesNotMatch(controller, /selected only by `--controller-protocol 2`/, 'protocol 2 no longer needs an explicit selection');
+  assert.match(controller, /captures the response before any gate/i);
+  assert.match(controller, /resumes only from durable evidence, halting on a reservation without a captured response/i);
+  const recovery = row('autopilot-recovery');
+  assert.match(recovery, /exact `recovery-input\.json`[^|]*`inspect`\/`prepare` CLI/i, 'the recovery row must name its exact input and CLI');
+  assert.match(recovery, /never rewrites the source run; the controller performs the imports/i);
+});
+
+test('the documented headless capability matrix states exactly what the descriptors the controller dispatches declare', async () => {
+  const { HEADLESS_CAPABILITIES } = await import('../adapters/headless.mjs');
+  const workflow = readFileSync(join(repoRoot, 'docs', 'workflow.md'), 'utf8');
+  assert.match(workflow, /There is no flag-only promotion: a flag alone never promotes a capability\./,
+    'a capability is promoted only by native event evidence');
+  const lines = workflow.split('\n');
+  const head = lines.findIndex((line) => line.startsWith('| Harness and mapped command |'));
+  assert.notEqual(head, -1, 'docs/workflow.md must keep the capability matrix');
+  const columns = lines[head].split('|').slice(1, -1).map((cell) => cell.trim());
+  const keys = { 'Structured baseline': 'structuredEvents', 'Agent/subagent identity': 'agentIdentity',
+    'Native session identity': 'nativeSessionIdentity', 'Native open/resume': 'nativeOpenResume',
+    'Display name': 'nativeDisplayName', 'Parent link': 'parentLink', 'Native stop': 'nativeStop' };
+  const harnesses = { 'Claude Code': 'claude', Codex: 'codex', OpenCode: 'opencode' };
+  const rows = lines.slice(head + 2).filter((line) => line.startsWith('|')).map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()));
+  assert.deepEqual(rows.map(([name]) => harnesses[name.split(' — ')[0]]), ['claude', 'codex', 'opencode']);
+  for (const row of rows) {
+    const harness = harnesses[row[0].split(' — ')[0]];
+    for (const [column, key] of Object.entries(keys)) {
+      const documented = /^(yes|unavailable|unproven)\b/.exec(row[columns.indexOf(column)])?.[1];
+      assert.equal(documented, HEADLESS_CAPABILITIES[harness][key], `${harness} ${column}`);
+    }
+  }
+});
+
+// Synthetic controller coverage is behavioral evidence only. Once a stable doc
+// names the hermetic matrix or the opt-in native driver, it must say which it is.
+test('stable docs keep the fake-harness boundary and never present synthetic controller coverage as native evidence', () => {
+  const tests = readFileSync(join(repoRoot, '.apex', 'standards', 'tests.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(tests, /Hermetic fake-harness cases may prove parser, redaction, identity, and false-PASS rejection behavior\. They cannot prove a loaded plugin, a skill invocation, generated bootstrap use, or native specialist behavior\./);
+  const markdown = (directory) => readdirSync(join(repoRoot, directory), { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isDirectory()) return markdown(join(directory, entry.name));
+    return entry.isFile() && entry.name.endsWith('.md') ? [join(directory, entry.name)] : [];
+  });
+  const stable = ['README.md', 'RELEASE.md', ...markdown('docs'), ...markdown('skills'),
+    ...stableApexMarkdownPaths().map((path) => path.slice(repoRoot.length + 1))];
+  for (const path of stable) {
+    for (const paragraph of readFileSync(join(repoRoot, path), 'utf8').split(/\n\s*\n/).map((text) => text.replace(/\s+/g, ' '))) {
+      if (/autopilot-controller-integration|fixtures\/autopilot-controller\/fake-harness/.test(paragraph)) {
+        assert.match(paragraph, /synthetic|not native evidence/i, `${path} must not present the hermetic controller matrix as native evidence`);
+      }
+      if (/native-smoke\.mjs/.test(paragraph)) {
+        assert.match(paragraph, /opt-in/i, `${path} must describe the native smoke driver as opt-in`);
+      }
+    }
+  }
+});
+
+// Task 10 promotes the controller-owned Gear-3 path into the stable docs. One
+// version vocabulary: controller protocol, writer and index protocols, and the
+// reviewer response protocol are distinct and never a bare "v3".
+test('stable docs promote controller ownership, the protocol default, and the version split', () => {
+  const flat = (path) => readFileSync(join(repoRoot, path), 'utf8').replace(/\s+/g, ' ');
+  const scripts = flat('.apex/standards/scripts.md');
+  assert.match(scripts, /a fresh run defaults to controller protocol 2 and `--controller-protocol 1` still starts a legacy run/i);
+  assert.match(scripts, /existing state keeps its recorded protocol/i);
+  assert.match(scripts, /contradictory selection[^.]*refused before any effect, with no reset and no fallback/i);
+  assert.match(scripts, /`autopilot-events\.jsonl` journal \(event schema 2\)/);
+  assert.match(scripts, /`--recovery-input[^`]*` is an explicit entry distinct from resume/);
+  assert.match(scripts, /shared `headless-runner\.mjs` runner/);
+  assert.match(scripts, /Legacy controller protocol 1 and manual drive keep dispatch in the implement skill/);
+  const conventions = flat('.apex/conventions.md');
+  const architecture = flat('docs/architecture.md');
+  for (const [name, text] of [['scripts standard', scripts], ['conventions', conventions], ['architecture', architecture]]) {
+    assert.match(text, /fresh controller runs use index protocol 2[^.]*recovery runs[^.]*index protocol 3/i, `${name} must state the index split`);
+  }
+  assert.match(conventions, /writers edit their assigned source under TDD, and every role writes its assigned report or issues artifact/i);
+  assert.match(conventions, /Roles never write state/);
+  assert.match(conventions, /legacy controller protocol 1 runs[^.]*manual drive[^.]*Gear 4 keep their own contracts; nothing migrates/i);
+  assert.match(architecture, /## Gear-3 controller protocol 2/);
+  const reviewerRow = readFileSync(join(repoRoot, 'docs', 'architecture.md'), 'utf8').split('\n')
+    .find((line) => line.startsWith('| `reviewer-response.mjs` |')) ?? '';
+  assert.match(reviewerRow, /in legacy controller protocol 1 the implement skill owns dispatch/i);
+  const autopilotRow = readFileSync(join(repoRoot, 'docs', 'architecture.md'), 'utf8').split('\n')
+    .find((line) => line.startsWith('| `autopilot.mjs` |')) ?? '';
+  assert.match(autopilotRow, /fresh run defaults to controller protocol 2/i);
+  assert.match(autopilotRow, /`log-mode: exact` under protocol 2[^|]*refused before any effect/i);
+  const skills = flat('.apex/standards/skills.md');
+  assert.match(skills, /Controller protocol 2 is the fresh-run default for Gear-3 autopilot/);
+  assert.match(skills, /Roles never write state/);
+  assert.match(skills, /each field once/i);
+  assert.match(skills, /`kind: import`\/`IMPORTED`/);
+  const adapters = flat('.apex/standards/adapters.md');
+  assert.match(adapters, /Protocol 3 selects `reviewer-response-v3\.schema\.json`[^.]*`status` and `signals` only/);
+  assert.match(adapters, /never unwraps a Markdown block or reorders lines/i);
+  assert.match(adapters, /`adapters\/headless-response\.mjs` correlates[^.]*transport provenance only/);
+  const tests = flat('.apex/standards/tests.md');
+  assert.match(tests, /locks the fresh default \(controller protocol 2/i);
+  assert.match(tests, /existing-state protocols without migration/i);
+  const workflow = readFileSync(join(repoRoot, 'docs', 'workflow.md'), 'utf8');
+  const privacy = (workflow.match(/### Privacy and retention\n([\s\S]*?)(?=\n### )/)?.[1] ?? '').replace(/\s+/g, ' ');
+  assert.match(privacy, /response records and task\/review receipts keep the terminal payload verbatim, even under `log-mode: safe`/i);
+  assert.match(privacy, /Safe-mode redaction covers only the raw, readable, and live feeds/i);
+  assert.match(privacy, /controller protocol 2[^.]*refuses `log-mode: exact` before any effect/i);
+  const glossary = readFileSync(join(repoRoot, '.apex', 'glossary.md'), 'utf8');
+  for (const term of ['Controller protocol', 'Role invocation', 'Task-result index protocol', 'Recovery input', 'Import receipt']) {
+    assert.ok(glossaryEntry(glossary, term), `glossary must define ${term}`);
+  }
+  for (const [name, text] of [['scripts', scripts], ['skills', skills], ['conventions', conventions], ['architecture', architecture]]) {
+    assert.doesNotMatch(text, /\bv3 (?:protocol|index)\b/i, `${name} must name the versioned protocol, never a bare v3`);
+  }
+});
+
+// Review fix iteration 1: legacy-only statements are scoped, and the default
+// path's missing usage ledger is a stated limitation.
+test('stable docs scope legacy-only autopilot statements and state the missing protocol-2 usage ledger', () => {
+  const read = (path) => readFileSync(join(repoRoot, path), 'utf8');
+  const flat = (text) => text.replace(/\s+/g, ' ');
+  const section = (text, heading) => text.match(new RegExp(`${heading}\\n([\\s\\S]*?)(?=\\n## )`))?.[1] ?? '';
+  const workflow = read('docs/workflow.md');
+  const chain = flat(section(workflow, '## Gear 3: the workflow chain'));
+  assert.doesNotMatch(chain, /Children write their durable report before returning the exact four-field completion envelope/);
+  assert.match(chain, /Under controller protocol 2, the fresh-run default, the controller validates each payload/);
+  assert.match(chain, /under controller protocol 2 the controller projects and verifies the index from its receipts/);
+  const live = section(workflow, '## Autopilot live observability');
+  const resume = flat(live.split(/\n\s*\n/).find((paragraph) => paragraph.includes('--resume-input')) ?? '');
+  assert.match(resume, /controller protocol 2 refuses `--resume-input` before any effect/);
+  assert.match(flat(live), /A default controller protocol 2 run writes, for each role invocation N/);
+  assert.match(flat(live), /Controller protocol 2 writes no usage ledger/);
+  assert.match(flat(section(workflow, '## Model selection')), /Under controller protocol 2, the default, no implement controller exists/);
+  const architecture = read('docs/architecture.md');
+  const boundary = flat(section(architecture, '## Autopilot live-observability boundary'));
+  assert.match(boundary, /`headless-runner\.mjs`/);
+  assert.match(boundary, /legacy Gear-3 authority sequence/);
+  assert.match(flat(section(architecture, '## Gear-3 controller protocol 2')),
+    /Controller protocol 2 writes no `resource-usage\.jsonl` usage ledger, so `scripts\/cost-report\.mjs` reports no headless usage for these runs/);
+  const scripts = read('.apex/standards/scripts.md');
+  const resumeBullet = scripts.split('\n').find((line) => line.includes('`--resume-input`') && line.includes('resumeInputs')) ?? '';
+  assert.match(resumeBullet, /^- Legacy controller protocol 1 only:/);
+  assert.match(flat(scripts), /in legacy controller protocol 1, the observational usage ledger \(controller protocol 2 writes none\)/);
+  assert.match(flat(scripts), /explicit resume inputs[^.]*refused before any effect/);
+  const conventions = flat(read('.apex/conventions.md'));
+  assert.match(conventions, /In a legacy controller protocol 1 run, what a child still authors it verifies first: implement parses its own/);
+  assert.match(conventions, /controller protocol 2 writes no usage ledger/i);
+});
+
+// Review fix iteration 2: the writer-protocol bullet scopes its legacy-only rules,
+// and the artifact-first glossary entry states each protocol's response shape.
+test('the skills standard and glossary state each protocol\'s response shape and retry path truthfully', () => {
+  const skills = readFileSync(join(repoRoot, '.apex', 'standards', 'skills.md'), 'utf8');
+  assert.match(skills, /under controller protocol 2 a reviewer returns reviewer response protocol 3 `status`\/`signals` only/);
+  assert.match(skills, /In a legacy run, valid captured NEEDS_CONTEXT\/BLOCKED can continue only through a new retry execution/);
+  assert.match(skills, /Under controller protocol 2 a writer's NEEDS_CONTEXT or BLOCKED is a terminal `RUN_HALTED`/);
+  const glossary = readFileSync(join(repoRoot, '.apex', 'glossary.md'), 'utf8');
+  const entry = (glossaryEntry(glossary, 'Artifact-first completion') ?? '').replace(/\s+/g, ' ');
+  assert.match(entry, /Manual drive and task-result protocol 1 return exactly `status`, `artifact`, `changed-paths`, and `signals`/);
+  assert.match(entry, /under task-result protocol 2, writers[^.]*return `status`, `artifact`, and `signals`/);
+  assert.match(entry, /reviewers under reviewer response protocol 3[^.]*return `status` and `signals`/);
+});
+
+test('stable docs scope the retry path and the progress ledger to legacy runs', () => {
+  const flat = (path) => readFileSync(join(repoRoot, path), 'utf8').replace(/\s+/g, ' ');
+  const conventions = flat('.apex/conventions.md');
+  assert.match(conventions, /In a legacy run, valid captured NEEDS_CONTEXT\/BLOCKED may continue in a new retry execution/);
+  assert.match(conventions, /under controller protocol 2 a writer's NEEDS_CONTEXT or BLOCKED is a terminal `RUN_HALTED`/i);
+  assert.match(conventions, /In manual drive and a legacy run, the ledger records the model used/);
+  const scripts = flat('.apex/standards/scripts.md');
+  assert.match(scripts, /The legacy resource-usage ledger is observational JSONL/);
+  assert.match(scripts, /a legacy run may continue a valid captured NEEDS_CONTEXT\/BLOCKED via an explicit retry execution/i);
+  const taskResultsRow = readFileSync(join(repoRoot, 'docs', 'architecture.md'), 'utf8').split('\n')
+    .find((line) => line.startsWith('| `task-results.mjs` |')) ?? '';
+  assert.match(taskResultsRow, /legacy runs use explicit retry executions[^|]*controller protocol 2 halts instead/i);
 });

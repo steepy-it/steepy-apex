@@ -5,6 +5,49 @@
 > conductor phase-manifest protocol, the correlated BLOCKED/DONE status-marker protocol, and the
 > task-local manifest protocol, keyed to the `SKILL.md` step it supplements.
 
+## Controller protocol 2 (default for fresh runs)
+
+Under controller protocol 2, no implement-phase child exists, so no model follows the steps below.
+`scripts/autopilot-controller.mjs` reserves, dispatches, and captures every role itself. The
+implementer and fix use `implementer-prompt.md`; the task reviewer, whole-branch reviewer, and
+their format corrections use their packaged prompts. Each role also applies `controller-role-prompt.md`.
+
+**What stays with the model.** A writer edits only its assigned source paths under TDD and writes
+its assigned report. A reviewer is read-only on source and writes its assigned review and, when
+the verdict needs it, its issues artifact. Every role returns only the closed payload its manifest
+selects. Roles never write state: no ledger, journal, status marker, reservation, receipt,
+lifecycle header, projection, or commit.
+
+**What the controller owns and verifies.**
+
+- It keeps dispatch, the durable capture of each response before any gate, task-result receipts,
+  the reviewer gate, workflow events, task commits, and READY/CONSUMED publication.
+- Writers run at their task Complexity tier. A task reviewer runs at most-capable for a design task
+  and at standard otherwise. The final review runs at most-capable when any task is design. A
+  response-only correction runs at standard.
+- A refusal before any effect journals nothing and leaves the run resumable. A gate refusal after an
+  effect is a terminal `RUN_HALTED`: the run stays halted and nothing is dispatched again. A writer's
+  or reviewer's NEEDS_CONTEXT or BLOCKED is also a terminal `RUN_HALTED`; protocol 2 has no retry
+  execution.
+- The review evidence gate binds the plan's exact surface test command and `validate-hub`, both
+  exiting 0 with no signal or spawn error, collected after the review role was reserved.
+
+**Known limitations.**
+
+- With several distinct test commands, the review manifest carries no single `testCommand`, and
+  the review skill takes one `--test-command`; the evidence gate accepts any one of the plan's
+  commands.
+- The finding-ID inventory for whole-branch fix targets is derived from the fix-target block itself,
+  because the final-review prompt has no finding-ID grammar outside that block.
+- `role-N-response.json` gained `rawDigest` under response record schema 1; that schema is
+  unreleased.
+- Controller protocol 2 writes no `resource-usage.jsonl` usage ledger, so `scripts/cost-report.mjs`
+  reports no headless usage for these runs; each role reservation records only the requested and
+  descriptor model or the degradation.
+
+Legacy controller protocol 1 (`--controller-protocol 1`, or a run whose existing status is legacy)
+keeps the phase-child protocol below unchanged.
+
 ## Step 0 — phase manifest, scalars, and correlation
 
 Read `manifest.contract.taskResultProtocol` as a pinned scalar alongside verdict/gear/drive.

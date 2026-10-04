@@ -48,9 +48,22 @@ const FAMILIES = [
   ['task-result-report', `.apex/work/tasks/${RUN}/task-1-execution-1-report.md`, 'work-output'],
   ['evidence', `.apex/work/tasks/${RUN}/evidence-report.md`, 'work-output'],
   ['review-report', `.apex/work/tasks/${RUN}/review-report.md`, 'work-output'],
+  ['autopilot-run', `.apex/work/tasks/${RUN}/autopilot-run.json`, 'work-output'],
+  ['autopilot-events', `.apex/work/tasks/${RUN}/autopilot-events.jsonl`, 'work-output'],
+  ['role-reservation', `.apex/work/tasks/${RUN}/role-1-reservation.json`, 'work-output'],
+  ['role-response', `.apex/work/tasks/${RUN}/role-1-response.json`, 'work-output'],
+  ['role-receipt', `.apex/work/tasks/${RUN}/role-1-receipt.json`, 'work-output'],
+  ['role-raw', `.apex/work/tasks/${RUN}/role-1.raw.jsonl`, 'work-output'],
+  ['role-log', `.apex/work/tasks/${RUN}/role-1.log`, 'work-output'],
+  ['task-brief', `.apex/work/tasks/${RUN}/task-1-brief.md`, 'work-output'],
+  ['task-diff', `.apex/work/tasks/${RUN}/task-1-diff.txt`, 'work-output'],
+  ['recovery-input', `.apex/work/tasks/${RUN}/recovery-input.json`, 'work-output'],
+  ['task-import', `.apex/work/tasks/${RUN}/task-1-import.json`, 'work-output'],
 ];
 const SYMLINK_FAMILIES = [
   'manifest', 'criteria', 'status', 'raw', 'ledger', 'diff', 'evidence', 'review-report', 'task-report', 'task-result', 'task-result-report',
+  'autopilot-run', 'autopilot-events', 'role-reservation', 'role-response', 'role-receipt', 'role-raw', 'role-log',
+  'task-brief', 'task-diff', 'recovery-input', 'task-import',
 ];
 const LOOP = '2026-09-03-demo-loop';
 const UUID = '12345678-1234-4234-8234-123456789abc';
@@ -104,6 +117,10 @@ test('typed grammar classifies every canonical family and never normalizes alias
   assert.equal(classifyWorkPath(`.apex/work/tasks/${RUN}/phase-2-attempt-3.log`).family, 'raw');
   assert.equal(classifyWorkPath(`.apex/work/tasks/${RUN}/phase-2-attempt-3.raw.jsonl`).family, 'raw');
   assert.equal(classifyWorkPath(`.apex/work/tasks/${RUN}/context/phase-2-attempt-3.json`).family, 'manifest');
+  assert.equal(classifyWorkPath(`.apex/work/tasks/${RUN}/context/role-1.json`).family, 'manifest');
+  for (const name of ['role-0.log', 'role-01.log', 'role-1-recovery.json', 'role-1-import.json', 'task-0-import.json']) {
+    assert.throws(() => classifyWorkPath(`.apex/work/tasks/${RUN}/${name}`), /work path/u);
+  }
 
   const base = '.apex/work/specs/demo-spec.md';
   const aliases = [
@@ -179,7 +196,6 @@ test('grammar rejects wrong-type paths for a call site and paths outside the wor
     '.apex/work',
     '.apex/work/tasks',
     `.apex/work/tasks/${RUN}`,
-    `.apex/work/tasks/${RUN}/task-1-brief.md`,
     `.apex/work/tasks/${RUN}/unknown.md`,
     '.apex/work/specs/nested/demo-spec.md',
     '.apex/work/other.md',

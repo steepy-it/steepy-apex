@@ -3,20 +3,24 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { headlessCommand } from '../adapters/headless.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const script = join(here, '..', 'scripts', 'live-scaffold-canary.mjs');
+const packageRoot = join(here, '..');
 const credentialNames = {
   claude: 'ANTHROPIC_API_KEY',
   codex: 'OPENAI_API_KEY',
@@ -100,10 +104,10 @@ process.exit(${exitCode});
 }
 
 function runDriver(run, harness, {
-  credentials = {}, output = run.output, path = run.bin, extraArgs = [],
+  credentials = {}, output = run.output, path = run.bin, extraArgs = [], scriptPath = script,
 } = {}) {
   return spawnSync(process.execPath, [
-    script,
+    scriptPath,
     '--harness', harness,
     '--output', output,
     ...extraArgs,
@@ -118,6 +122,58 @@ function runDriver(run, harness, {
     },
   });
 }
+
+test('source identity resolves a linked worktree branch with loose and packed refs when Git is hidden', () => {
+  for (const packed of [false, true]) {
+    const run = tempCase();
+    try {
+      const repository = join(run.root, 'repository');
+      const worktree = join(run.root, 'linked-worktree');
+      const branch = `canary-${packed ? 'packed' : 'loose'}`;
+      const setup = (args) => {
+        const result = spawnSync('git', args, { encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stderr);
+        return result.stdout.trim();
+      };
+      setup(['clone', '--quiet', '--no-hardlinks', packageRoot, repository]);
+      setup(['-C', repository, 'worktree', 'add', '--quiet', '-b', branch, worktree, 'HEAD']);
+      const expectedRevision = setup(['-C', worktree, 'rev-parse', '--verify', 'HEAD']);
+      const looseRef = join(repository, '.git', 'refs', 'heads', branch);
+      assert.equal(existsSync(looseRef), true);
+      if (packed) {
+        setup(['-C', repository, 'pack-refs', '--all', '--prune']);
+        assert.equal(existsSync(looseRef), false);
+        assert.match(readFileSync(join(repository, '.git', 'packed-refs'), 'utf8'),
+          new RegExp(`${expectedRevision} refs/heads/${branch}`, 'u'));
+      }
+      copyFileSync(script, join(worktree, 'scripts', 'live-scaffold-canary.mjs'));
+      assert.match(readFileSync(join(worktree, '.git'), 'utf8'), /^gitdir: /u);
+
+      const result = runDriver(run, 'pi', {
+        scriptPath: realpathSync(join(worktree, 'scripts', 'live-scaffold-canary.mjs')),
+      });
+      assert.equal(result.status, 1, result.stderr);
+      const [row] = rows(run.output);
+      assert.equal(row.verdict, 'NOT RUN');
+      assert.equal(row.reasonCode, 'runner-unavailable');
+      assert.equal(row.identity.sourceRevision, expectedRevision);
+      if (packed) {
+        const gitDir = resolve(worktree, readFileSync(join(worktree, '.git'), 'utf8').trim().slice('gitdir: '.length));
+        writeFileSync(join(gitDir, 'HEAD'), 'ref: refs/heads/unknown-revision\n');
+        const missingOutput = join(run.root, 'unknown-revision.jsonl');
+        const unknown = runDriver(run, 'pi', {
+          output: missingOutput,
+          scriptPath: realpathSync(join(worktree, 'scripts', 'live-scaffold-canary.mjs')),
+        });
+        assert.equal(unknown.status, 1);
+        assert.match(unknown.stderr, /cannot establish the checked-out source revision/u);
+        assert.equal(existsSync(missingOutput), false);
+      }
+    } finally {
+      rmSync(run.root, { recursive: true, force: true });
+    }
+  }
+});
 
 function rows(path) {
   return readFileSync(path, 'utf8').trim().split('\n').map((line) => JSON.parse(line));

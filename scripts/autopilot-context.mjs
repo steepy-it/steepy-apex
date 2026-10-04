@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import {
   existsSync, lstatSync, realpathSync, statSync,
 } from 'node:fs';
@@ -13,12 +14,15 @@ import {
   stableReadError,
 } from './stable-paths.mjs';
 import { parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
-import { parseTaskResultProjection } from './task-results.mjs';
+import { inspectTaskImport, parseTaskResultProjection } from './task-results.mjs';
+import { assertSourcePath } from './source-observation.mjs';
+import { inspectCorrectionEvidence } from './reviewer-response.mjs';
+import { materializeTaskBrief, parseExecutablePlan } from './autopilot-plan.mjs';
 
 export const CONTEXT_MANIFEST_SCHEMA_VERSION = 1;
 export const MODEL_TIERS = Object.freeze(['cheap', 'standard', 'most-capable']);
 export const PHASE_ROLES = Object.freeze(['plan', 'implement', 'review']);
-export const TASK_ROLES = Object.freeze(['implementer', 'task-reviewer', 'fix', 'final-review']);
+export const TASK_ROLES = Object.freeze(['implementer', 'task-reviewer', 'fix', 'final-review', 'task-review-correction', 'final-review-correction']);
 
 const COMPLEXITY_TIER = Object.freeze({
   mechanical: 'cheap',
@@ -50,11 +54,13 @@ const ROLE_PHASE = Object.freeze({
   'task-reviewer': 'implement',
   fix: 'implement',
   'final-review': 'implement',
+  'task-review-correction': 'implement',
+  'final-review-correction': 'implement',
 });
-const TASK_SCOPED_ROLES = new Set(['implementer', 'task-reviewer', 'fix']);
+const TASK_SCOPED_ROLES = new Set(['implementer', 'task-reviewer', 'fix', 'task-review-correction']);
 const MANIFEST_KEYS = new Set([
   'schemaVersion', 'runId', 'scope', 'objective', 'required', 'onDemand', 'outputs',
-  'modelTier', 'attempt', 'testCommand', 'criterionIds', 'contract',
+  'modelTier', 'attempt', 'testCommand', 'criterionIds', 'contract', 'recovery',
 ]);
 const SCOPE_KEYS = new Set(['phase', 'task', 'role']);
 const INPUT_KEYS = new Set(['path', 'purpose', 'read', 'bytes', 'available']);
@@ -68,6 +74,7 @@ const PURPOSES = Object.freeze({
   standard: 'implicated surface standard',
   brief: 'task contract',
   report: 'implementer report',
+  imported: 'imported task evidence',
   issue: 'reviewer issue artifact',
   taskDiff: 'current task diff',
   branchDiff: 'aggregate branch diff',
@@ -232,7 +239,117 @@ export function planPhaseContext(planText, { review = false } = {}) {
   };
 }
 
-export function reviewPhaseContext(planText, resultIndexText) {
+// Version selection is explicit. Historical plans retain the compact public
+// parser, while controller v2 needs the complete executable task contract.
+// The caller supplies modelTier separately; complexity is evidence, never an
+// implicit model identifier.
+export function controllerTaskContext({
+  controllerProtocol, planText, taskId, routingText, repoRoot, standardsBySurface,
+  specCapabilities = [], sourcePlanPath,
+}) {
+  if (controllerProtocol !== 1 && controllerProtocol !== 2) {
+    throw new Error('controllerProtocol must be 1 or 2');
+  }
+  const plan = controllerProtocol === 2
+    ? parseExecutablePlan(planText, {
+      routingText,
+      standardsBySurface: standardsBySurface ?? (repoRoot === undefined
+        ? undefined : standardsBySurfaceFromRouting(routingText, { repoRoot })),
+      specCapabilities,
+    })
+    : planPhaseContext(planText);
+  const task = plan.tasks.find((entry) => entry.task === String(taskId));
+  if (!task) throw new Error(`plan does not contain Task ${taskId}`);
+  if (controllerProtocol === 1) return { task };
+  return {
+    task,
+    brief: materializeTaskBrief(task, { sourcePlanPath }),
+    standardPaths: task.standardPaths,
+    testCommand: task.testCommand,
+    criterionIds: task.criterionIds,
+  };
+}
+
+export function writeControllerTaskBrief(input) {
+  if (input.controllerProtocol !== 2) throw new Error('controller-owned task briefs require controllerProtocol 2');
+  const context = controllerTaskContext(input);
+  const briefPath = controllerBriefPath(input.briefPath, context.task.task);
+  writeWorkPath(safeRoot(input.repoRoot), briefPath, context.brief, {
+    expect: 'work-output', family: 'task-brief', createOnly: true,
+  });
+  return { ...context, briefPath };
+}
+
+function existingBrief(repoRoot, briefPath) {
+  try {
+    return readWorkPath(safeRoot(repoRoot), briefPath, { expect: 'work-output', family: 'task-brief' });
+  } catch (error) {
+    if (/^work path: missing (?:work artifact|ancestor directory)/.test(error.message)) return null;
+    throw error;
+  }
+}
+
+function assertBriefBytes(task, briefPath, bytes, brief) {
+  if (!bytes.equals(Buffer.from(brief))) {
+    throw new Error(`Task ${task} brief drift: ${briefPath} differs from the validated plan materialization; refusing to overwrite or bind it`);
+  }
+}
+
+// Resume-safe publication: an existing brief is reused only when its bytes equal
+// the current materialization of the validated plan task. Different bytes are
+// drift; the create-only brief is never overwritten.
+export function ensureControllerTaskBrief(input) {
+  if (input.controllerProtocol !== 2) throw new Error('controller-owned task briefs require controllerProtocol 2');
+  const context = controllerTaskContext(input);
+  const briefPath = controllerBriefPath(input.briefPath, context.task.task);
+  const bytes = existingBrief(input.repoRoot, briefPath);
+  if (bytes === null) return { ...writeControllerTaskBrief(input), created: true };
+  assertBriefBytes(context.task.task, briefPath, bytes, context.brief);
+  return { ...context, briefPath, created: false };
+}
+
+function controllerBriefPath(path, task) {
+  const briefPath = parseWorkPath(path, 'work-output', 'task-brief').path;
+  if (!briefPath.endsWith(`/task-${task}-brief.md`)) {
+    throw new Error(`brief path does not match Task ${task}`);
+  }
+  return briefPath;
+}
+
+// A historical run has no controllerProtocol field; it keeps the legacy path.
+export function buildControllerTaskManifest(role, input) {
+  if (input.controllerProtocol === undefined || input.controllerProtocol === 1) return buildTaskManifest(role, input);
+  if (input.controllerProtocol !== 2) throw new Error('controllerProtocol must be 1 or 2');
+  if (!['implementer', 'task-reviewer', 'fix'].includes(role)) {
+    throw new Error(`controller task manifest does not support role ${role}`);
+  }
+  const context = controllerTaskContext(input);
+  const briefPath = controllerBriefPath(input.briefPath, context.task.task);
+  // Bind the brief on disk to this exact plan task before any manifest names it.
+  // A missing brief stays the builder's required-input error.
+  const bytes = existingBrief(input.repoRoot, briefPath);
+  if (bytes !== null) assertBriefBytes(context.task.task, briefPath, bytes, context.brief);
+  // A task reviewer names its evidence type. Imported evidence is verified
+  // before any manifest grants it, and its frozen source report is the report.
+  if (input.importPath !== undefined) {
+    if (role !== 'task-reviewer') throw new Error('only a task reviewer binds imported evidence');
+    const imported = inspectTaskImport(safeRoot(input.repoRoot), input.importPath);
+    if (imported.task !== context.task.task || imported.runId !== input.runId) throw new Error('imported evidence does not bind this task review');
+    if (input.reportPath !== imported.report.path) throw new Error('imported task review must read the imported report');
+  }
+  return buildTaskManifest(role, {
+    ...input,
+    task: Number(context.task.task),
+    standardPaths: context.standardPaths,
+    testCommand: context.testCommand,
+    criterionIds: context.criterionIds,
+    ...(role === 'task-reviewer'
+      ? { contract: { ...(input.contract ?? {}), reviewedEvidence: input.importPath === undefined ? 'execution' : 'import' } } : {}),
+  });
+}
+
+// Index protocol 3 is read only when the caller's run selected it explicitly.
+export function reviewPhaseContext(planText, resultIndexText, { taskResultIndexProtocol = 2 } = {}) {
   const plan = planPhaseContext(planText);
   const planTasks = new Map();
   for (const task of plan.tasks) {
@@ -244,7 +361,7 @@ export function reviewPhaseContext(planText, resultIndexText) {
   const reviewedIds = [];
   const seen = new Set();
   const normalizedIndex = String(resultIndexText ?? '').replace(/\r\n?/g, '\n');
-  const projection = parseTaskResultProjection(normalizedIndex);
+  const projection = parseTaskResultProjection(normalizedIndex, { protocol: taskResultIndexProtocol });
   const recordId = (id) => {
     const key = id.toLowerCase();
     if (seen.has(key)) throw new Error(`duplicate reviewed task id '${id}'`);
@@ -535,6 +652,7 @@ function commonManifest(input, { phase, role, task, objective, requiredInputs, o
   if (input.criterionIds !== undefined) manifest.criterionIds = safeStringArray(input.criterionIds, 'criterionIds');
   const contract = scalarContract(input.contract);
   if (contract !== undefined) manifest.contract = contract;
+  if (input.recovery !== undefined) manifest.recovery = input.recovery;
   return validateContextManifest(manifest, { repoRoot });
 }
 
@@ -660,6 +778,7 @@ export function buildTaskReviewerManifest(input) {
     requiredInputs: (root) => [
       required(root, input.briefPath, PURPOSES.brief),
       required(root, input.reportPath, PURPOSES.report),
+      ...(input.importPath === undefined ? [] : [required(root, input.importPath, PURPOSES.imported)]),
       required(root, input.taskDiffPath, PURPOSES.taskDiff),
       ...standards.map((path) => required(root, path, 'owning standard')),
     ],
@@ -701,6 +820,56 @@ export function buildFinalReviewManifest(input) {
   });
 }
 
+function correctionInputs(input, final) {
+  const root = safeRoot(input.repoRoot);
+  const receipt = assertSafeRelPath(input.originalReceiptPath, 'original review receipt');
+  const match = /^(\.apex\/work\/tasks\/[A-Za-z0-9][A-Za-z0-9._-]*)\/(final|task-([1-9]\d*))-review-guard-attempt-([1-9]\d*)-iteration-([1-9]\d*)-original\.json$/.exec(receipt);
+  if (!match || (final ? match[2] !== 'final' : match[3] !== String(safeInteger(input.task, 'task')))
+    || Number(match[4]) !== safeInteger(input.attempt, 'attempt')) throw new Error('original review receipt does not bind correction scope');
+  parseWorkPath(receipt, 'work-output', 'review-guard');
+  const dir = match[1];
+  const report = `${dir}/${final ? 'final' : `task-${input.task}`}-review.md`;
+  const issues = `${dir}/${final ? 'final-review' : `task-${input.task}`}-issues.md`;
+  if (input.reportPath !== report || input.issuePath !== issues) throw new Error('correction report or issue path does not bind original receipt');
+  assertCorrectionReceipt(root, receipt, { runId: input.runId, attempt: input.attempt, task: final ? 'final' : String(input.task), report, issues });
+  const paths = [receipt, report, ...(existsSync(join(root, issues)) ? [issues] : [])];
+  return paths.map((path) => {
+    const family = path === receipt ? 'review-guard' : 'review-artifact';
+    const bytes = readWorkPath(root, path, { expect: 'work-output', family });
+    return { path, purpose: path === receipt ? 'original reviewer receipt' : path === report ? PURPOSES.report : PURPOSES.issue,
+      read: 'full', bytes: bytes.length, available: true };
+  });
+}
+
+function assertCorrectionReceipt(root, path, binding, { allowCaptured = false } = {}) {
+  const state = path.slice(0, -'-original.json'.length);
+  const { config, captured } = inspectCorrectionEvidence(root, state);
+  if (config.reviewerResponseProtocol !== 3 || config.runId !== binding.runId
+    || config.attempt !== binding.attempt || config.task !== binding.task
+    || config.report !== binding.report || config.issues !== binding.issues) {
+    throw new Error('original reviewer receipt does not bind correction run, scope, or artifacts');
+  }
+  if (captured && !allowCaptured) throw new Error('captured correction must replay without another dispatch');
+}
+
+export function buildTaskReviewCorrectionManifest(input) {
+  return taskInput({ ...input, outputs: [], testCommand: undefined, criterionIds: undefined, contract: { reviewerResponseProtocol: 3 } }, {
+    role: 'task-review-correction',
+    objective: `Correct the response format for Task ${safeInteger(input.task, 'task')}`,
+    requiredInputs: () => correctionInputs(input, false),
+    onDemandInputs: () => [],
+  });
+}
+
+export function buildFinalReviewCorrectionManifest(input) {
+  return commonManifest({ ...input, outputs: [], testCommand: undefined, criterionIds: undefined, contract: { reviewerResponseProtocol: 3 } }, {
+    phase: 'implement', role: 'final-review-correction',
+    objective: 'Correct the final reviewer response format',
+    requiredInputs: () => correctionInputs(input, true),
+    onDemandInputs: () => [],
+  });
+}
+
 export function buildTaskManifest(role, input) {
   safeRole(role);
   const builders = {
@@ -708,6 +877,8 @@ export function buildTaskManifest(role, input) {
     'task-reviewer': buildTaskReviewerManifest,
     fix: buildFixManifest,
     'final-review': buildFinalReviewManifest,
+    'task-review-correction': buildTaskReviewCorrectionManifest,
+    'final-review-correction': buildFinalReviewCorrectionManifest,
   };
   if (!Object.hasOwn(builders, role)) throw new Error(`'${role}' is not a task role`);
   return builders[role](input);
@@ -872,7 +1043,7 @@ export function buildPhaseManifest(role, input) {
   return builders[role](input);
 }
 
-function validateInputEntry(entry, index, list, repoRoot) {
+function validateInputEntry(entry, index, list, repoRoot, confinedFamily = null) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
     throw new Error(`${list}[${index}] must be an object`);
   }
@@ -882,6 +1053,13 @@ function validateInputEntry(entry, index, list, repoRoot) {
   assertSafeLine(entry.purpose, `${list}[${index}].purpose`);
   const expectedRead = requiredEntry ? 'full' : 'on-demand';
   if (entry.read !== expectedRead) throw new Error(`${list}[${index}].read must be '${expectedRead}'`);
+  if (confinedFamily !== null) {
+    const bytes = readWorkPath(repoRoot, entry.path, { expect: 'work-output', family: confinedFamily });
+    if (entry.available !== true || entry.bytes !== bytes.length) {
+      throw new Error(`${list}[${index}] does not match confined work artifact`);
+    }
+    return { path: entry.path, purpose: entry.purpose, read: expectedRead, bytes: bytes.length, available: true };
+  }
   const absolute = join(repoRoot, entry.path);
   const available = existsSync(absolute) && statSync(absolute).isFile();
   if (requiredEntry && !available) throw new Error(`required input does not exist: ${entry.path}`);
@@ -899,6 +1077,38 @@ function validateInputEntry(entry, index, list, repoRoot) {
     ...(available ? { bytes: entry.bytes } : {}),
     available,
   };
+}
+
+// A recovery run's final reviewer and review phase get the delta its recovery
+// input accepted, so a branch-diff path no task changed reads as an explained
+// change. The closed declaration names this run's exact input and repeats its
+// `current.delta`, bound to the input digest the run recorded.
+const RECOVERY_DECLARING_ROLES = new Set(['final-review', 'review']);
+
+function recoveryDeclaration(root, value, { role, index, contract }) {
+  if (!RECOVERY_DECLARING_ROLES.has(role)) throw new Error('only a final-review or review manifest declares a recovery delta');
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).sort().join() !== 'delta,input') throw new Error('recovery fields must be exactly input, delta');
+  let input = null;
+  try { input = parseWorkPath(value.input, 'work-output', 'recovery-input').path; } catch { /* refused below */ }
+  if (input === null || index === undefined || dirname(input) !== dirname(index.path)) {
+    throw new Error('recovery input must be this run\'s recovery-input.json');
+  }
+  try {
+    if (!Array.isArray(value.delta)) throw new Error('not a list');
+    value.delta.forEach(assertSourcePath);
+    if (JSON.stringify([...new Set(value.delta)].sort()) !== JSON.stringify(value.delta)) throw new Error('not sorted');
+  } catch { throw new Error('recovery delta must be sorted unique source paths'); }
+  const bytes = readWorkPath(root, input, { expect: 'work-output', family: 'recovery-input' });
+  if (contract?.recoveryInputDigest !== createHash('sha256').update(bytes).digest('hex')) {
+    throw new Error('recovery input digest does not match contract.recoveryInputDigest');
+  }
+  let declared;
+  try { declared = JSON.parse(bytes.toString('utf8'))?.current?.delta; } catch { /* refused below */ }
+  if (JSON.stringify(declared) !== JSON.stringify(value.delta)) {
+    throw new Error('recovery delta does not match the recovery input current.delta');
+  }
+  return { input, delta: [...value.delta] };
 }
 
 export function validateContextManifest(manifest, { repoRoot }) {
@@ -924,7 +1134,10 @@ export function validateContextManifest(manifest, { repoRoot }) {
   }
   const objective = assertSafeLine(manifest.objective, 'objective');
   if (!Array.isArray(manifest.required) || !Array.isArray(manifest.onDemand)) throw new Error('required and onDemand must be lists');
-  const requiredInputs = manifest.required.map((entry, index) => validateInputEntry(entry, index, 'required', root));
+  const correction = role === 'task-review-correction' || role === 'final-review-correction';
+  if (correction && manifest.onDemand.length !== 0) throw new Error('correction manifest has no on-demand inputs');
+  const requiredInputs = manifest.required.map((entry, index) => validateInputEntry(entry, index, 'required', root,
+    correction ? index === 0 ? 'review-guard' : 'review-artifact' : null));
   const onDemandInputs = manifest.onDemand.map((entry, index) => validateInputEntry(entry, index, 'onDemand', root));
   const outputs = safePaths(manifest.outputs, 'output path');
   const modelTier = safeTier(manifest.modelTier);
@@ -951,10 +1164,36 @@ export function validateContextManifest(manifest, { repoRoot }) {
   if (manifest.testCommand !== undefined) normalized.testCommand = assertSafeLine(manifest.testCommand, 'testCommand');
   if (manifest.criterionIds !== undefined) normalized.criterionIds = safeStringArray(manifest.criterionIds, 'criterionIds');
   if (manifest.contract !== undefined) normalized.contract = scalarContract(manifest.contract);
+  if (manifest.recovery !== undefined) {
+    normalized.recovery = recoveryDeclaration(root, manifest.recovery, {
+      role, index: requiredInputs.find((entry) => entry.purpose === PURPOSES.resultIndex), contract: normalized.contract,
+    });
+  }
+  if (role === 'task-review-correction' || role === 'final-review-correction') {
+    const final = role === 'final-review-correction';
+    if (normalized.attempt === undefined || normalized.contract?.reviewerResponseProtocol !== 3
+      || Object.keys(normalized.contract).length !== 1 || outputs.length !== 0 || onDemandInputs.length !== 0
+      || normalized.testCommand !== undefined || normalized.criterionIds !== undefined) {
+      throw new Error('correction manifest requires protocol 3, attempt, empty outputs and no on-demand inputs');
+    }
+    const receipt = requiredInputs[0]?.path;
+    const match = /^(\.apex\/work\/tasks\/[A-Za-z0-9][A-Za-z0-9._-]*)\/(final|task-([1-9]\d*))-review-guard-attempt-([1-9]\d*)-iteration-([1-9]\d*)-original\.json$/.exec(receipt ?? '');
+    if (!match || (final ? match[2] !== 'final' : Number(match[3]) !== task)
+      || Number(match[4]) !== normalized.attempt) throw new Error('correction receipt does not bind manifest scope');
+    const dir = match[1];
+    const report = `${dir}/${final ? 'final' : `task-${task}`}-review.md`;
+    const issues = `${dir}/${final ? 'final-review' : `task-${task}`}-issues.md`;
+    if (requiredInputs.length < 2 || requiredInputs.length > 3 || requiredInputs[1].path !== report
+      || requiredInputs.length === 3 && requiredInputs[2].path !== issues) throw new Error('correction inputs must be original receipt and assigned report/issues only');
+    assertCorrectionReceipt(root, receipt, { runId: normalized.runId, attempt: normalized.attempt,
+      task: final ? 'final' : String(task), report, issues }, { allowCaptured: true });
+  }
   return normalized;
 }
 
-export function writeContextManifest(manifest, { repoRoot, manifestPath }) {
+// `createOnly` publishes an immutable controller role manifest: an existing
+// manifest is never replaced.
+export function writeContextManifest(manifest, { repoRoot, manifestPath, createOnly = false }) {
   const root = safeRoot(repoRoot);
   const path = parseWorkPath(
     assertSafeRelPath(manifestPath, 'manifest path'),
@@ -963,7 +1202,7 @@ export function writeContextManifest(manifest, { repoRoot, manifestPath }) {
   ).path;
   const normalized = validateContextManifest(manifest, { repoRoot: root });
   const json = `${JSON.stringify(normalized, null, 2)}\n`;
-  writeWorkPath(root, path, json, { expect: 'work-output', family: 'manifest' });
+  writeWorkPath(root, path, json, { expect: 'work-output', family: 'manifest', createOnly });
   return { path, bytes: Buffer.byteLength(json), manifest: normalized };
 }
 
@@ -987,7 +1226,7 @@ export function manifestReferencePrompt({ phase, manifestPath, skill, runId, att
 
 const CLI_PATH_OPTIONS = Object.freeze([
   'brief', 'report', 'task-diff', 'standard', 'hub-index', 'plan', 'spec', 'issue',
-  'criteria', 'task-result-index', 'branch-diff', 'artifact-output',
+  'criteria', 'task-result-index', 'branch-diff', 'artifact-output', 'original-receipt',
 ]);
 
 const ROLE_OPTIONS = Object.freeze({
@@ -995,6 +1234,8 @@ const ROLE_OPTIONS = Object.freeze({
   'task-reviewer': new Set(['brief', 'report', 'task-diff', 'standard', 'hub-index']),
   fix: new Set(['brief', 'issue', 'task-diff', 'standard']),
   'final-review': new Set(['criteria', 'task-result-index', 'branch-diff', 'standard']),
+  'task-review-correction': new Set(['original-receipt', 'report', 'issue']),
+  'final-review-correction': new Set(['original-receipt', 'report', 'issue']),
 });
 
 function cliInput(values, repoRoot) {
@@ -1014,6 +1255,7 @@ function cliInput(values, repoRoot) {
     runId: values['run-id'],
     modelTier: values['model-tier'],
     task: values.task === undefined ? undefined : Number(values.task),
+    attempt: values.attempt === undefined ? undefined : Number(values.attempt),
     testCommand: values['test-command'],
     criterionIds: values.criterion,
     outputs: values['artifact-output'],
@@ -1032,6 +1274,7 @@ function cliInput(values, repoRoot) {
       planPath: values.plan,
       specPath: values.spec,
       issuePath: values.issue,
+      originalReceiptPath: values['original-receipt'],
       criteriaPath: values.criteria,
       taskResultIndexPath: values['task-result-index'],
       branchDiffPath: values['branch-diff'],
@@ -1062,16 +1305,41 @@ function readRepoFile(repoRoot, path, label) {
   return readStableDocument(repoRoot, safePath, label);
 }
 
+export const CONTROLLER_ROUTING_PATH = '.apex/_INDEX.md';
+
+// The plan gate a controller-protocol-2 run applies at plan acceptance: the
+// complete executable grammar with the controller's own routing inputs, plus
+// the compact public parser that downstream review handoffs still replay.
+// The controller resolves no spec sections, so a v2 task must carry its own
+// constraints; a spec section reference is refused as a named plan error.
+export function controllerPlanContext({ repoRoot, planText }) {
+  const root = safeRoot(repoRoot);
+  const routingText = readStableDocument(root, CONTROLLER_ROUTING_PATH, 'routing index');
+  const standardsBySurface = standardsBySurfaceFromRouting(routingText, { repoRoot: root });
+  const executable = parseExecutablePlan(planText, { routingText, standardsBySurface, specCapabilities: [] });
+  const compact = planPhaseContext(planText);
+  const ids = (tasks) => tasks.map((task) => task.task).join(',');
+  if (ids(executable.tasks) !== ids(compact.tasks)) throw new Error('executable and compact plan task inventories differ');
+  return { tasks: executable.tasks, compact, routingText, standardsBySurface };
+}
+
 function verifyPlan(values) {
-  const usage = 'usage: autopilot-context.mjs --verify-plan --repo-root <root> --plan <plan-path>';
-  const accepted = new Set(['verify-plan', 'repo-root', 'plan']);
-  if (!values['repo-root'] || !values.plan || suppliedOptionsOutside(values, accepted).length > 0) {
+  const usage = 'usage: autopilot-context.mjs --verify-plan --repo-root <root> --plan <plan-path> [--controller-protocol <1|2>]';
+  const accepted = new Set(['verify-plan', 'repo-root', 'plan', 'controller-protocol']);
+  if (!values['repo-root'] || !values.plan || suppliedOptionsOutside(values, accepted).length > 0
+    || ![undefined, '1', '2'].includes(values['controller-protocol'])) {
     console.error(usage);
     return 2;
   }
   try {
     const repoRoot = safeRoot(values['repo-root']);
-    const route = planPhaseContext(readRepoFile(repoRoot, values.plan, 'plan path'));
+    const planText = readRepoFile(repoRoot, values.plan, 'plan path');
+    if (values['controller-protocol'] === '2') {
+      const { tasks } = controllerPlanContext({ repoRoot, planText });
+      console.log(`plan OK — controller protocol 2 — ${tasks.length} task(s): ${tasks.map((task) => task.task).join(', ')}`);
+      return 0;
+    }
+    const route = planPhaseContext(planText);
     console.log(`plan OK — ${route.tasks.length} task(s): ${route.tasks.map((task) => task.task).join(', ')}`);
     return 0;
   } catch (error) {
@@ -1105,7 +1373,7 @@ function verifyHandoff(values) {
 }
 
 export function main(argv = process.argv.slice(2)) {
-  const usage = 'usage: autopilot-context.mjs --role <implementer|task-reviewer|fix|final-review> --repo-root <root> --run-id <id> --model-tier <tier> --output <manifest-path> [role-specific named paths]';
+  const usage = 'usage: autopilot-context.mjs --role <implementer|task-reviewer|fix|final-review|task-review-correction|final-review-correction> --repo-root <root> --run-id <id> --model-tier <tier> --output <manifest-path> [role-specific named paths]';
   let values;
   try {
     ({ values } = parseArgs({
@@ -1118,6 +1386,7 @@ export function main(argv = process.argv.slice(2)) {
         'run-id': { type: 'string' },
         'task-result-protocol': { type: 'string' },
         task: { type: 'string' },
+        attempt: { type: 'string' },
         'model-tier': { type: 'string' },
         'test-command': { type: 'string' },
         criterion: { type: 'string', multiple: true },
@@ -1129,6 +1398,7 @@ export function main(argv = process.argv.slice(2)) {
         plan: { type: 'string' },
         spec: { type: 'string' },
         issue: { type: 'string' },
+        'original-receipt': { type: 'string' },
         criteria: { type: 'string' },
         'task-result-index': { type: 'string' },
         'branch-diff': { type: 'string' },
@@ -1136,6 +1406,7 @@ export function main(argv = process.argv.slice(2)) {
         output: { type: 'string' },
         'verify-plan': { type: 'boolean' },
         'verify-handoff': { type: 'boolean' },
+        'controller-protocol': { type: 'string' },
       },
     }));
   } catch (error) {
@@ -1149,7 +1420,8 @@ export function main(argv = process.argv.slice(2)) {
   }
   if (values['verify-plan']) return verifyPlan(values);
   if (values['verify-handoff']) return verifyHandoff(values);
-  if (!values.role || !values['repo-root'] || !values['run-id'] || !values['model-tier'] || !values.output) {
+  if (!values.role || !values['repo-root'] || !values['run-id'] || !values['model-tier'] || !values.output
+    || values['controller-protocol'] !== undefined) {
     console.error(usage);
     return 2;
   }

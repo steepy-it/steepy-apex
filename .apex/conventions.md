@@ -157,20 +157,25 @@ value, drive mode says *who pushes the button between phases*. Gear 3 only:
   The conductor derives both of those artifacts itself before the review manifest — the criteria
   from the spec's single `## Success criteria` heading, the diff from the run's recorded `BASELINE`
   commit — so the review gate never depends on a child having written derived evidence, and a
-  resumed run keeps the original baseline. What a child still authors, it verifies first: implement
-  parses its own `task-result-index.md` against the plan before claiming completion, so a malformed
-  result fails inside implement where it is fixable instead of at the review gate where it is not.
+  resumed run keeps the original baseline. In a legacy controller protocol 1 run, what a child still
+  authors it verifies first: implement parses its own `task-result-index.md` against the plan before
+  claiming completion, so a malformed result fails inside implement where it is fixable instead of
+  at the review gate where it is not. Under controller protocol 2 the controller projects the index
+  from its receipts.
   A fresh implement ledger is an absent `onDemand` resume-state entry and a declared output, not a
   required pre-spawn input. The plan phase writes to its manifest-declared output path exactly.
   A manifest's implicated standards separate two classes: an owning or per-task surface with no
   routing row is a binding error and halts, while an unregistered cross-cutting entry is advisory
-  prose, recorded once as `CONTEXT_SURFACE_IGNORED` and skipped — a word in a metadata list never
-  refuses a run.
+  prose, skipped (and recorded once as `CONTEXT_SURFACE_IGNORED` in a legacy run) — a word in a
+  metadata list never refuses a run.
   Children persist their detailed result before replying with the selected artifact-first
-  envelope (manual/legacy v1 four fields, autopilot v2 status/artifact/signals); the implement skill/controller validates it and retains only that
-  envelope until a next decision needs the durable artifact. The controller routes an effective
-  abstract tier, and adapters record concrete apply/degrade evidence. A resource-usage ledger is
-  observational only: observation identity deduplicates exact retransmissions, while measurement
+  envelope (manual/legacy v1 four fields; v2 writers status/artifact/signals; under controller
+  protocol 2, reviewers return reviewer response protocol 3 status/signals, as do the plan and
+  review roles). The controller validates every response under controller protocol 2, and the
+  implement skill does so in a legacy run; either retains only that envelope until a next decision
+  needs the durable artifact. The controller routes an effective abstract tier, and adapters record
+  concrete apply/degrade evidence. A legacy run's resource-usage ledger is observational only:
+  observation identity deduplicates exact retransmissions, while measurement
   scope independently establishes accounting eligibility. Reports sum only provably disjoint
   provider measurements; missing or unsupported scope is unknown, not zero, and an
   eligibility label is insufficient accounting evidence. Unknown-scope observations are retained,
@@ -180,9 +185,10 @@ value, drive mode says *who pushes the button between phases*. Gear 3 only:
   versions stay unknown. This restriction concerns usage accounting, not general OpenCode support.
   Interactive session-store observations are excluded from additive rollups
   without official disjoint-scope evidence. `scripts/cost-report.mjs` exposes coverage explicitly
-  without creating a work timer or fixed resource stop condition. The ledger
+  without creating a work timer or fixed resource stop condition. The legacy ledger
   also records the model used, review iterations, and escalations so policy can be tuned from real
-  runs.
+  runs; controller protocol 2 writes no usage ledger and records each role's requested and
+  descriptor model or degradation in its reservation.
 
 **Boundary rule** (workflow routing): closed design + machine-verifiable goal → gear 4;
 open design + trusted execution after the spec gate → gear 3 autopilot; otherwise → gear
@@ -193,13 +199,30 @@ degradation).
 retained legacy runs stay on 1. V2 obtains source paths from immutable execution receipts and
 projects exact JSON arrays into the task index. Child changed-paths claims are ignored raw telemetry,
 including legacy brace notation. Semantic status/artifact/signals remain mandatory and never inferred.
-The controller records the exact execution state in its authorized ledger before dispatch; deterministic
-replay follows only schema-authorized same-directory parent/previous links. These machine capabilities
-do not allow work scanning or child report preloading. A durable capture resumes review-pending without
-another implementation; baseline-only state cannot prove completion. Valid captured NEEDS_CONTEXT/BLOCKED may continue in a new retry execution after a recorded remedy, preserving partial work; malformed results and drift cannot. Fixes retain earlier report
+The implement controller of a legacy run records the exact execution state in its authorized ledger
+before dispatch, and controller protocol 2 binds its receipt path in the role reservation;
+deterministic replay follows only schema-authorized same-directory parent/previous links. These
+machine capabilities do not allow work scanning or child report preloading. A durable capture resumes review-pending without
+another implementation; baseline-only state cannot prove completion. In a legacy run, valid captured NEEDS_CONTEXT/BLOCKED may continue in a new retry execution after a recorded remedy, preserving partial work; malformed results and drift cannot. Under controller protocol 2 a writer's NEEDS_CONTEXT or BLOCKED is a terminal `RUN_HALTED`. Fixes retain earlier report
 snapshots and cumulative paths, and task approvals bind the latest execution. Final approval and phase
 acceptance require receipt replay plus every applicable task/final gate and exact phase-manifest provenance for every execution ancestor. Never fabricate historical
 baselines or silently upgrade. Manual drive and Gear 4 keep their existing contracts.
+
+**Controller-owned Gear-3 runs.** A fresh autopilot run defaults to controller protocol 2: the
+conductor's controller reserves, dispatches, and captures every role (plan, implementer, fix, task
+and whole-branch reviewers, format corrections, review) as a fresh headless session through the
+shared managed runner. What stays with the model is the judgment and its artifacts: writers edit
+their assigned source under TDD, and every role writes its assigned report or issues artifact, then
+returns a closed payload. Roles never write state. The controller verifies each response, plan,
+receipt, reviewer verdict, and the review evidence through deterministic gates, then records
+workflow events, task commits, and READY/CONSUMED publication itself. A refusal before any effect
+journals nothing; a gate refusal after an effect halts the run with `RUN_HALTED`. Versions are
+independent and selected once per run: writer task-result protocol 2 and reviewer response protocol
+3, while fresh controller runs use index protocol 2 and recovery runs use index protocol 3. An
+explicit recovery input starts a new recovery run that imports a halted legacy run's executions; an
+import is never approval. Existing legacy controller protocol 1 runs, explicit
+`--controller-protocol 1` runs, manual drive, and Gear 4 keep their own contracts; nothing migrates
+between them.
 
 **Deterministic workflow-controller foundation.** Gear-3 autopilot and any deterministic
 Gear-4 controller share the same state-safety foundation: repository-confined work-path
@@ -305,15 +328,19 @@ turns, so a mid-tier model is the floor for reviewers and for implementers worki
 The ladder is closed at three rungs: `most-capable` means its top rung, never "the best model
 the harness offers". A pricier model above that rung is outside the ladder and is never selected
 from a tier — an override to it is recorded in the ledger with its reason.
-In autopilot, the implement and review phase-controller dispatch tier is `standard` (`cheap`
-stays eligible for an all-mechanical plan, and review floors at `standard`): those phase
-children orchestrate rather than design, and per-task tiers are already applied inside the
-phase. The plan phase child is the exception — it designs, so it keeps the spec's Complexity
-binding (`most-capable` for a design-complexity spec).
+In legacy controller protocol 1 autopilot, the implement and review phase-controller dispatch tier
+is `standard` (`cheap` stays eligible for an all-mechanical plan, and review floors at `standard`):
+those phase children orchestrate rather than design, and per-task tiers are already applied inside
+the phase. The plan phase child is the exception — it designs, so it keeps the spec's Complexity
+binding (`most-capable` for a design-complexity spec). Controller protocol 2 has no implement-phase
+child: writers take their task Complexity tier, a task reviewer runs at `most-capable` for a design
+task and `standard` otherwise, the final review runs at `most-capable` when any task is design, and
+a response-only correction runs at `standard`; the plan and review roles keep the tiers above.
 The plan tags every task with a **Complexity** line (`mechanical | integration | design`);
 `implement` reads it to pick the model tier and to decide whether the task gets its own
-reviewer. The ledger records the model used, review iterations, and escalations, so the
-policy can be tuned from real runs.
+reviewer. In manual drive and a legacy run, the ledger records the model used, review iterations,
+and escalations, so the policy can be tuned from real runs; under controller protocol 2 the
+journal's role reservations and scopes carry the model and iterations.
 
 Skills stay self-contained: the per-skill Model Selection and gear-0 ("Read the gear") blocks are
 duplicated on purpose. Only one SKILL.md loads per invocation, so folding them into a shared file
