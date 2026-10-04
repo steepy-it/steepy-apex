@@ -2893,10 +2893,27 @@ test('controller protocol 2 prose states the plain-text response rows, never JSO
 
 // A native recovery run's final reviewer blocked on a branch-diff path the
 // recovery input had accepted as its explained delta, which it could not see.
+// A delta path that a task also changed still needs review of that task's edits.
+const DELTA_OVERLAP = 'A delta path explains only the change no task claims, so a task\'s own edits to that path still need review.';
+
 test('the final-review prompt reads a recovery run\'s declared delta as explained changes, not unattributed task work', () => {
   const prompt = flatSkill('implement/final-review-prompt.md');
   const sentence = 'In a recovery run, paths in the manifest\'s declared recovery delta (`manifest.recovery.delta`) are explained changes accepted by the recovery input, not unattributed task work.';
-  assert.ok(prompt.includes(sentence));
+  assert.ok(prompt.includes(`${sentence} ${DELTA_OVERLAP}`), 'the overlap rule follows the delta rule');
   const metadata = prompt.indexOf('Validate the task-result index\'s canonical grammar and its exact `source-spec`, `criteria`, and `branch-diff` metadata');
   assert.ok(metadata !== -1 && prompt.indexOf(sentence) > metadata, 'the delta rule sits beside the index validation in the reviewer prompt');
+});
+
+// The review phase reads the same branch diff, so it gets the same rule in
+// its index protocol 3 paragraph.
+test('the review skill reads a recovery run\'s declared delta as explained changes inside its index protocol 3 paragraph', () => {
+  const review = flatSkill('review/SKILL.md');
+  const sentence = 'Paths in the manifest\'s declared recovery delta (`manifest.recovery.delta`) are explained changes accepted by the recovery input, not unattributed task work or missing evidence.';
+  assert.ok(review.includes(`${sentence} ${DELTA_OVERLAP}`), 'the overlap rule follows the delta rule');
+  const start = review.indexOf('**Index protocol 3 (recovery runs).**');
+  const judge = review.indexOf('Judge the criteria from the index and branch diff as usual', start);
+  const end = review.indexOf('**Manual/no-manifest:**', start);
+  const at = review.indexOf(sentence);
+  assert.ok(start !== -1 && judge > start && end > judge, 'the index protocol 3 paragraph keeps its shape');
+  assert.ok(at > judge && at < end, 'the delta rule sits beside the criteria judgment in the index protocol 3 paragraph');
 });

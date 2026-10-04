@@ -73,7 +73,8 @@ Subagent (reviewer):
     metadata; validate the supporting paths and canonical criteria `Source`/`Heading` attribution
     without opening the plan or source spec. In a recovery run, paths in the manifest's declared
     recovery delta (`manifest.recovery.delta`) are explained changes accepted by the recovery input,
-    not unattributed task work.
+    not unattributed task work. A delta path explains only the change no task claims, so a task's
+    own edits to that path still need review.
 
     Read the aggregate diff once. Check that task interfaces compose, no task undoes another, all
     success criteria are met, and no cross-cutting problem escaped the task gates.

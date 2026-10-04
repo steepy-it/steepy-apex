@@ -472,7 +472,7 @@ test('task role builders expose exactly the approved eager inventories', (t) => 
   }, { repoRoot }), /criteria-only artifact.*is a spec path/i);
 });
 
-test('only a final-review manifest declares a recovery delta, in its closed shape bound to the run\'s recovery input', (t) => {
+test('only a final-review or review manifest declares a recovery delta, in its closed shape bound to the run\'s recovery input', (t) => {
   const repoRoot = materialize(t);
   const dir = '.apex/work/tasks/context-efficient';
   const input = `${dir}/recovery-input.json`;
@@ -501,10 +501,20 @@ test('only a final-review manifest declares a recovery delta, in its closed shap
   for (const contract of [{}, { recoveryInputDigest: '0'.repeat(64) }]) {
     assert.throws(() => validateContextManifest({ ...manifest, contract }, { repoRoot }), /recovery input digest does not match/);
   }
+  // The review phase reads the same branch diff, so it takes the same
+  // declaration under the same digest binding.
+  const review = buildReviewManifest({
+    ...base, repoRoot, criteriaPath: `${dir}/success-criteria.md`, taskResultIndexPath: `${dir}/task-result-index.md`,
+    branchDiffPath: `${dir}/branch-diff.txt`, tasks: [{ owningSurface: 'scripts' }], standardsBySurface: fixture.surfaces,
+    contract: { recoveryInputDigest }, recovery: { input, delta },
+  });
+  assert.deepEqual(review.recovery, { input, delta });
+  assert.deepEqual(validateContextManifest(review, { repoRoot }), review);
+  assert.throws(() => validateContextManifest({ ...review, contract: {} }, { repoRoot }), /recovery input digest does not match/);
   const reviewer = buildTaskReviewerManifest({ ...base, repoRoot, task: 1, briefPath: `${dir}/task-1-brief.md`,
     reportPath: `${dir}/task-1-report.md`, taskDiffPath: `${dir}/task-1.diff`, standardPaths: ['.apex/standards/scripts.md'] });
   assert.throws(() => validateContextManifest({ ...reviewer, recovery: { input, delta } }, { repoRoot }),
-    /only a final-review manifest declares a recovery delta/);
+    /only a final-review or review manifest declares a recovery delta/);
 });
 
 test('criteria materializer writes deterministic attributed criteria-only bytes', (t) => {

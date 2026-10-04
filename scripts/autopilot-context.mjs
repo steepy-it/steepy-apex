@@ -1079,12 +1079,14 @@ function validateInputEntry(entry, index, list, repoRoot, confinedFamily = null)
   };
 }
 
-// A recovery run's final reviewer gets the delta its recovery input accepted,
-// so a branch-diff path no task changed reads as an explained change. The
-// closed declaration names this run's exact input and repeats its
+// A recovery run's final reviewer and review phase get the delta its recovery
+// input accepted, so a branch-diff path no task changed reads as an explained
+// change. The closed declaration names this run's exact input and repeats its
 // `current.delta`, bound to the input digest the run recorded.
+const RECOVERY_DECLARING_ROLES = new Set(['final-review', 'review']);
+
 function recoveryDeclaration(root, value, { role, index, contract }) {
-  if (role !== 'final-review') throw new Error('only a final-review manifest declares a recovery delta');
+  if (!RECOVERY_DECLARING_ROLES.has(role)) throw new Error('only a final-review or review manifest declares a recovery delta');
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).sort().join() !== 'delta,input') throw new Error('recovery fields must be exactly input, delta');
   let input = null;

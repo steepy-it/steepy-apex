@@ -405,7 +405,8 @@ function roleRunner(repo, script = {}) {
         const manifest = JSON.parse(repo.read(request.manifestPath));
         const task = manifest.scope.task === undefined ? null : String(manifest.scope.task);
         calls.push(`${request.role}${task === null ? '' : `:${task}`}@${request.scope.iteration}`);
-        const payload = (queues[request.role]?.shift() ?? defaults[request.role])({ task, manifest });
+        const fallback = defaults[request.role];
+        const payload = (queues[request.role]?.shift() ?? fallback)({ task, manifest, fallback });
         repo.put(rawPath, `${JSON.stringify({ type: 'result', result: payload })}\n`);
         return { payload, exit: { status: 0, signal: null } };
       },
@@ -476,8 +477,9 @@ test('a recovery run imports reused evidence, reviews it, and dispatches only th
 
 // The native defect: a strict final reviewer blocked on an index without its
 // canonical metadata, and on a branch-diff path that no task changed but the
-// recovery input had declared as its explained delta.
-test('a recovery run projects canonical index metadata and hands the final reviewer its declared recovery delta', async (t) => {
+// recovery input had declared as its explained delta. The review phase reads
+// the same branch diff, so it gets the same declaration.
+test('a recovery run projects canonical index metadata and hands the final reviewer and the review phase its declared recovery delta', async (t) => {
   const repo = repository(t);
   legacyRun(repo);
   const explained = '.apex/standards/scripts.md';
@@ -495,7 +497,13 @@ test('a recovery run projects canonical index metadata and hands the final revie
     repo.put(`${DEST}/final-review.md`, '# Final review\n\nApproved.\n');
     return 'status: APPROVED\nsignals: none';
   };
-  const { runner } = roleRunner(repo, { 'final-review': [finalReview] });
+  // The review phase sees the index and branch diff its own manifest names.
+  const review = ({ manifest, fallback }) => {
+    const input = (purpose) => repo.read(manifest.required.find((entry) => entry.purpose === purpose).path);
+    seen.review = { manifest, index: input('plan and task-result index'), diff: input('aggregate branch diff') };
+    return fallback({ manifest });
+  };
+  const { runner } = roleRunner(repo, { 'final-review': [finalReview], review: [review] });
   const result = await conduct(repo, START, { controllerServices: { runner } });
   assert.equal(result.code, 0, result.err);
   assert.deepEqual(assertCanonicalIndexMetadata(repo.root, seen.indexPath, seen.index),
@@ -504,19 +512,27 @@ test('a recovery run projects canonical index metadata and hands the final revie
   assert.deepEqual(seen.verified.entries.map(({ task, kind }) => [task, kind]), [['1', 'import'], ['2', 'import'], ['3', 'execution']]);
   assert.ok(!(seen.route instanceof Error), seen.route?.message);
   assert.deepEqual(seen.route.tasks.map(({ task }) => task), ['1', '2', '3']);
-  // The final-review manifest carries the accepted delta; no other role does.
-  assert.deepEqual(seen.manifest.recovery, { input: INPUT, delta: [explained] });
-  assert.equal(seen.manifest.contract.recoveryInputDigest, sha(readFileSync(join(repo.root, INPUT))));
-  for (const event of events(repo).filter((item) => item.event === 'ROLE_RESERVED' && item.role !== 'final-review')) {
+  // The final-review and review manifests carry the accepted delta, bound to
+  // the recorded input digest; no task role does.
+  const digest = sha(readFileSync(join(repo.root, INPUT)));
+  for (const [role, manifest] of [['final-review', seen.manifest], ['review', seen.review?.manifest]]) {
+    assert.deepEqual(manifest?.recovery, { input: INPUT, delta: [explained] }, role);
+    assert.equal(manifest.contract.recoveryInputDigest, digest, role);
+  }
+  const taskRoles = events(repo).filter((item) => item.event === 'ROLE_RESERVED' && !['final-review', 'review'].includes(item.role));
+  assert.ok(taskRoles.length > 0);
+  for (const event of taskRoles) {
     assert.equal(Object.hasOwn(JSON.parse(repo.read(`${DEST}/context/role-${event.roleSequence}.json`)), 'recovery'), false, event.role);
   }
-  // Every branch-diff path is task work or the declared delta, and the delta
-  // path is exactly the one no task changed.
-  const diffPaths = [...seen.diff.matchAll(/^diff --git a\/(\S+) b\//gm)].map((match) => match[1]);
-  const attributed = new Set(parseTaskResultProjection(seen.index, { protocol: 3 }).flatMap(({ changedPaths }) => changedPaths));
-  assert.ok(diffPaths.includes(explained));
-  assert.equal(attributed.has(explained), false);
-  assert.deepEqual(diffPaths.filter((path) => !attributed.has(path) && !seen.manifest.recovery.delta.includes(path)), []);
+  // In what each reviewer received, every branch-diff path is task work or
+  // the declared delta, and the delta path is exactly the one no task changed.
+  for (const [role, { index, diff, manifest }] of [['final-review', seen], ['review', seen.review]]) {
+    const diffPaths = [...diff.matchAll(/^diff --git a\/(\S+) b\//gm)].map((match) => match[1]);
+    const attributed = new Set(parseTaskResultProjection(index, { protocol: 3 }).flatMap(({ changedPaths }) => changedPaths));
+    assert.ok(diffPaths.includes(explained), role);
+    assert.equal(attributed.has(explained), false, role);
+    assert.deepEqual(diffPaths.filter((path) => !attributed.has(path) && !manifest.recovery.delta.includes(path)), [], role);
+  }
   assertCanonicalIndexMetadata(repo.root, seen.indexPath, repo.read(seen.indexPath));
 });
 

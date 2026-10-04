@@ -208,7 +208,10 @@ signals. The import is not approval. Before this phase, the controller required 
 review in this run for every imported task, whatever its complexity, plus the whole-branch review.
 A task fixed after its import shows `kind: execution` instead; its first fix is execution 2.
 Judge the criteria from the index and branch diff as usual; do not open the import receipt or the
-source run.
+source run. Paths in the manifest's declared recovery delta (`manifest.recovery.delta`) are
+explained changes accepted by the recovery input, not unattributed task work or missing evidence.
+A delta path explains only the change no task claims, so a task's own edits to that path still
+need review.
 
 **Manual/no-manifest:** Validate the manual handoff before reading any work artifact. Regular Gear-3
 review fresh entry accepts exactly `criteria`, `task-results`, and `branch-diff` with `onDemand: none`;

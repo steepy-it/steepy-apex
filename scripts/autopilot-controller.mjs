@@ -1019,6 +1019,15 @@ function branchContract(plan) {
   };
 }
 
+// A recovery run's whole-branch diff also holds the delta its recovery input
+// accepted. The final reviewer and the review phase both read that diff, so
+// both get this declaration, never the input itself.
+function recoveryDelta(ctx) {
+  if (!ctx.recovery) return {};
+  const { delta } = loadRecoveryInput(ctx.root, ctx.paths.recoveryInput).input.current;
+  return { recovery: { input: ctx.paths.recoveryInput, delta } };
+}
+
 async function finalReview(ctx, plan, iteration) {
   const { root, paths } = ctx;
   const scope = scopeOf('final-review', null, iteration);
@@ -1035,14 +1044,12 @@ async function finalReview(ctx, plan, iteration) {
         ...indexSelection(ctx),
       });
     },
-    // A recovery run's whole-branch diff also holds the delta its recovery
-    // input accepted; the final reviewer gets that declaration, not the input.
     manifest: (roleSequence) => buildFinalReviewManifest({
       repoRoot: root, runId: ctx.state.runId, attempt: 1, modelTier: finalReviewerTier(plan),
       criteriaPath: paths.criteria, taskResultIndexPath: paths.index, branchDiffPath: paths.branchDiff,
       standardPaths: standardUnion(plan), outputs: [paths.finalReport, paths.finalIssues],
       ...(testCommand === undefined ? {} : { testCommand }), criterionIds, contract: contractFor(ctx, roleSequence),
-      ...(ctx.recovery ? { recovery: { input: paths.recoveryInput, delta: loadRecoveryInput(root, paths.recoveryInput).input.current.delta } } : {}),
+      ...recoveryDelta(ctx),
     }),
   });
 }
@@ -1212,6 +1219,7 @@ async function reviewPhase(ctx) {
         tasks: plan.tasks, standardsBySurface: plan.standardsBySurface, onUnroutedSurface: () => {},
         otherHubPaths: ['.apex/conventions.md'], outputs: [paths.evidence, paths.reviewReport],
         ...(testCommand === undefined ? {} : { testCommand }), criterionIds, contract: contractFor(ctx, roleSequence),
+        ...recoveryDelta(ctx),
       }),
     });
   }

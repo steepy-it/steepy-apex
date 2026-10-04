@@ -200,10 +200,12 @@ The controller registers one import per reused task before any other run event. 
 projects `kind: execution` and `kind: import` entries, and an import has `status: IMPORTED`. An
 import is never approval: every imported task gets a fresh import-bound review in the new run, its
 first fix is execution 2, and the whole-branch diff starts where the imported lineage started.
-That diff can also hold the delta the recovery input accepted, so a recovery run's final-review
-manifest alone carries `recovery: { input, delta }`: the exact input path and its `current.delta`,
-bound to the run's recorded input digest. In every controller run, the index starts with the
-canonical `source-spec`, `criteria`, and `branch-diff` metadata lines below its lifecycle header.
+That diff can also hold the delta the recovery input accepted. A recovery run's final-review and
+review manifests both read that diff, so both carry `recovery: { input, delta }`: the exact input
+path and its `current.delta`, bound to the run's recorded input digest. No other role's manifest
+carries it. A delta path explains only the change no task claims. In every controller run, the
+index starts with the canonical `source-spec`, `criteria`, and `branch-diff` metadata lines below
+its lifecycle header.
 
 Compatibility boundaries: legacy controller protocol 1 runs keep the one-child-per-phase driver, the
 Markdown status stream, and their recorded task-result protocol; manual drive keeps its human
