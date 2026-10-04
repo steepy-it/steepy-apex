@@ -728,8 +728,9 @@ function projectIndex(ctx, plan) {
 }
 
 // An imported task's diff always starts at the import's task baseline, so it
-// can hold later imported work and the accepted delta. Its reviewers and fixers
-// get `importLineage: true`; a fresh task's manifests stay unchanged.
+// can hold later tasks' work, imported or executed in this run, and the
+// accepted delta. Its reviewers and fixers get `importLineage: true`; a fresh
+// task's manifests stay unchanged.
 function taskBinding(ctx, plan, task, roleSequence, modelTier) {
   return {
     controllerProtocol: CONTROLLER_PROTOCOL, repoRoot: ctx.root, planText: plan.planText, taskId: task.task,

@@ -406,7 +406,7 @@ function roleRunner(repo, script = {}) {
         const task = manifest.scope.task === undefined ? null : String(manifest.scope.task);
         calls.push(`${request.role}${task === null ? '' : `:${task}`}@${request.scope.iteration}`);
         const fallback = defaults[request.role];
-        const payload = (queues[request.role]?.shift() ?? fallback)({ task, manifest, fallback });
+        const payload = (queues[request.role]?.shift() ?? fallback)({ task, manifest, fallback, prompt: request.prompt });
         repo.put(rawPath, `${JSON.stringify({ type: 'result', result: payload })}\n`);
         return { payload, exit: { status: 0, signal: null } };
       },
@@ -721,6 +721,60 @@ test('whole-branch issues on an imported task dispatch a real fix linked to the 
   const iteration2 = events(repo).filter((item) => item.event === 'ROLE_RESERVED' && item.scope.task === 1 && item.scope.iteration === 2);
   assert.deepEqual(iteration2.map(({ role, roleSequence }) => [role, JSON.parse(repo.read(`${DEST}/context/role-${roleSequence}.json`)).contract.importLineage]),
     [['fix', true], ['task-reviewer', true]]);
+});
+
+// A whole-branch fix of imported Task 1 comes after Task 2 was executed in
+// this run, so the import-based diff also holds Task 2's executed commit. The
+// lineage rule in the instructions each role is handed covers that work too.
+test('a whole-branch fix of an imported task is told its diff holds later executed work and the delta', async (t) => {
+  const repo = repository(t);
+  legacyRun(repo, { tasks: [taskSection(1), taskSection(2)], executed: [1] });
+  const explained = '.apex/standards/scripts.md';
+  repo.put(explained, `${repo.read(explained)}\nAccepted between the halted run and its recovery.\n`);
+  repo.git('commit', '-qam', 'explained standard change');
+  writeInput(repo, { reuse: ['1'], delta: [explained] });
+  await prepareRecovery(repo.root, INPUT);
+  const seen = {};
+  // Each dispatch rewrites the task diff, so read it while the role runs.
+  const capture = (role) => (args) => {
+    const diff = repo.read(args.manifest.required.find(({ purpose }) => purpose === 'current task diff').path);
+    const instructions = /Apply the packaged instructions (.+?); do not invoke/.exec(args.prompt)[1].split(' and ');
+    seen[role] = { manifest: args.manifest, instructions, paths: [...diff.matchAll(/^diff --git a\/(\S+) b\//gm)].map((match) => match[1]).sort() };
+    return args.fallback(args);
+  };
+  const finalIssues = () => {
+    repo.put(`${DEST}/final-review.md`, '# Final review\n\nIssues found.\n');
+    repo.put(`${DEST}/final-review-issues.md`, `# Final issues\n\nFinding F1: value drift.\n\nsteepy-fix-targets: v1\n\`\`\`json\n${JSON.stringify([{ task: '1', issueIds: ['F1'] }])}\n\`\`\`\n`);
+    return 'status: ISSUES_FOUND\nsignals: none';
+  };
+  // Task 1 and Task 2 are reviewed first; the third review is Task 1 after its fix.
+  const pass = (args) => args.fallback(args);
+  const { runner, calls } = roleRunner(repo, { 'final-review': [finalIssues], fix: [capture('fix')], 'task-reviewer': [pass, pass, capture('task-reviewer')] });
+  const result = await conduct(repo, START, { controllerServices: { runner } });
+  assert.equal(result.code, 0, result.err);
+  assert.deepEqual(calls, ['task-reviewer:1@1', 'implementer:2@1', 'task-reviewer:2@1', 'final-review@1', 'fix:1@2', 'task-reviewer:1@2', 'final-review@2', 'review@1']);
+  assert.deepEqual(Object.keys(seen), ['fix', 'task-reviewer']);
+  assert.deepEqual(JSON.parse(repo.read(INPUT)).current.delta, [explained]);
+  const task2 = parseTaskResultProjection(repo.read(`${DEST}/task-result-index.md`), { protocol: 3 }).find(({ task }) => task === '2');
+  assert.equal(task2.kind, 'execution', 'Task 2 was executed in this run');
+  for (const [role, { manifest, paths, instructions }] of Object.entries(seen)) {
+    assert.equal(manifest.scope.task, 1, role);
+    assert.equal(manifest.contract.importLineage, true, role);
+    assert.equal(Object.hasOwn(manifest, 'recovery'), false, role);
+    // Task 1's own work, Task 2's executed work, and the declared delta: nothing else.
+    assert.deepEqual(paths, [explained, 'src/value-1.mjs', ...task2.changedPaths].sort(), role);
+    assert.ok(paths.includes('src/value-2.mjs'), role);
+    // The lineage rule this role is handed explains later executed work too.
+    const rules = instructions.map((path) => readFileSync(path, 'utf8').replace(/\s+/g, ' '))
+      .map((text) => /When `manifest\.contract\.importLineage` is `true`.*?revert[^.]*\./.exec(text)?.[0]).filter(Boolean);
+    assert.equal(rules.length, 1, role);
+    assert.match(rules[0], /later tasks, imported or executed in this run, and the accepted recovery delta/, role);
+  }
+  const taskRoles = events(repo).filter((item) => item.event === 'ROLE_RESERVED' && !['final-review', 'review'].includes(item.role));
+  assert.ok(taskRoles.length > 0);
+  for (const event of taskRoles) {
+    assert.equal(Object.hasOwn(JSON.parse(repo.read(`${DEST}/context/role-${event.roleSequence}.json`)), 'recovery'), false, event.role);
+  }
 });
 
 test('recovery registration interrupted by another event, or a downgraded role manifest, halts the run', async (t) => {

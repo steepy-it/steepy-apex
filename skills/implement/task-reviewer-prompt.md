@@ -23,8 +23,9 @@ what it binds. The import is not approval and no legacy verdict carries over: re
 you would a fresh execution. ISSUES_FOUND sends the task to a fix, which becomes execution 2.
 When `manifest.contract.importLineage` is `true`, this task was imported. Its task diff runs from
 the import's recorded task baseline to the current working tree, in the import-bound review and in
-every review after a fix. So the diff can include later imported work and the accepted recovery
-delta. Judge only this task's brief and Exact paths, and do not ask for those changes to be reverted.
+every review after a fix. So the diff can include the work of later tasks, imported or executed in
+this run, and the accepted recovery delta. Judge only this task's brief and Exact paths, and do not
+ask for those changes to be reverted.
 When `manifest.contract.reviewerResponseProtocol` is not `3`, `manifest.contract.taskResultProtocol`
 equal to `2` takes precedence over all four-field examples below. In v2 return only `status`,
 `artifact`, `signals`, in that text order (or the same JSON keys when the controller selected JSON). Preserve the role's status and artifact
