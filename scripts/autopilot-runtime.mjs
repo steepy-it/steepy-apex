@@ -43,7 +43,8 @@ function inventory(root) {
     ordinary(start, { directory: true });
     const walk = (directory, prefix) => {
       for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name, 'en'))) {
-        if (entry.name === 'node_modules') continue;
+        // Dotfiles are operating-system or editor junk (.DS_Store, ._*, .*.swp); npm never packs them and no runtime file is one.
+        if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
         const relative = `${prefix}/${entry.name}`;
         const absolute = join(directory, entry.name);
         if (entry.isDirectory()) {
