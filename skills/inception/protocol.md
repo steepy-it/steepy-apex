@@ -145,9 +145,14 @@ An uncommitted working tree or `git: null` is valid evidence when recorded truth
 requires a commit before checkpointing.
 
 After a commit but before checkpoint creation or binding, a resumed run must compare the exact log,
-Git state, and planned inventory. Explain divergence, perform only demonstrably needed verification
-or binding, and never issue a duplicate commit, overwrite an existing record, or rebaseline unexplained
-changes. If an effect cannot be established, use the blocked stop condition in `SKILL.md`.
+Git state, and planned inventory, including newly added files. Explain divergence. If the intended
+checkpoint does not exist, complete demonstrably needed post-commit rechecks, create it from the
+planned inventory at its exact new path, and bind its path and digest. If the checkpoint exists but
+is unbound, verify its recorded file bytes, Git facts, planned inventory, and relevant checks before
+you bind its path and digest. Do not substitute an old-inventory comparison checkpoint or issue a
+duplicate commit. Never overwrite an existing record or rebaseline unexplained changes. If the
+effect, intended inventory, or exact checkpoint path cannot be established, use the blocked stop
+condition in `SKILL.md`.
 
 ```json
 {

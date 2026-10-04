@@ -193,10 +193,18 @@ listing its directory.
    file paths, Git state, and results reports before creating a truthful record. Never infer a
    successful or no-effect history, repeat an uncertain effect, or scan local areas. If the effect
    state cannot be reconciled, use the existing blocked stop condition.
-5. After reconciling the log, Git, and planned inventory, if a checkpoint was bound, record a new
-   checkpoint with the same inventory at a new exact path and compare it with the recorded one.
-   For a post-commit gap before checkpoint publication or binding, perform only demonstrated
-   rechecks and binding; never repeat a commit or create an unexplained baseline.
+5. Separate an ordinary comparison from recovery of an interrupted effect. If no effect awaits its
+   checkpoint, and a checkpoint was bound, record a new checkpoint with the same inventory at a new
+   exact path and compare it with the bound one; explain differences before continuing. For a
+   post-commit gap, first compare the exact log, Git state, and planned inventory, including new
+   files, against the bound checkpoint and the intended new checkpoint path named by the step.
+   Explain every difference; do not substitute an old-inventory comparison checkpoint. If the
+   intended checkpoint does not exist, complete demonstrably needed post-commit rechecks, create it
+   at that exact new path from the planned inventory, and bind its path and digest. If the checkpoint
+   exists but is unbound, verify its recorded file bytes, Git facts, planned inventory, and relevant
+   checks before you bind its path and digest. If the exact path, intended inventory, or effect state
+   cannot be established, use the blocked stop condition. Never repeat the commit, overwrite an
+   existing checkpoint, or create an unexplained baseline.
 6. Set `status: active` and continue in the recorded phase.
 
 ## Exit

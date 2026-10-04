@@ -56,8 +56,14 @@ without requiring a commit.
 
 If an interruption occurs after a commit but before checkpoint publication or descriptor binding,
 compare the exact log, Git state, and planned inventory on resume. Explain any divergence and
-complete only the checks, checkpoint, or binding demonstrated by those facts. Never repeat a commit,
-destructively rewrite the log or an existing checkpoint, or silently rebaseline changed files.
+complete only the checks, checkpoint, or binding demonstrated by those facts. If the intended
+checkpoint does not exist, complete demonstrably needed post-commit rechecks, create it from the
+planned inventory at its exact new path, and bind its path and digest. If the checkpoint exists but
+is unbound, verify its recorded file bytes, Git facts, planned inventory, and relevant checks before
+you bind its path and digest. Do not substitute a comparison checkpoint from the previous inventory.
+If the intended inventory or exact checkpoint path is unknown, use the blocked stop condition.
+Never repeat a commit, destructively rewrite the log or an existing checkpoint, or silently
+rebaseline changed files.
 
 An external effect with an uncertain outcome (timeout, lost connection, interrupted session) is
 reconciled: observe the real state first. Never repeat it automatically.

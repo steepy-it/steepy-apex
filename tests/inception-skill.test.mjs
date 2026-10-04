@@ -651,6 +651,32 @@ test('inception: each committed effect is rechecked before checkpoint publicatio
   assert.match(bootstrap, /(?:never|do not)[^.]*repeat[^.]*commit|(?:never|do not)[^.]*second commit/i);
 });
 
+test('inception: resume creates a missing post-commit checkpoint from the planned inventory', () => {
+  const resume = flat(section(section(read('SKILL.md'), '## Resume', '## Exit'), '5. ', '6. '));
+  assert.match(resume, /post-commit/i);
+  assert.match(resume, /intended checkpoint does not exist[^.]*rechecks[^.]*planned inventory[^.]*bind/i);
+  assert.doesNotMatch(resume, /post-commit[^.]*same inventory/i,
+    'effect recovery must not substitute a comparison checkpoint using the old bound inventory');
+  for (const file of ['bootstrap.md', 'protocol.md']) {
+    const guidance = flat(read(file));
+    assert.match(guidance, /post-commit|after a commit/i, `${file} covers the post-commit gap`);
+    assert.match(guidance, /planned inventory/i, `${file} names the intended inventory`);
+    assert.match(guidance, /checkpoint[^.]*does not exist[^.]*planned inventory[^.]*bind/i,
+      `${file} handles a missing intended checkpoint`);
+  }
+});
+
+test('inception: resume verifies an existing unbound post-commit checkpoint before binding it', () => {
+  const resume = flat(section(section(read('SKILL.md'), '## Resume', '## Exit'), '5. ', '6. '));
+  assert.match(resume, /checkpoint exists but is unbound[^.]*bytes[^.]*Git facts[^.]*inventory[^.]*checks[^.]*bind/i);
+  assert.match(resume, /(?:never|do not)[^.]*repeat[^.]*commit/i);
+  for (const file of ['bootstrap.md', 'protocol.md']) {
+    const guidance = flat(read(file));
+    assert.match(guidance, /checkpoint exists but is unbound[^.]*bytes[^.]*Git facts[^.]*inventory[^.]*checks[^.]*bind/i,
+      `${file} verifies an existing intended checkpoint before binding`);
+  }
+});
+
 test('inception: phase exits and run-file rows cover the dialogue and session changes', () => {
   const rows = tableRows(section(read('SKILL.md'), '## Phases', '## Stop'));
   const exit = (phase) => rows.find(([name]) => name === `\`${phase}\``)?.[2] ?? '';
