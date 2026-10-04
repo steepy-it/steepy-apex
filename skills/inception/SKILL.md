@@ -47,15 +47,9 @@ changed-paths: <comma-separated repo-relative paths or none>
 signals: <short IDs or none>
 ```
 
-- Reusable child briefs retain abstract tiers: research → `standard`; an isolated experiment
-  (spike) → `standard`; a bootstrap part → `most-capable`. At dispatch, the orchestrator selects
-  a supported native model alias/identifier or a registered agent with the required model through
-  the harness's native selection parameter. Never pass `standard` or `most-capable` as a native
-  model identifier unless the harness explicitly supports those values. Keep concrete model
-  identifiers out of portable briefs.
-- When per-call model selection is unavailable, use the session model and record degradation.
-  The phase report records the requested tier, the observable applied selection (or that it is
-  unobservable), and the fallback reason; never claim a selection the harness did not expose.
+- Every dispatch sets `model:` to an abstract tier, and the harness translates it to a concrete
+  model: research → `standard`; an isolated experiment (spike) → `standard`; a bootstrap part →
+  `most-capable`. Never write a concrete model name.
 - Run one child at a time. A research child may run in the background while you continue the
   dialogue with the user.
 - Never load a reference skill and never look up external documentation yourself; such lookups run
@@ -134,12 +128,7 @@ The run spans three sessions:
 
 There are two planned pauses:
 
-1. **After approval.** Prepare the approval record and log before the update sets phase `bootstrap`.
-   Write the approval record, then create the exact new
-   `.apex/inception/<run-id>/bootstrap-log.md` without overwriting an existing file, with a truthful
-   initial state that no bootstrap effects have occurred. Only then make the one update that binds
-   the approval and sets phase `bootstrap`. On retry or new approval, preserve and reconcile an
-   existing log rather than resetting it; a log alone never proves approval.
+1. **After approval.** The one update that binds the approval sets phase `bootstrap`.
 2. **After bootstrap.** The update sets phase `verification`.
 
 At each pause, do these in order:
@@ -147,8 +136,8 @@ At each pause, do these in order:
 1. Complete the descriptor update, so that a resume lands in the new phase.
 2. Wait for every running child to finish. Never pause while a child is running.
 3. Print the resume note: the descriptor path, the phase, and every run file the next phase uses.
-   After approval, include the bootstrap log, the approval record, the project documents, and the
-   research files. After bootstrap, add the bound checkpoint and the `bootstrap/<part>.md` reports.
+   After approval, that is the approval record, the project documents, and the research files. After
+   bootstrap, add the bootstrap log, the bound checkpoint, and the `bootstrap/<part>.md` reports.
 4. Recommend a new session that invokes the `inception` skill.
 5. End the turn.
 
@@ -183,25 +172,10 @@ listing its directory.
 2. If an approval is bound, check it: each project document must still match its approved digest
    (`protocol.md` → "Approval record"). A mismatch is a change after approval: ask for a targeted
    decision and record a new approval before more bootstrap.
-3. If a checkpoint is bound, check the code: first reconcile any commit/checkpoint gap under
-   step 4 before creating a comparison checkpoint, then record a new checkpoint with the same
-   inventory at a new exact path and compare it with the recorded one. Explain every difference
-   before you continue.
-4. In `reconnaissance`, `architecture`, `research`, and first `approval`, do not require or read
-   the log: its absence is normal before first bootstrap. Read the log in `bootstrap`,
-   `verification`, `init`, and `complete`, or when returning to approval after known effects,
-   only through `bootstrap-log.md` at the exact path this step names:
-   `.apex/inception/<run-id>/bootstrap-log.md`.
-   Done steps stay done. A step with an intent but no observed outcome is uncertain: reconcile
-   it by observing its real effect; never repeat it automatically.
-   For a legacy run already in `bootstrap` with no log, reconcile available file, Git, and results
-   facts through exact paths supplied by the descriptor, approved planned inventory, and current
-   step or user. Record only demonstrable history in a create-only log; never invent successful
-   or no-effect history, repeat an uncertain effect, or scan local areas. If reconciliation cannot
-   establish the effect state, use the existing blocked stop condition.
-   For a gap after commit and before checkpoint or descriptor binding, follow `bootstrap.md` →
-   "Effects and checkpoints" before creating any comparison checkpoint; explain divergence and
-   complete only demonstrable verification and binding.
+3. If a checkpoint is bound, check the code: record a new checkpoint with the same inventory at a
+   new exact path and compare it with the recorded one. Explain every difference before you continue.
+4. Read the bootstrap log. Done steps stay done. A step with an intent but no observed outcome is
+   uncertain: reconcile it by observing its real effect; never repeat it automatically.
 5. Set `status: active` and continue in the recorded phase.
 
 ## Exit

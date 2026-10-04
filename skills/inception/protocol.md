@@ -120,11 +120,7 @@ document with the digest of the bytes the user approved.
 }
 ```
 
-After writing the approval record, create the exact new
-`.apex/inception/<run-id>/bootstrap-log.md` without overwriting an existing file. Its initial state
-truthfully records that no bootstrap effects have occurred. On retry or new approval, preserve and
-reconcile an existing log; it alone never proves approval. Only then bind it and enter bootstrap
-in one update:
+Bind it and enter bootstrap in one update:
 `{"approval":{"path":"<approval-path>","sha256":"<approval-sha256>"},"phase":"bootstrap"}`.
 A project document that changes after approval no longer matches its digest. The change needs a
 targeted decision and a new approval record at a new path.
@@ -164,23 +160,6 @@ representative code. Never name files `init` writes: `.apex/**`, `AGENTS.md`, `C
   ]
 }
 ```
-
-### Effect ordering and interrupted commits
-
-The orchestrator appends intent, performs the effect once, records the observed outcome, and runs
-relevant checks. When Git policy authorizes a commit, record its intent and observed outcome; if the
-commit changes files, complete relevant post-commit rechecks before publishing a new checkpoint at
-a new exact path and binding it through `update`. Checkpoint the final observed inventory and Git
-identity, preserving prior records. Without an authorized commit, verified uncommitted working trees
-are valid; repositories without Git retain `git: null` and use the same file verification sequence.
-
-A resume after commit but before checkpoint publication or descriptor binding compares the existing
-log, current Git branch/HEAD and working tree, previous bound checkpoint if any, exact available
-results, and the approved planned inventory. Explain divergence, including commit-hook changes;
-complete only verification and binding supported by observed facts. Never duplicate a commit,
-destructively rewrite records, or silently rebaseline unexplained differences. An uncertain outcome
-uses the existing blocked stop; a missing legacy log is reconciled through `SKILL.md` → "Resume",
-with no local-area scan and no invented success or no-effect history.
 
 ## Transfer to init
 
