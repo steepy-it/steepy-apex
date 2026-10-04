@@ -16,6 +16,9 @@ manual and legacy commit-authorization instructions below remain in force for th
 write controller state or declare the assigned
 report accepted. The writer still uses `taskResultProtocol: 2` and its three-field payload. The
 controller supplies exact packaged prompts and paths; do not invoke an installed skill by name.
+When `manifest.contract.importLineage` is `true`, you are fixing an imported task. Its task diff can
+include later imported work and the accepted recovery delta. Fix only this task's issues within its
+brief and Exact paths, and do not revert those changes.
 
 Protocol selection: `manifest.contract.taskResultProtocol` equal to `2` takes precedence over
 all four-field examples below. In v2 return only `status`, `artifact`, `signals`, in that text order

@@ -584,6 +584,54 @@ test('a fix after an import is a real execution linked to the imported evidence'
   assert.deepEqual(writerRoles(repo).map(({ role }) => role), ['fix', 'implementer']);
 });
 
+// An imported task's diff stays based at the import's task baseline after a
+// fix, so its re-review and its fixer still read task 2's imported work and
+// the accepted delta. One contract fact tells both; no task role gets the
+// recovery declaration.
+test('the re-review and the fixer of an imported task carry its import lineage over the diff they read', async (t) => {
+  const repo = repository(t);
+  legacyRun(repo);
+  const explained = '.apex/standards/scripts.md';
+  repo.put(explained, `${repo.read(explained)}\nAccepted between the halted run and its recovery.\n`);
+  repo.git('commit', '-qam', 'explained standard change');
+  writeInput(repo, { delta: [explained] });
+  await prepareRecovery(repo.root, INPUT);
+  const seen = {};
+  // Each dispatch rewrites the task diff, so read it while the role runs.
+  const capture = (role) => (args) => {
+    const diff = repo.read(args.manifest.required.find(({ purpose }) => purpose === 'current task diff').path);
+    seen[role] = { manifest: args.manifest, paths: [...diff.matchAll(/^diff --git a\/(\S+) b\//gm)].map((match) => match[1]).sort() };
+    return args.fallback(args);
+  };
+  const issues = ({ task }) => {
+    repo.put(`${DEST}/task-${task}-review.md`, '# Review\n\nIssues found.\n');
+    repo.put(`${DEST}/task-${task}-issues.md`, '# Issues\n\n1. Value must change again.\n');
+    return 'status: ISSUES_FOUND\nsignals: none';
+  };
+  const { runner, calls } = roleRunner(repo, { 'task-reviewer': [issues, capture('task-reviewer')], fix: [capture('fix')] });
+  const result = await conduct(repo, START, { controllerServices: { runner } });
+  assert.equal(result.code, 0, result.err);
+  assert.deepEqual(calls.slice(0, 4), ['task-reviewer:1@1', 'fix:1@2', 'task-reviewer:1@2', 'task-reviewer:2@1']);
+  assert.deepEqual(Object.keys(seen), ['fix', 'task-reviewer']);
+  assert.deepEqual(JSON.parse(repo.read(INPUT)).current.delta, [explained]);
+  for (const [role, { manifest, paths }] of Object.entries(seen)) {
+    assert.equal(manifest.scope.task, 1, role);
+    assert.equal(manifest.contract.importLineage, true, role);
+    // Task 1's own work, task 2's imported work, and the declared delta.
+    assert.deepEqual(paths, [explained, 'src/value-1.mjs', 'src/value-2.mjs'], role);
+  }
+  assert.equal(seen['task-reviewer'].manifest.contract.reviewedEvidence, 'execution');
+  assert.equal(Object.hasOwn(seen.fix.manifest.contract, 'reviewedEvidence'), false);
+  // Every task role of an imported task carries the fact; a fresh task's do not.
+  const manifestOf = (event) => JSON.parse(repo.read(`${DEST}/context/role-${event.roleSequence}.json`));
+  const taskRoles = events(repo).filter((item) => item.event === 'ROLE_RESERVED' && !['final-review', 'review'].includes(item.role));
+  assert.deepEqual(taskRoles.map((event) => [event.role, event.scope.task, event.scope.iteration, manifestOf(event).contract.importLineage ?? null]), [
+    ['task-reviewer', 1, 1, true], ['fix', 1, 2, true], ['task-reviewer', 1, 2, true],
+    ['task-reviewer', 2, 1, true], ['implementer', 3, 1, null], ['task-reviewer', 3, 1, null]]);
+  assert.equal(manifestOf(taskRoles[0]).contract.reviewedEvidence, 'import');
+  for (const event of taskRoles) assert.equal(Object.hasOwn(manifestOf(event), 'recovery'), false, event.role);
+});
+
 for (const [point, match] of [['run-created', {}], ['recovery-imported', { task: '1' }], ['phase-reserved', {}], ['response-captured', { role: 'implementer' }]]) {
   test(`a recovery run interrupted at ${point} resumes from its journal without repeating a writer`, async (t) => {
     const repo = await recoveryRepo(t);
@@ -669,6 +717,10 @@ test('whole-branch issues on an imported task dispatch a real fix linked to the 
   assert.deepEqual(calls.slice(4), ['final-review@1', 'fix:1@2', 'task-reviewer:1@2', 'final-review@2', 'review@1']);
   assert.equal(JSON.parse(repo.read(`${DEST}/task-1-execution-2-baseline.json`)).config.previousImport, `${DEST}/task-1-import.json`);
   assert.match(repo.read(`${DEST}/task-result-index.md`), /^Reviewer gate Task 1: \S+task-1-review-guard-attempt-1-iteration-2$/m);
+  // The whole-branch fix and its re-review keep the import lineage too.
+  const iteration2 = events(repo).filter((item) => item.event === 'ROLE_RESERVED' && item.scope.task === 1 && item.scope.iteration === 2);
+  assert.deepEqual(iteration2.map(({ role, roleSequence }) => [role, JSON.parse(repo.read(`${DEST}/context/role-${roleSequence}.json`)).contract.importLineage]),
+    [['fix', true], ['task-reviewer', true]]);
 });
 
 test('recovery registration interrupted by another event, or a downgraded role manifest, halts the run', async (t) => {

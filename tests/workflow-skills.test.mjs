@@ -2917,3 +2917,28 @@ test('the review skill reads a recovery run\'s declared delta as explained chang
   assert.ok(start !== -1 && judge > start && end > judge, 'the index protocol 3 paragraph keeps its shape');
   assert.ok(at > judge && at < end, 'the delta rule sits beside the criteria judgment in the index protocol 3 paragraph');
 });
+
+// An imported task's diff starts at the import's task baseline, also after a
+// fix, so it can hold later imported work and the accepted recovery delta.
+// One contract fact tells its reviewer and its fixer; neither reverts it.
+test('the task reviewer prompt explains an imported task\'s diff in every review, not only the import-bound one', () => {
+  const prompt = flatSkill('implement/task-reviewer-prompt.md');
+  const rule = 'When `manifest.contract.importLineage` is `true`, this task was imported. Its task diff runs from the import\'s recorded task baseline to the current working tree, in the import-bound review and in every review after a fix. So the diff can include later imported work and the accepted recovery delta. Judge only this task\'s brief and Exact paths, and do not ask for those changes to be reverted.';
+  assert.ok(prompt.includes(rule), 'the widened diff rule');
+  assert.equal(prompt.split('task diff runs from the import\'s recorded task baseline').length, 2, 'the diff rule appears once');
+  const imported = prompt.indexOf('When `manifest.contract.reviewedEvidence` is `import`');
+  const fix = prompt.indexOf('ISSUES_FOUND sends the task to a fix, which becomes execution 2.');
+  const legacy = prompt.indexOf('When `manifest.contract.reviewerResponseProtocol` is not `3`');
+  const at = prompt.indexOf(rule);
+  assert.ok(imported !== -1 && fix > imported && legacy > fix, 'the import paragraph keeps its shape');
+  assert.ok(at > fix && at < legacy, 'the lineage rule follows the import paragraph, outside its import-only gate');
+});
+
+test('the implementer prompt tells the fixer of an imported task not to revert later imported work or the delta', () => {
+  const prompt = flatSkill('implement/implementer-prompt.md');
+  const rule = 'When `manifest.contract.importLineage` is `true`, you are fixing an imported task. Its task diff can include later imported work and the accepted recovery delta. Fix only this task\'s issues within its brief and Exact paths, and do not revert those changes.';
+  assert.ok(prompt.includes(rule), 'the fixer rule');
+  const at = prompt.indexOf(rule);
+  assert.ok(at > prompt.indexOf('When `manifest.contract.controllerProtocol` is `2`') && at < prompt.indexOf('Subagent (<surface>-agent):'),
+    'the rule sits with the controller protocol 2 writer rules, outside the subagent template');
+});
