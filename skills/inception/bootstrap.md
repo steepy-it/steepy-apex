@@ -17,7 +17,8 @@ comes before its consumers.
 - The child writes code only under its part's path, and writes its report.
 - You keep the bootstrap log, the checkpoints, the commits, the descriptor, and the dialogue with
   the user. Before each child, append its intent to the log. After it, append the outcome, run the
-  checks, record and bind a checkpoint, and commit when the Git policy allows.
+  checks, commit when the Git policy allows, recheck committed files if the commit changed them,
+  then record a new checkpoint and bind it. Follow "Effects and checkpoints" for this order.
 - A child never writes the descriptor, an approval, a checkpoint, the bootstrap log, a commit,
   another part's paths, or a file `init` writes.
 - When a child cannot finish: `BLOCKED` or `NEEDS_CONTEXT` → get the missing fact or ask the user,
@@ -45,8 +46,18 @@ comes before its consumers.
 
 Keep a bootstrap log at `.apex/inception/<run-id>/bootstrap-log.md`. Before each step with effects —
 install, generator, migration, external resource, deploy — append its intent. After it, append the
-observed outcome. When a step changes repository files, record a code checkpoint and bind it
-(`protocol.md` → "Code checkpoint").
+observed outcome. Run the relevant checks and record their results. If Git policy authorizes a
+commit for changed repository files, record the commit intent, make the commit, and then log its
+observed outcome. After a commit, run post-commit rechecks if it changed files, then publish a new
+checkpoint with the planned file inventory and bind it in the descriptor
+(`protocol.md` → "Code checkpoint"). Uncommitted working trees and repositories with
+`git: null` remain supported: record their observed file state and checks, then checkpoint and bind
+without requiring a commit.
+
+If an interruption occurs after a commit but before checkpoint publication or descriptor binding,
+compare the exact log, Git state, and planned inventory on resume. Explain any divergence and
+complete only the checks, checkpoint, or binding demonstrated by those facts. Never repeat a commit,
+destructively rewrite the log or an existing checkpoint, or silently rebaseline changed files.
 
 An external effect with an uncertain outcome (timeout, lost connection, interrupted session) is
 reconciled: observe the real state first. Never repeat it automatically.

@@ -30,7 +30,7 @@ directory listing never rebuilds a run.
 | `research/<topic>.md` | a research child, at the exact path you give it, or you | candidate research, an isolated experiment's result, or the pinned versions and the version review |
 | `project.md` (one or more documents) | you | the project, structured by `<engine-root>/templates/inception-project.md` |
 | `approval.json` | you, after explicit approval | the approval record |
-| `bootstrap-log.md` | you | the intent before each effect, the observed outcome after |
+| `bootstrap-log.md` | you | create-only after approval with a truthful no-bootstrap-effects initial state; then intent, observed outcome, checks, and commit evidence for each effect |
 | `bootstrap/<part>.md` | a bootstrap child, at the exact path you give it, or you | the part's report |
 | `checkpoint-<n>.json` | `inception-handoff.mjs checkpoint` | a code checkpoint |
 | `verification.md` | you | results, structured by `<engine-root>/templates/inception-verification.md` |
@@ -120,7 +120,11 @@ document with the digest of the bytes the user approved.
 }
 ```
 
-Bind it and enter bootstrap in one update:
+After writing the approval record, create the exact `.apex/inception/<run-id>/bootstrap-log.md`
+without overwriting an existing log. Record a truthful initial state that no bootstrap effect has
+run only when that is established. On retry or renewed approval, preserve and reconcile the
+existing log; its presence alone does not establish approval. Then bind the approval and enter
+bootstrap in one update:
 `{"approval":{"path":"<approval-path>","sha256":"<approval-sha256>"},"phase":"bootstrap"}`.
 A project document that changes after approval no longer matches its digest. The change needs a
 targeted decision and a new approval record at a new path.
@@ -133,8 +137,17 @@ node <engine-root>/scripts/inception-handoff.mjs checkpoint --root . --run-id <r
 
 Name every relevant path: manifests, lockfiles, command files, configuration examples, and
 representative code. Never name files `init` writes: `.apex/**`, `AGENTS.md`, `CLAUDE.md`, `.agents/`,
-`.claude/`, `.codex/`, `.opencode/`. Bind the printed `path` and `sha256` with
+`.claude/`, `.codex/`, `.opencode/`. For each effect, first log intent and observed outcome, run and
+record relevant checks, make an authorized commit if applicable, and recheck if that commit changed
+files. Only then create a new checkpoint and bind its printed `path` and `sha256` with
 `{"checkpoint":{...}}`. A checkpoint records bytes and branch/HEAD; it does not judge them.
+An uncommitted working tree or `git: null` is valid evidence when recorded truthfully; neither
+requires a commit before checkpointing.
+
+After a commit but before checkpoint creation or binding, a resumed run must compare the exact log,
+Git state, and planned inventory. Explain divergence, perform only demonstrably needed verification
+or binding, and never issue a duplicate commit, overwrite an existing record, or rebaseline unexplained
+changes. If an effect cannot be established, use the blocked stop condition in `SKILL.md`.
 
 ```json
 {

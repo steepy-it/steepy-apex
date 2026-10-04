@@ -91,7 +91,11 @@ State the limits explicitly: what the project does not cover and what is still u
    Ask for one explicit approval of the whole project. A requested change edits the documents;
    then present what changed.
 4. On explicit approval, write the approval record with the digests of the exact approved bytes
-   (`protocol.md` → "Approval record"). In one update, bind it and set phase `bootstrap`.
+   (`protocol.md` → "Approval record"). Create the exact
+   `.apex/inception/<run-id>/bootstrap-log.md` without overwriting an existing file. If new, its
+   initial state must truthfully say that no bootstrap effects have run yet. On a retry or new approval,
+   preserve and reconcile an existing log instead of resetting it; the log alone does not prove
+   approval. Then, in one update, bind the approval and set phase `bootstrap`.
 5. Pause (`SKILL.md` → "Session boundaries").
 
 The approval sets the scope. After approval, a change to database, boundaries, flows, design, deploy,
