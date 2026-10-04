@@ -21,11 +21,10 @@ import receipt (`task-N-import.json`), and the report input is the imported task
 that run; its claims are unverified, like any implementer report. Read the receipt only to confirm
 what it binds. The import is not approval and no legacy verdict carries over: review the work as
 you would a fresh execution. ISSUES_FOUND sends the task to a fix, which becomes execution 2.
-When `manifest.contract.importLineage` is `true`, this task was imported. Its task diff runs from
-the import's recorded task baseline to the current working tree, in the import-bound review and in
-every review after a fix. So the diff can include the work of later tasks, imported or executed in
-this run, and the accepted recovery delta. Judge only this task's brief and Exact paths, and do not
-ask for those changes to be reverted.
+When `manifest.contract.sharedDiff` is `true`, the task diff can include other tasks' work, earlier
+or later, imported or executed in this run, including their fixes. In a recovery run it can also
+include the accepted recovery delta. Judge only this task's brief and Exact paths, and do not ask
+for those changes to be reverted.
 When `manifest.contract.reviewerResponseProtocol` is not `3`, `manifest.contract.taskResultProtocol`
 equal to `2` takes precedence over all four-field examples below. In v2 return only `status`,
 `artifact`, `signals`, in that text order (or the same JSON keys when the controller selected JSON). Preserve the role's status and artifact

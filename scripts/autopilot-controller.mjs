@@ -727,16 +727,23 @@ function projectIndex(ctx, plan) {
     { reconciliation: true });
 }
 
-// An imported task's diff always starts at the import's task baseline, so it
-// can hold later tasks' work, imported or executed in this run, and the
-// accepted delta. Its reviewers and fixers get `importLineage: true`; a fresh
-// task's manifests stay unchanged.
+// A task role's diff can hold work its task does not own. An imported task's
+// diff starts at the import's task baseline. Once a final review exists, every
+// task role is part of its whole-branch fixes: a whole-branch fixer reads the
+// branch diff, and a later review or fix reads other tasks' later commits. A
+// recovery run can add its accepted delta. The journal decides, so a role
+// dispatched on resume gets the same fact. A fresh one-task run never shares.
+function sharedDiff(ctx, plan, task) {
+  if (!ctx.recovery && plan.tasks.length === 1) return {};
+  return importOf(ctx, task.task) !== null || finalRoles(ctx).length > 0 ? { sharedDiff: true } : {};
+}
+
 function taskBinding(ctx, plan, task, roleSequence, modelTier) {
   return {
     controllerProtocol: CONTROLLER_PROTOCOL, repoRoot: ctx.root, planText: plan.planText, taskId: task.task,
     routingText: plan.routingText, standardsBySurface: plan.standardsBySurface, sourcePlanPath: ctx.paths.plan,
     briefPath: `${ctx.paths.dir}/task-${task.task}-brief.md`, runId: ctx.state.runId, attempt: 1, modelTier,
-    contract: { ...contractFor(ctx, roleSequence), ...(importOf(ctx, task.task) === null ? {} : { importLineage: true }) },
+    contract: { ...contractFor(ctx, roleSequence), ...sharedDiff(ctx, plan, task) },
   };
 }
 

@@ -373,6 +373,54 @@ test('whole-branch issues dispatch the targeted fix, refresh its task approval, 
   assert.match(index, /^Reviewer gate final: \S+final-review-guard-attempt-1-iteration-2$/m);
 });
 
+// The shared-diff fact on every role, in dispatch order.
+const sharedDiffMatrix = (repo) => journal(repo).roles
+  .map((entry) => `${entry.role}${entry.scope.task === null ? '' : `:${entry.scope.task}`}@${entry.scope.iteration} ${manifestOf(repo, entry.roleSequence).contract?.sharedDiff ?? '-'}`);
+
+// Once a final review asks for whole-branch fixes, each fixer reads the whole
+// branch diff, and Task 2's diff holds Task 1's fix, which lands after Task
+// 2's base. Every role from then on is told; earlier roles are not.
+test('in a fresh multi-task run, whole-branch fixers and the reviews after them carry the shared-diff fact; earlier roles do not', async (t) => {
+  const repo = repository(t);
+  const finalIssues = () => {
+    repo.put(`${DIR}/final-review.md`, '# Final review\n\nIssues found.\n');
+    repo.put(`${DIR}/final-review-issues.md`, `# Final issues\n\nFinding F1: value drift.\nFinding F2: value drift.\n\nsteepy-fix-targets: v1\n\`\`\`json\n${JSON.stringify([{ task: '1', issueIds: ['F1'] }, { task: '2', issueIds: ['F2'] }])}\n\`\`\`\n`);
+    return 'status: ISSUES_FOUND\nsignals: none';
+  };
+  const { runner, calls } = scriptedRunner(repo, { tasks: [taskSection(1), taskSection(2)], script: { 'final-review': [finalIssues] } });
+  const result = await control(repo, runner);
+  assert.equal(result.code, 0, result.reason);
+  assert.deepEqual(sequence(calls), ['plan@1', 'implementer:1@1', 'task-reviewer:1@1', 'implementer:2@1', 'task-reviewer:2@1',
+    'final-review@1', 'fix:1@2', 'task-reviewer:1@2', 'fix:2@2', 'task-reviewer:2@2', 'final-review@2', 'review@1']);
+  assert.deepEqual(sharedDiffMatrix(repo), ['plan@1 -', 'implementer:1@1 -', 'task-reviewer:1@1 -', 'implementer:2@1 -', 'task-reviewer:2@1 -',
+    'final-review@1 -', 'fix:1@2 true', 'task-reviewer:1@2 true', 'fix:2@2 true', 'task-reviewer:2@2 true', 'final-review@2 -', 'review@1 -']);
+  // Task 2's last diff was written for its re-review: it holds Task 1's fix.
+  assert.deepEqual([...repo.read(`${DIR}/task-2-diff.txt`).matchAll(/^diff --git a\/(\S+) b\//gm)].map((match) => match[1]),
+    ['src/value-1.mjs', 'src/value-2.mjs']);
+});
+
+// A fresh one-task run never shares a diff, so no manifest changes.
+test('a fresh one-task run never carries the shared-diff fact, even through task-local and whole-branch fixes', async (t) => {
+  const repo = repository(t);
+  const issues = ({ task }) => {
+    repo.put(`${DIR}/task-${task}-review.md`, '# Review\n\nIssues found.\n');
+    repo.put(`${DIR}/task-${task}-issues.md`, '# Issues\n\n1. Value must change again.\n');
+    return 'status: ISSUES_FOUND\nsignals: none';
+  };
+  const finalIssues = () => {
+    repo.put(`${DIR}/final-review.md`, '# Final review\n\nIssues found.\n');
+    repo.put(`${DIR}/final-review-issues.md`, fixTargets([{ task: '1', issueIds: ['F1'] }]));
+    return 'status: ISSUES_FOUND\nsignals: none';
+  };
+  const approve = ({ task, defaults }) => defaults['task-reviewer']({ task });
+  const { runner, calls } = scriptedRunner(repo, { script: { 'task-reviewer': [issues, approve, issues], 'final-review': [finalIssues] } });
+  const result = await control(repo, runner);
+  assert.equal(result.code, 0, result.reason);
+  assert.deepEqual(sequence(calls), ['plan@1', 'implementer:1@1', 'task-reviewer:1@1', 'fix:1@2', 'task-reviewer:1@2', 'final-review@1',
+    'fix:1@3', 'task-reviewer:1@3', 'fix:1@4', 'task-reviewer:1@4', 'final-review@2', 'review@1']);
+  assert.ok(sharedDiffMatrix(repo).every((cell) => cell.endsWith(' -')), sharedDiffMatrix(repo).join(', '));
+});
+
 test('an undeclared or unmapped whole-branch finding blocks the fix', async (t) => {
   const repo = repository(t);
   const { runner, calls } = scriptedRunner(repo, {

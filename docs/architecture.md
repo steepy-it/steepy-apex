@@ -203,11 +203,13 @@ first fix is execution 2, and the whole-branch diff starts where the imported li
 That diff can also hold the delta the recovery input accepted. A recovery run's final-review and
 review manifests both read that diff, so both carry `recovery: { input, delta }`: the exact input
 path and its `current.delta`, bound to the run's recorded input digest. No other role's manifest
-carries it. A delta path explains only the change no task claims. An imported task's own diff
-starts at the import's task baseline, also after a fix, so it can hold later tasks' work, imported
-or executed in this run, and that delta. Its reviewer and fixer manifests carry
-`contract.importLineage: true` instead. In every controller run, the index starts with the
-canonical `source-spec`, `criteria`, and `branch-diff` metadata lines below its lifecycle header.
+carries it. A delta path explains only the change no task claims. A task role's own diff can also
+hold other tasks' work, and that delta. An imported task's diff starts at the import's task
+baseline, also after a fix. Once a final review asks for whole-branch fixes, each whole-branch fixer
+reads the branch diff, and each later review or fix can see other tasks' later commits, in fresh
+multi-task runs too. Those reviewer and fixer manifests carry `contract.sharedDiff: true` instead;
+a fresh one-task run never does. In every controller run, the index starts with the canonical
+`source-spec`, `criteria`, and `branch-diff` metadata lines below its lifecycle header.
 
 Compatibility boundaries: legacy controller protocol 1 runs keep the one-child-per-phase driver, the
 Markdown status stream, and their recorded task-result protocol; manual drive keeps its human

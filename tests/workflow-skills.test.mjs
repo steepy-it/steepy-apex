@@ -2918,27 +2918,36 @@ test('the review skill reads a recovery run\'s declared delta as explained chang
   assert.ok(at > judge && at < end, 'the delta rule sits beside the criteria judgment in the index protocol 3 paragraph');
 });
 
-// An imported task's diff starts at the import's task baseline, also after a
-// fix, so it can hold later tasks' work, imported or executed in this run,
-// and the accepted recovery delta. One contract fact tells its reviewer and
-// its fixer; neither reverts that work.
-test('the task reviewer prompt explains an imported task\'s diff in every review, not only the import-bound one', () => {
+// A task role's diff can hold work its task does not own: an imported task's
+// diff starts at the import's task baseline, and after a final review asks for
+// whole-branch fixes every fixer and re-review reads other tasks' commits. One
+// contract fact tells the reviewer and the fixer; neither reverts that work.
+const SHARED_GATE = 'When `manifest.contract.sharedDiff` is `true`,';
+const SHARED_WORK = 'other tasks\' work, earlier or later, imported or executed in this run, including their fixes. In a recovery run it can also include the accepted recovery delta.';
+
+test('the task reviewer prompt explains a shared task diff with one rule outside its template', () => {
   const prompt = flatSkill('implement/task-reviewer-prompt.md');
-  const rule = 'When `manifest.contract.importLineage` is `true`, this task was imported. Its task diff runs from the import\'s recorded task baseline to the current working tree, in the import-bound review and in every review after a fix. So the diff can include the work of later tasks, imported or executed in this run, and the accepted recovery delta. Judge only this task\'s brief and Exact paths, and do not ask for those changes to be reverted.';
-  assert.ok(prompt.includes(rule), 'the widened diff rule');
-  assert.equal(prompt.split('task diff runs from the import\'s recorded task baseline').length, 2, 'the diff rule appears once');
+  const rule = `${SHARED_GATE} the task diff can include ${SHARED_WORK} Judge only this task's brief and Exact paths, and do not ask for those changes to be reverted.`;
+  assert.ok(prompt.includes(rule), 'the shared-diff rule');
+  assert.equal(prompt.split(SHARED_GATE).length, 2, 'the rule appears once');
+  assert.doesNotMatch(prompt, /importLineage/);
   const imported = prompt.indexOf('When `manifest.contract.reviewedEvidence` is `import`');
   const fix = prompt.indexOf('ISSUES_FOUND sends the task to a fix, which becomes execution 2.');
   const legacy = prompt.indexOf('When `manifest.contract.reviewerResponseProtocol` is not `3`');
   const at = prompt.indexOf(rule);
   assert.ok(imported !== -1 && fix > imported && legacy > fix, 'the import paragraph keeps its shape');
-  assert.ok(at > fix && at < legacy, 'the lineage rule follows the import paragraph, outside its import-only gate');
+  assert.ok(at > fix && at < legacy, 'the rule follows the import paragraph, outside its import-only gate');
+  assert.ok(at < prompt.indexOf('Subagent (reviewer):'), 'the rule sits outside the subagent template');
 });
 
-test('the implementer prompt tells the fixer of an imported task not to revert later tasks\' work or the delta', () => {
+test('the implementer prompt tells a fixer with a shared diff, and a whole-branch fixer, what not to revert', () => {
   const prompt = flatSkill('implement/implementer-prompt.md');
-  const rule = 'When `manifest.contract.importLineage` is `true`, you are fixing an imported task. Its task diff can include the work of later tasks, imported or executed in this run, and the accepted recovery delta. Fix only this task\'s issues within its brief and Exact paths, and do not revert those changes.';
+  const rule = `${SHARED_GATE} your task diff can include ${SHARED_WORK} Fix only this task's issues within its brief and Exact paths, and do not revert those changes.`
+    + ' A whole-branch fix takes its issues from `final-review-issues.md` and reads `branch-diff.txt`, the aggregate branch diff captured for the final review.'
+    + ' Fix only the finding IDs that its `steepy-fix-targets` block maps to this task, and do not revert other changes.';
   assert.ok(prompt.includes(rule), 'the fixer rule');
+  assert.equal(prompt.split(SHARED_GATE).length, 2, 'the rule appears once');
+  assert.doesNotMatch(prompt, /importLineage/);
   const at = prompt.indexOf(rule);
   assert.ok(at > prompt.indexOf('When `manifest.contract.controllerProtocol` is `2`') && at < prompt.indexOf('Subagent (<surface>-agent):'),
     'the rule sits with the controller protocol 2 writer rules, outside the subagent template');

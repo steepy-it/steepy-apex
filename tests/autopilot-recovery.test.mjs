@@ -379,10 +379,13 @@ const evidenceReport = () => {
 };
 
 // One fresh child per role: it reads only its published manifest, writes its
-// assigned artifacts, and returns the closed role payload.
-function roleRunner(repo, script = {}) {
+// assigned artifacts, and returns the closed role payload. A script key is a
+// role (a queue of steps) or one exact call such as `task-reviewer:2@2`;
+// `observe` sees every call before its step runs.
+function roleRunner(repo, script = {}, { observe } = {}) {
   const calls = [];
-  const queues = Object.fromEntries(Object.entries(script).map(([role, steps]) => [role, [...steps]]));
+  const queues = Object.fromEntries(Object.entries(script).filter(([key]) => !key.includes('@')).map(([role, steps]) => [role, [...steps]]));
+  const exact = Object.fromEntries(Object.entries(script).filter(([key]) => key.includes('@')));
   const writer = ({ task }) => {
     repo.put(`src/value-${task}.mjs`, `export const value = ${calls.length + 10};\n`);
     repo.put(`${DEST}/task-${task}-report.md`, `# Task ${task} report\n\nRED then GREEN.\n`);
@@ -404,9 +407,12 @@ function roleRunner(repo, script = {}) {
       run: async ({ rawPath }) => {
         const manifest = JSON.parse(repo.read(request.manifestPath));
         const task = manifest.scope.task === undefined ? null : String(manifest.scope.task);
-        calls.push(`${request.role}${task === null ? '' : `:${task}`}@${request.scope.iteration}`);
+        const call = `${request.role}${task === null ? '' : `:${task}`}@${request.scope.iteration}`;
+        calls.push(call);
         const fallback = defaults[request.role];
-        const payload = (queues[request.role]?.shift() ?? fallback)({ task, manifest, fallback, prompt: request.prompt });
+        const args = { task, manifest, fallback, prompt: request.prompt, call };
+        observe?.(args);
+        const payload = (exact[call] ?? queues[request.role]?.shift() ?? fallback)(args);
         repo.put(rawPath, `${JSON.stringify({ type: 'result', result: payload })}\n`);
         return { payload, exit: { status: 0, signal: null } };
       },
@@ -586,7 +592,7 @@ test('a fix after an import is a real execution linked to the imported evidence'
 
 // An imported task's diff stays based at the import's task baseline after a
 // fix, so its re-review and its fixer still read task 2's imported work and
-// the accepted delta. One contract fact tells both; no task role gets the
+// the accepted delta. The shared-diff fact tells both; no task role gets the
 // recovery declaration.
 test('the re-review and the fixer of an imported task carry its import lineage over the diff they read', async (t) => {
   const repo = repository(t);
@@ -616,16 +622,17 @@ test('the re-review and the fixer of an imported task carry its import lineage o
   assert.deepEqual(JSON.parse(repo.read(INPUT)).current.delta, [explained]);
   for (const [role, { manifest, paths }] of Object.entries(seen)) {
     assert.equal(manifest.scope.task, 1, role);
-    assert.equal(manifest.contract.importLineage, true, role);
+    assert.equal(manifest.contract.sharedDiff, true, role);
     // Task 1's own work, task 2's imported work, and the declared delta.
     assert.deepEqual(paths, [explained, 'src/value-1.mjs', 'src/value-2.mjs'], role);
   }
   assert.equal(seen['task-reviewer'].manifest.contract.reviewedEvidence, 'execution');
   assert.equal(Object.hasOwn(seen.fix.manifest.contract, 'reviewedEvidence'), false);
-  // Every task role of an imported task carries the fact; a fresh task's do not.
+  // Every task role of an imported task carries the fact; before any final
+  // review, a residual task's roles do not.
   const manifestOf = (event) => JSON.parse(repo.read(`${DEST}/context/role-${event.roleSequence}.json`));
   const taskRoles = events(repo).filter((item) => item.event === 'ROLE_RESERVED' && !['final-review', 'review'].includes(item.role));
-  assert.deepEqual(taskRoles.map((event) => [event.role, event.scope.task, event.scope.iteration, manifestOf(event).contract.importLineage ?? null]), [
+  assert.deepEqual(taskRoles.map((event) => [event.role, event.scope.task, event.scope.iteration, manifestOf(event).contract.sharedDiff ?? null]), [
     ['task-reviewer', 1, 1, true], ['fix', 1, 2, true], ['task-reviewer', 1, 2, true],
     ['task-reviewer', 2, 1, true], ['implementer', 3, 1, null], ['task-reviewer', 3, 1, null]]);
   assert.equal(manifestOf(taskRoles[0]).contract.reviewedEvidence, 'import');
@@ -717,64 +724,162 @@ test('whole-branch issues on an imported task dispatch a real fix linked to the 
   assert.deepEqual(calls.slice(4), ['final-review@1', 'fix:1@2', 'task-reviewer:1@2', 'final-review@2', 'review@1']);
   assert.equal(JSON.parse(repo.read(`${DEST}/task-1-execution-2-baseline.json`)).config.previousImport, `${DEST}/task-1-import.json`);
   assert.match(repo.read(`${DEST}/task-result-index.md`), /^Reviewer gate Task 1: \S+task-1-review-guard-attempt-1-iteration-2$/m);
-  // The whole-branch fix and its re-review keep the import lineage too.
+  // The whole-branch fix and its re-review carry the shared-diff fact too.
   const iteration2 = events(repo).filter((item) => item.event === 'ROLE_RESERVED' && item.scope.task === 1 && item.scope.iteration === 2);
-  assert.deepEqual(iteration2.map(({ role, roleSequence }) => [role, JSON.parse(repo.read(`${DEST}/context/role-${roleSequence}.json`)).contract.importLineage]),
+  assert.deepEqual(iteration2.map(({ role, roleSequence }) => [role, JSON.parse(repo.read(`${DEST}/context/role-${roleSequence}.json`)).contract.sharedDiff]),
     [['fix', true], ['task-reviewer', true]]);
 });
 
-// A whole-branch fix of imported Task 1 comes after Task 2 was executed in
-// this run, so the import-based diff also holds Task 2's executed commit. The
-// lineage rule in the instructions each role is handed covers that work too.
-test('a whole-branch fix of an imported task is told its diff holds later executed work and the delta', async (t) => {
+// Shape (B): Task 1 was executed in the legacy run and is imported, Task 2 is
+// executed in this run, and an accepted delta was committed before recovery.
+const EXPLAINED = '.apex/standards/scripts.md';
+async function shapeB(t) {
   const repo = repository(t);
   legacyRun(repo, { tasks: [taskSection(1), taskSection(2)], executed: [1] });
-  const explained = '.apex/standards/scripts.md';
-  repo.put(explained, `${repo.read(explained)}\nAccepted between the halted run and its recovery.\n`);
+  repo.put(EXPLAINED, `${repo.read(EXPLAINED)}\nAccepted between the halted run and its recovery.\n`);
   repo.git('commit', '-qam', 'explained standard change');
-  writeInput(repo, { reuse: ['1'], delta: [explained] });
+  writeInput(repo, { reuse: ['1'], delta: [EXPLAINED] });
   await prepareRecovery(repo.root, INPUT);
+  return repo;
+}
+
+// A final review whose fix-target block maps one named finding to each task.
+const finalIssuesFor = (repo, tasks) => () => {
+  const rows = tasks.map((task, index) => ({ task, issueIds: [`F${index + 1}`] }));
+  repo.put(`${DEST}/final-review.md`, '# Final review\n\nIssues found.\n');
+  repo.put(`${DEST}/final-review-issues.md`, `# Final issues\n\n${rows.map(({ issueIds }) => `Finding ${issueIds[0]}: value drift.\n`).join('')}`
+    + `\nsteepy-fix-targets: v1\n\`\`\`json\n${JSON.stringify(rows)}\n\`\`\`\n`);
+  return 'status: ISSUES_FOUND\nsignals: none';
+};
+const taskIssues = (repo) => ({ task }) => {
+  repo.put(`${DEST}/task-${task}-review.md`, '# Review\n\nIssues found.\n');
+  repo.put(`${DEST}/task-${task}-issues.md`, '# Issues\n\n1. Value must change again.\n');
+  return 'status: ISSUES_FOUND\nsignals: none';
+};
+
+// What each task role was handed while it ran: its manifest, the paths in the
+// diff its manifest names (rewritten on every dispatch), and the shared-diff
+// rule in the packaged instructions its role prompt names.
+const SHARED_RULE = /When `manifest\.contract\.sharedDiff` is `true`,.*?(?:to be reverted\.|revert other changes\.)/;
+function handedTo(repo, seen) {
+  return ({ manifest, prompt, call }) => {
+    if (manifest.scope.task === undefined || !/^(?:fix|task-reviewer):/.test(call)) return;
+    const diff = manifest.required.find(({ purpose }) => purpose === 'current task diff').path;
+    const rules = /Apply the packaged instructions (.+?); do not invoke/.exec(prompt)[1].split(' and ')
+      .map((path) => SHARED_RULE.exec(readFileSync(path, 'utf8').replace(/\s+/g, ' '))?.[0]).filter(Boolean);
+    seen[call] = { manifest, diff, rules, paths: [...repo.read(diff).matchAll(/^diff --git a\/(\S+) b\//gm)].map((match) => match[1]).sort() };
+  };
+}
+
+// The shared-diff fact on every task role, in dispatch order; no task role
+// carries the recovery declaration.
+function sharedDiffMatrix(repo) {
+  const taskRoles = events(repo).filter((item) => item.event === 'ROLE_RESERVED' && !['final-review', 'review'].includes(item.role));
+  const manifests = taskRoles.map((event) => JSON.parse(repo.read(`${DEST}/context/role-${event.roleSequence}.json`)));
+  for (const [index, manifest] of manifests.entries()) assert.equal(Object.hasOwn(manifest, 'recovery'), false, taskRoles[index].role);
+  return taskRoles.map((event, index) => `${event.role}:${event.scope.task}@${event.scope.iteration} ${manifests[index].contract.sharedDiff ?? '-'}`);
+}
+
+// The rule a role was handed explains other tasks' work, earlier or later, and
+// the delta; a whole-branch fixer is also told how to read its branch diff.
+function assertToldShared(cell, { manifest, rules }, { wholeBranch = false } = {}) {
+  assert.equal(manifest.contract.sharedDiff, true, cell);
+  assert.equal(Object.hasOwn(manifest, 'recovery'), false, cell);
+  assert.equal(rules.length, 1, `${cell}: exactly one handed instruction file carries the rule`);
+  assert.match(rules[0], /other tasks' work, earlier or later, imported or executed in this run, including their fixes/, cell);
+  assert.match(rules[0], /accepted recovery delta/, cell);
+  if (wholeBranch) {
+    assert.match(rules[0], /aggregate branch diff captured for the final review/, cell);
+    assert.match(rules[0], /finding IDs that its `steepy-fix-targets` block maps to this task/, cell);
+  }
+}
+
+// N-1 trigger 2: the final review targets imported Task 1 after Task 2 was
+// executed in this run, so Task 1's diffs hold Task 2's executed commit.
+test('a whole-branch fix of an imported task is told its diff holds later executed work and the delta', async (t) => {
+  const repo = await shapeB(t);
   const seen = {};
-  // Each dispatch rewrites the task diff, so read it while the role runs.
-  const capture = (role) => (args) => {
-    const diff = repo.read(args.manifest.required.find(({ purpose }) => purpose === 'current task diff').path);
-    const instructions = /Apply the packaged instructions (.+?); do not invoke/.exec(args.prompt)[1].split(' and ');
-    seen[role] = { manifest: args.manifest, instructions, paths: [...diff.matchAll(/^diff --git a\/(\S+) b\//gm)].map((match) => match[1]).sort() };
-    return args.fallback(args);
-  };
-  const finalIssues = () => {
-    repo.put(`${DEST}/final-review.md`, '# Final review\n\nIssues found.\n');
-    repo.put(`${DEST}/final-review-issues.md`, `# Final issues\n\nFinding F1: value drift.\n\nsteepy-fix-targets: v1\n\`\`\`json\n${JSON.stringify([{ task: '1', issueIds: ['F1'] }])}\n\`\`\`\n`);
-    return 'status: ISSUES_FOUND\nsignals: none';
-  };
-  // Task 1 and Task 2 are reviewed first; the third review is Task 1 after its fix.
-  const pass = (args) => args.fallback(args);
-  const { runner, calls } = roleRunner(repo, { 'final-review': [finalIssues], fix: [capture('fix')], 'task-reviewer': [pass, pass, capture('task-reviewer')] });
+  const { runner, calls } = roleRunner(repo, { 'final-review@1': finalIssuesFor(repo, ['1']) }, { observe: handedTo(repo, seen) });
   const result = await conduct(repo, START, { controllerServices: { runner } });
   assert.equal(result.code, 0, result.err);
   assert.deepEqual(calls, ['task-reviewer:1@1', 'implementer:2@1', 'task-reviewer:2@1', 'final-review@1', 'fix:1@2', 'task-reviewer:1@2', 'final-review@2', 'review@1']);
-  assert.deepEqual(Object.keys(seen), ['fix', 'task-reviewer']);
-  assert.deepEqual(JSON.parse(repo.read(INPUT)).current.delta, [explained]);
   const task2 = parseTaskResultProjection(repo.read(`${DEST}/task-result-index.md`), { protocol: 3 }).find(({ task }) => task === '2');
   assert.equal(task2.kind, 'execution', 'Task 2 was executed in this run');
-  for (const [role, { manifest, paths, instructions }] of Object.entries(seen)) {
-    assert.equal(manifest.scope.task, 1, role);
-    assert.equal(manifest.contract.importLineage, true, role);
-    assert.equal(Object.hasOwn(manifest, 'recovery'), false, role);
-    // Task 1's own work, Task 2's executed work, and the declared delta: nothing else.
-    assert.deepEqual(paths, [explained, 'src/value-1.mjs', ...task2.changedPaths].sort(), role);
-    assert.ok(paths.includes('src/value-2.mjs'), role);
-    // The lineage rule this role is handed explains later executed work too.
-    const rules = instructions.map((path) => readFileSync(path, 'utf8').replace(/\s+/g, ' '))
-      .map((text) => /When `manifest\.contract\.importLineage` is `true`.*?revert[^.]*\./.exec(text)?.[0]).filter(Boolean);
-    assert.equal(rules.length, 1, role);
-    assert.match(rules[0], /later tasks, imported or executed in this run, and the accepted recovery delta/, role);
+  assert.deepEqual(task2.changedPaths, ['src/value-2.mjs']);
+  // Task 1's own work, Task 2's executed work, and the declared delta: nothing else.
+  for (const cell of ['fix:1@2', 'task-reviewer:1@2']) {
+    assert.deepEqual(seen[cell].paths, [EXPLAINED, 'src/value-1.mjs', 'src/value-2.mjs'], cell);
+    assertToldShared(cell, seen[cell], { wholeBranch: cell === 'fix:1@2' });
   }
-  const taskRoles = events(repo).filter((item) => item.event === 'ROLE_RESERVED' && !['final-review', 'review'].includes(item.role));
-  assert.ok(taskRoles.length > 0);
-  for (const event of taskRoles) {
-    assert.equal(Object.hasOwn(JSON.parse(repo.read(`${DEST}/context/role-${event.roleSequence}.json`)), 'recovery'), false, event.role);
+  assert.equal(seen['fix:1@2'].diff, `${DEST}/branch-diff.txt`);
+});
+
+// N-2a: the final review targets executed Task 2. Its whole-branch fixer
+// reads the branch diff, with the delta and Task 1's imported work.
+test('a whole-branch fix of an executed task in a recovery run is told its branch diff holds earlier imported work and the delta', async (t) => {
+  const repo = await shapeB(t);
+  const seen = {};
+  const { runner, calls } = roleRunner(repo, { 'final-review@1': finalIssuesFor(repo, ['2']) }, { observe: handedTo(repo, seen) });
+  const result = await conduct(repo, START, { controllerServices: { runner } });
+  assert.equal(result.code, 0, result.err);
+  assert.deepEqual(calls, ['task-reviewer:1@1', 'implementer:2@1', 'task-reviewer:2@1', 'final-review@1', 'fix:2@2', 'task-reviewer:2@2', 'final-review@2', 'review@1']);
+  const task2 = parseTaskResultProjection(repo.read(`${DEST}/task-result-index.md`), { protocol: 3 }).find(({ task }) => task === '2');
+  assert.equal(seen['fix:2@2'].diff, `${DEST}/branch-diff.txt`);
+  assert.deepEqual(seen['fix:2@2'].paths, [EXPLAINED, 'src/value-1.mjs', ...task2.changedPaths].sort());
+  assertToldShared('fix:2@2', seen['fix:2@2'], { wholeBranch: true });
+  assertToldShared('task-reviewer:2@2', seen['task-reviewer:2@2']);
+  assert.deepEqual(sharedDiffMatrix(repo), ['task-reviewer:1@1 true', 'implementer:2@1 -', 'task-reviewer:2@1 -', 'fix:2@2 true', 'task-reviewer:2@2 true']);
+});
+
+// N-2b: the final review targets both tasks. Task 1 settles first, so its fix
+// lands after Task 2's base, and Task 2's re-review and next fixer see it.
+test('after a whole-branch fix of both tasks, the executed task\'s re-review and task-local fixer are told their diff holds an earlier task\'s fix', async (t) => {
+  const repo = await shapeB(t);
+  const seen = {};
+  const { runner, calls } = roleRunner(repo, { 'final-review@1': finalIssuesFor(repo, ['1', '2']), 'task-reviewer:2@2': taskIssues(repo) },
+    { observe: handedTo(repo, seen) });
+  const result = await conduct(repo, START, { controllerServices: { runner } });
+  assert.equal(result.code, 0, result.err);
+  assert.deepEqual(calls, ['task-reviewer:1@1', 'implementer:2@1', 'task-reviewer:2@1', 'final-review@1', 'fix:1@2', 'task-reviewer:1@2',
+    'fix:2@2', 'task-reviewer:2@2', 'fix:2@3', 'task-reviewer:2@3', 'final-review@2', 'review@1']);
+  for (const cell of ['task-reviewer:2@2', 'fix:2@3']) {
+    assert.equal(seen[cell].diff, `${DEST}/task-2-diff.txt`, cell);
+    assert.deepEqual(seen[cell].paths, ['src/value-1.mjs', 'src/value-2.mjs'], `${cell}: Task 1's whole-branch fix is in Task 2's diff`);
+    assertToldShared(cell, seen[cell]);
   }
+  assertToldShared('fix:2@2', seen['fix:2@2'], { wholeBranch: true });
+  assert.deepEqual(sharedDiffMatrix(repo), ['task-reviewer:1@1 true', 'implementer:2@1 -', 'task-reviewer:2@1 -', 'fix:1@2 true', 'task-reviewer:1@2 true',
+    'fix:2@2 true', 'task-reviewer:2@2 true', 'fix:2@3 true', 'task-reviewer:2@3 true']);
+});
+
+// Before any final review, an executed task's diff holds only its own work, so
+// its first review, its task-local fix, and the re-review get no fact.
+test('an executed task\'s first review and task-local fix in a recovery run carry no shared-diff fact', async (t) => {
+  const repo = await shapeB(t);
+  const seen = {};
+  const { runner, calls } = roleRunner(repo, { 'task-reviewer:2@1': taskIssues(repo) }, { observe: handedTo(repo, seen) });
+  const result = await conduct(repo, START, { controllerServices: { runner } });
+  assert.equal(result.code, 0, result.err);
+  assert.deepEqual(calls, ['task-reviewer:1@1', 'implementer:2@1', 'task-reviewer:2@1', 'fix:2@2', 'task-reviewer:2@2', 'final-review@1', 'review@1']);
+  for (const cell of ['task-reviewer:2@1', 'fix:2@2', 'task-reviewer:2@2']) assert.deepEqual(seen[cell].paths, ['src/value-2.mjs'], cell);
+  assert.deepEqual(sharedDiffMatrix(repo), ['task-reviewer:1@1 true', 'implementer:2@1 -', 'task-reviewer:2@1 -', 'fix:2@2 -', 'task-reviewer:2@2 -']);
+});
+
+// The fact comes from the journal, not from the call that dispatches the role:
+// a re-review dispatched on resume after a whole-branch fix still carries it.
+test('a re-review dispatched on resume after a whole-branch fix still carries the shared-diff fact', async (t) => {
+  const repo = await shapeB(t);
+  const crash = (at, detail) => { if (at === 'result-accepted' && detail.role === 'fix') throw new Error('simulated crash'); };
+  const first = roleRunner(repo, { 'final-review@1': finalIssuesFor(repo, ['2']) });
+  const crashed = await conduct(repo, START, { controllerServices: { runner: first.runner, crash } });
+  assert.equal(crashed.code, 1);
+  assert.deepEqual(first.calls.slice(-2), ['final-review@1', 'fix:2@2']);
+  const seen = {};
+  const resumed = roleRunner(repo, {}, { observe: handedTo(repo, seen) });
+  const result = await conduct(repo, [NEW_SPEC], { controllerServices: { runner: resumed.runner } });
+  assert.equal(result.code, 0, result.err);
+  assert.equal(resumed.calls[0], 'task-reviewer:2@2', 'the resumed run dispatches the re-review first');
+  assertToldShared('task-reviewer:2@2', seen['task-reviewer:2@2']);
 });
 
 test('recovery registration interrupted by another event, or a downgraded role manifest, halts the run', async (t) => {

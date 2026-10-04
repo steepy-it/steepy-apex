@@ -16,9 +16,12 @@ manual and legacy commit-authorization instructions below remain in force for th
 write controller state or declare the assigned
 report accepted. The writer still uses `taskResultProtocol: 2` and its three-field payload. The
 controller supplies exact packaged prompts and paths; do not invoke an installed skill by name.
-When `manifest.contract.importLineage` is `true`, you are fixing an imported task. Its task diff can
-include the work of later tasks, imported or executed in this run, and the accepted recovery delta.
-Fix only this task's issues within its brief and Exact paths, and do not revert those changes.
+When `manifest.contract.sharedDiff` is `true`, your task diff can include other tasks' work, earlier
+or later, imported or executed in this run, including their fixes. In a recovery run it can also
+include the accepted recovery delta. Fix only this task's issues within its brief and Exact paths,
+and do not revert those changes. A whole-branch fix takes its issues from `final-review-issues.md`
+and reads `branch-diff.txt`, the aggregate branch diff captured for the final review. Fix only the
+finding IDs that its `steepy-fix-targets` block maps to this task, and do not revert other changes.
 
 Protocol selection: `manifest.contract.taskResultProtocol` equal to `2` takes precedence over
 all four-field examples below. In v2 return only `status`, `artifact`, `signals`, in that text order
