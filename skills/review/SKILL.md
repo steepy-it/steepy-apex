@@ -116,8 +116,7 @@ Publication is ordered: record the phase's applicable approval and verification 
 publish output READY by per-file atomic replacement, then consume the input by per-file atomic
 replacement. This is not a multi-file atomic operation; READY/READY is its sole verified intermediate
 prefix. Resume repairs no other state and never repeats completed work or release actions.
-Manual enforcement is model-based: no manual parser, manifest or validator is introduced.
-The content tests check this documented contract, not deterministic enforcement by a model.
+In manual drive you are the enforcement: no parser, manifest, or validator checks this contract.
 <!-- steepy:manual-handoff:v1:end -->
 
 # review
@@ -155,7 +154,7 @@ consult it only for a concrete named missing fact and record the read in the rev
 report. Phase-manifest authority applies only when `drive: autopilot`; manual-drive discovery remains
 Step 1's behavior.
 
-Autopilot status timestamps must use UTC with three millisecond digits (`YYYY-MM-DDTHH:mm:ss.sssZ`), generated with `new Date().toISOString()`. The reader also accepts whole-second UTC timestamps (`YYYY-MM-DDTHH:mm:ssZ`) for compatibility.
+Autopilot status timestamps must use UTC with three millisecond digits (`YYYY-MM-DDTHH:mm:ss.sssZ`), generated with `new Date().toISOString()`.
 
 **Manifest-backed autopilot:** Take the Step-0 scalar facts from `manifest.contract.verdict`,
 `manifest.contract.gear`, and `manifest.contract.drive`. Require `drive: autopilot` and gear 3, and
@@ -400,7 +399,7 @@ not proof that no discovery happened.
 
 For each candidate: already promoted → cite the stable doc `file:line`; still valuable → propose the promotion to the user (glossary, conventions, surface standard, README); no longer holds → drop it with a one-line reason.
 
-**Autopilot:** a promotion candidate is never a blocker on its own — Step 0's "never ask; unresolvable → BLOCKED" governs things the run cannot finish without a human, not documentation opportunities. Carry every candidate into the Step 4 report instead, for the human to act on at gate 8.
+**Autopilot:** a promotion candidate is never a blocker on its own — Step 0's "never ask; unresolvable → BLOCKED" governs things the run cannot finish without a human, not documentation opportunities. Carry every candidate into the Step 4 report instead, for the human to act on at the Step 5 version-bump/PR decision.
 
 If the work changed a durable convention, standard, domain term, architecture decision, user-facing workflow, or README behavior, verify that the durable knowledge was promoted into stable versioned docs (`.apex/standards/`, `.apex/conventions.md`, `.apex/glossary.md`, README, or another stable doc).
 Specs and plans themselves are not sufficient evidence of durable documentation.
@@ -489,8 +488,7 @@ by a human for Gear 4, is required for another run; neither this review nor the 
 mutation budget.
 
 **Autopilot:** If `drive: autopilot` is present in the verdict contract (Step 0), stop here — this is
-the last unattended phase of the run, and the bump/PR decision below (Step 5, gate 8) stays human by
-explicit spec ruling. After the report above, append
+the last unattended phase of the run, and the version-bump/PR decision below (Step 5) stays human. After the report above, append
 `<ISO timestamp> — review — READY_FOR_PR — run-id=<conductor-supplied> attempt=<positive supplied> <one-line verdict>` to
 `.apex/work/tasks/<spec-basename>/autopilot-status.md` and end the session: no version bump, no
 CHANGELOG edit, no PR, no Step 5 question. The run's artifacts and this report stay on disk for a

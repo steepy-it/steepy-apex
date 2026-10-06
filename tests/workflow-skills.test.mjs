@@ -66,7 +66,7 @@ test('brainstorm: local-work contract is explicit and forbids stable registratio
 test('brainstorm: Step 4 writes the draft into the spec file (gate), Step 5 finalizes it', () => {
   const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
   const step4 = sectionBetween(text, '### Step 4 — Present the design (gate)', '### Step 5');
-  assert.match(step4, /`Status: DRAFT`/, 'Step 4 must mark the draft file Status: DRAFT');
+  assert.match(step4, /^status: DRAFT$/m, 'Step 4 must write the draft with the workflow header status: DRAFT');
   assert.match(step4, /\.apex\/work\/specs\//, 'Step 4 must write the draft to .apex/work/specs/');
   assert.match(
     step4,
@@ -77,8 +77,8 @@ test('brainstorm: Step 4 writes the draft into the spec file (gate), Step 5 fina
   const step5 = sectionBetween(text, '### Step 5 — Finalize the approved draft', '### Step 5.5');
   assert.match(
     step5,
-    /drop the (?:old )?.?Status: DRAFT.? (?:prose )?marker|drop the DRAFT marker/i,
-    'Step 5 must drop the Status: DRAFT marker'
+    /leave the workflow header at `status: DRAFT` until the applicable approval gate completes/i,
+    'Step 5 must keep the header DRAFT until the approval gate completes'
   );
 });
 
@@ -879,8 +879,8 @@ test('brainstorm: Step 7 offers the drive-mode choice — manual default, autopi
   assert.match(step7, /\.apex\/work\/tasks\/<spec-basename>\/autopilot-status\.md/, 'Step 7 must report the status file path');
   assert.match(step7, /phase-<n>\.log/, 'Step 7 must report the phase log path');
   assert.match(step7, /READY_FOR_PR/, 'Step 7 must name the READY_FOR_PR halt state');
-  assert.match(step7, /gate 8 stays human/i, 'Step 7 must state gate 8 stays human');
-  assert.match(step7, /interactive session/i, 'Step 7 must state gate 8 runs in an interactive session');
+  assert.match(step7, /version-bump\/PR decision \(review Step 5\) stays human/i, 'Step 7 must state the version-bump/PR decision stays human');
+  assert.match(step7, /interactive session/i, 'Step 7 must state the version-bump/PR decision runs in an interactive session');
   assert.match(step7, /no new question is asked at gears 1-2/i, 'the manual path must state no new question at gears 1-2');
   assert.match(step7, /answering `manual` changes nothing downstream/i, 'the manual path must state manual changes nothing downstream');
   assert.doesNotMatch(step7, /dispatch a fresh/i, 'Step 7 must not use the forbidden phrase "dispatch a fresh"');
@@ -1677,7 +1677,7 @@ test('manual publication contract covers each exact resume capability and every 
     assert.match(common, /finish-consumption[^]*revalidate[^]*approval[^]*verification[^]*only[^]*input-consumption/i);
     assert.match(common, /no-op[^]*revalidate[^]*no[^]*redispatch/i);
     assert.match(common, /missing[^]*capabilit[^]*mismatch[^]*fail closed/i);
-    assert.match(common, /model-based[^]*no manual parser[^]*content tests[^]*deterministic enforcement/i);
+    assert.match(common, /manual drive you are the enforcement: no parser, manifest, or validator checks this contract/i);
   }
 });
 
