@@ -117,8 +117,7 @@ Publication is ordered: record the phase's applicable approval and verification 
 publish output READY by per-file atomic replacement, then consume the input by per-file atomic
 replacement. This is not a multi-file atomic operation; READY/READY is its sole verified intermediate
 prefix. Resume repairs no other state and never repeats completed work or release actions.
-Manual enforcement is model-based: no manual parser, manifest or validator is introduced.
-The content tests check this documented contract, not deterministic enforcement by a model.
+In manual drive you are the enforcement: no parser, manifest, or validator checks this contract.
 <!-- steepy:manual-handoff:v1:end -->
 
 # loop-engineer

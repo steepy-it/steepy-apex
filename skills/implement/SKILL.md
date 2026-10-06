@@ -116,8 +116,7 @@ Publication is ordered: record the phase's applicable approval and verification 
 publish output READY by per-file atomic replacement, then consume the input by per-file atomic
 replacement. This is not a multi-file atomic operation; READY/READY is its sole verified intermediate
 prefix. Resume repairs no other state and never repeats completed work or release actions.
-Manual enforcement is model-based: no manual parser, manifest or validator is introduced.
-The content tests check this documented contract, not deterministic enforcement by a model.
+In manual drive you are the enforcement: no parser, manifest, or validator checks this contract.
 <!-- steepy:manual-handoff:v1:end -->
 
 # implement
@@ -133,7 +132,7 @@ reviewers and hands the result to the `review` phase.
 
 ## Execution discipline
 
-Narrate at most one short line between tasks (e.g. "Task 2 approved, moving to Task 3") — the ledger and the tool results carry the record. Never ask "should I continue?" between tasks; execute the accepted input straight through. The only reasons to stop mid-run are an unresolved **BLOCKED** status, a genuine **NEEDS_CONTEXT** question from an implementer, a direct Gear-2 spec that requires decomposition, or all tasks complete.
+Keep between-task updates brief: which task finished and what comes next (e.g. "Task 2 approved, moving to Task 3") — the ledger and the tool results carry the record. Never ask "should I continue?" between tasks; execute the accepted input straight through. The only reasons to stop mid-run are an unresolved **BLOCKED** status, a genuine **NEEDS_CONTEXT** question from an implementer, a direct Gear-2 spec that requires decomposition, or all tasks complete.
 
 ## Checklist
 
@@ -302,7 +301,7 @@ neither exists, create the current-run task directory and initialize the ledger;
 below. Output creation grants no historical sibling-read capability. A one-present/one-absent pair is
 malformed and fails closed. In autopilot, use the manifest-declared ledger/index inventory under its existing
 protocol. A missing pair is normal on a fresh run, never a pre-spawn failure. If
-`.apex/work/.gitignore` is missing (hubs scaffolded before init Step 4.5), create it with exactly:
+`.apex/work/.gitignore` is missing, create it with exactly:
 
 ```gitignore
 *

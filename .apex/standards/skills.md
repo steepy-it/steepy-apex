@@ -82,7 +82,7 @@
   metadata, without an undeclared full-spec read. In manual drive, no manifest, parser, or validator
   is introduced: the model follows the human handoff envelope and performs the same phase-local
   role transition and provenance recording. Its pathless recovery is limited to the workflow header
-  needed to locate its entry artifact; it does not retain the former manual spec-head default.
+  needed to locate its entry artifact.
   Fresh brainstorm uses human/stable repository evidence, not historical work, and follows actual single/core-plus-matched-leaf routing. Manual implement has two mutually exclusive entries: Gear-2 direct entry requires an exact `spec`,
   while plan-backed entry requires exact `plan` and exact `source-spec` capabilities. Direct Gear 2
   accepts only a READY brainstorm artifact with `next: implement` and recorded gear 2, derives one

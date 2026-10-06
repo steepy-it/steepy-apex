@@ -221,13 +221,13 @@ test('discovery: SKILL.md is standalone — no chain Step 0 gear-read heading, n
   assert.doesNotMatch(text, /verdict artifact/i, 'must not reference a verdict artifact (chain-only concept)');
 });
 
-test('discovery: init SKILL.md Step 8 points the user at the abstract discovery skill to populate empty docs', () => {
+test('discovery: init SKILL.md Step 5 points the user at the abstract discovery skill to populate empty docs', () => {
   const text = readFileSync(initSkillPath, 'utf8');
-  const step8 = sectionBetween(text, '### Step 8', undefined);
-  assert.match(step8, /the `discovery` skill/, 'Step 8 must point the user at the discovery skill by abstract name');
-  assert.doesNotMatch(step8, /\/steepy-apex:/, 'Step 8 must not use a Claude-only namespaced slash invocation');
-  assert.match(step8, /populate/i, 'Step 8 pointer must frame discovery as populating docs');
-  assert.match(step8, /empty|scaffold/i, 'Step 8 pointer must name the docs as scaffolded/empty');
+  const step5 = sectionBetween(text, '### Step 5', undefined);
+  assert.match(step5, /the `discovery` skill/, 'Step 5 must point the user at the discovery skill by abstract name');
+  assert.doesNotMatch(step5, /\/steepy-apex:/, 'Step 5 must not use a Claude-only namespaced slash invocation');
+  assert.match(step5, /populate/i, 'Step 5 pointer must frame discovery as populating docs');
+  assert.match(step5, /empty|scaffold/i, 'Step 5 pointer must name the docs as scaffolded/empty');
 });
 
 test('discovery: README.md Commands table registers the namespaced discovery command', () => {

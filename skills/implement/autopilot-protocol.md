@@ -21,7 +21,7 @@ and the supplied correlation identity. Eagerly read every `required` input befor
 phase-manifest authority applies only when `drive: autopilot`; manual-drive discovery remains Step 1's
 behavior.
 
-Autopilot status timestamps must use UTC with three millisecond digits (`YYYY-MM-DDTHH:mm:ss.sssZ`), generated with `new Date().toISOString()`. The reader also accepts whole-second UTC timestamps (`YYYY-MM-DDTHH:mm:ssZ`) for compatibility.
+Autopilot status timestamps must use UTC with three millisecond digits (`YYYY-MM-DDTHH:mm:ss.sssZ`), generated with `new Date().toISOString()`.
 
 **Manifest-backed autopilot:** Take the Step-0 scalar facts from `manifest.contract.verdict`,
 `manifest.contract.gear`, and `manifest.contract.drive`. Require `drive: autopilot` and gear 3, honor

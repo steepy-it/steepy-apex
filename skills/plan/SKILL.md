@@ -116,8 +116,7 @@ Publication is ordered: record the phase's applicable approval and verification 
 publish output READY by per-file atomic replacement, then consume the input by per-file atomic
 replacement. This is not a multi-file atomic operation; READY/READY is its sole verified intermediate
 prefix. Resume repairs no other state and never repeats completed work or release actions.
-Manual enforcement is model-based: no manual parser, manifest or validator is introduced.
-The content tests check this documented contract, not deterministic enforcement by a model.
+In manual drive you are the enforcement: no parser, manifest, or validator checks this contract.
 <!-- steepy:manual-handoff:v1:end -->
 
 # plan
@@ -367,7 +366,7 @@ between the two replacements, READY/READY is the sole repairable prefix. Use onl
 capabilities and common proof checks to finish consumption; a finalized pair is an idempotent no-op.
 Never repair a CONSUMED-spec/DRAFT-plan pair or consume an unverified plan.
 
-Autopilot status timestamps must use UTC with three millisecond digits (`YYYY-MM-DDTHH:mm:ss.sssZ`), generated with `new Date().toISOString()`. The reader also accepts whole-second UTC timestamps (`YYYY-MM-DDTHH:mm:ssZ`) for compatibility.
+Autopilot status timestamps must use UTC with three millisecond digits (`YYYY-MM-DDTHH:mm:ss.sssZ`), generated with `new Date().toISOString()`.
 
 **Autopilot:** If `drive: autopilot` is present in the verdict contract (Step 0), the human gate is superseded — this is a non-blocking checkpoint. The plan file is on disk; the human can interrupt the run. Skip the question, do NOT wait, and append `<ISO timestamp> — plan — DONE — run-id=<conductor-supplied> attempt=<positive supplied> <plan path>` to `.apex/work/tasks/<spec-basename>/autopilot-status.md` (spec filename without `.md`; the status file already exists). Step 4.5 self-review and Step 5 validate-hub still run and still gate.
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.0.6 (2026-10-06)
+
+- Correct stale hub facts: the glossary's managed-block markers and template names,
+  implement's reference to a nonexistent init Step 4.5, and brainstorm's list of
+  harnesses without a headless mode.
+- State current rules only in the brainstorm, plan, implement, and review skills:
+  drop references to the old `Status: DRAFT` prose marker, the undefined "gate 8",
+  and other text written as a diff against earlier versions.
+- Keep between-task updates brief instead of capping them at one line, and drop the
+  reader-compatibility aside from the writer-side status timestamp rule.
+
 ## v1.0.5 (2026-09-29)
 
 - Move the OpenAI tier ladder to GPT-6: `gpt-6-luna` / `gpt-6-sol` / `gpt-6-sol`.

@@ -116,8 +116,7 @@ Publication is ordered: record the phase's applicable approval and verification 
 publish output READY by per-file atomic replacement, then consume the input by per-file atomic
 replacement. This is not a multi-file atomic operation; READY/READY is its sole verified intermediate
 prefix. Resume repairs no other state and never repeats completed work or release actions.
-Manual enforcement is model-based: no manual parser, manifest or validator is introduced.
-The content tests check this documented contract, not deterministic enforcement by a model.
+In manual drive you are the enforcement: no parser, manifest, or validator checks this contract.
 <!-- steepy:manual-handoff:v1:end -->
 
 # brainstorm
@@ -135,7 +134,7 @@ Turn an idea into a local working spec informed by the hub. Do not write code or
 2. Understand the idea — grill it against the hub, one question at a time (gear 2–3).
 3. Propose 2–3 approaches.
 4. Present the design as a draft in `.apex/work/specs/` and get approval, section by section (gate).
-5. Finalize the approved draft — drop the `Status: DRAFT` marker.
+5. Finalize the approved draft — fold in the review changes; the header stays `status: DRAFT` until the approval gate passes.
 5.5. Self-review the spec inline — free gate, gear 2 and 3 (Step 5.5).
 6. Validate the stable hub with `validate-hub.mjs` (deterministic gate).
 7. Human review gate — ask the user to review the written spec, then choose drive mode: manual or autopilot (gear 3).
@@ -239,8 +238,7 @@ Write the design into a new spec at its conventional path, `.apex/work/specs/YYY
 Check only target existence first. An existing target requires a stop for an absent path or explicit
 user-delimited revisit scope: no historical body read or overwrite is authorized by fresh entry.
 Within this invocation, continue editing only the draft it created.
-Create `.apex/work/specs/` if it does not exist. After the verdict/contract metadata and before the title, write this workflow header
-(the old prose `Status: DRAFT` marker is not a substitute):
+Create `.apex/work/specs/` if it does not exist. After the verdict/contract metadata and before the title, write this workflow header:
 
 ```yaml
 <!-- steepy-workflow: v1
@@ -265,13 +263,13 @@ Present it in sections scaled to complexity (architecture, components, data flow
 
 At gear 3 an empty section is written as a real statement ("nothing excluded"), never omitted. Point the user at the file — not chat prose — and ask for approval section by section, referencing the document by file path and section name.
 
-What approval gates is finalization and handoff, not file creation: a DRAFT-marked file records only material already discussed, so writing it preserves the anti-anchoring intent behind the old "do not write the spec until the user approves" rule. This supersedes the letter of that rule, not its intent.
+Approval gates finalization and handoff, not file creation: the DRAFT file records only material already discussed, so writing it early does not anchor the design.
 
-The gate itself is unchanged: no finalization, no handoff, no hub mutation until the user approves each section. Harness-portable: the artifact is a file path, nothing harness-specific.
+The gate: no finalization, no handoff, no hub mutation until the user approves each section. Harness-portable: the artifact is a file path, nothing harness-specific.
 
 ### Step 5 — Finalize the approved draft
 
-Incorporate the requested changes from the Step 4 review into the draft file. Drop the old `Status: DRAFT` prose marker if present, but leave the workflow header `status: DRAFT` until the applicable approval gate completes. Make sure the owning surface, the success criteria, and the Out of Scope and Testing Decisions sections are stated explicitly (the canonical sections per Step 4's gear gradient).
+Incorporate the requested changes from the Step 4 review into the draft file. Leave the workflow header at `status: DRAFT` until the applicable approval gate completes. Make sure the owning surface, the success criteria, and the Out of Scope and Testing Decisions sections are stated explicitly (the canonical sections per Step 4's gear gradient).
 
 For every new gear-3 spec, use this canonical machine-readable metadata and criteria grammar:
 
@@ -354,7 +352,7 @@ Once the user approves the spec, ask one more question: drive `manual` or `autop
     spec: <exact-spec-path>
   onDemand: none
   ```
-- **No headless mode on this harness** (today: Pi — the map is `adapters/headless.mjs`) → do not offer autopilot. Say explicitly that this harness has no headless mode, so the run stays manual — degradations are explicit, never silent.
+- **No headless mode on this harness** (any harness missing from `SUPPORTED_HARNESSES` in `adapters/headless.mjs`) → do not offer autopilot. Say explicitly that this harness has no headless mode, so the run stays manual — degradations are explicit, never silent.
 
 On `autopilot`:
 
@@ -372,11 +370,11 @@ On `autopilot`:
    -->
    ```
 
-   Keep the verdict text and gear unchanged — only turn the one-line comment into this multi-line contract block, so the closing `-->` moves to its own line at the end (a literal read of "keep line 1 as it was" that leaves `-->` closing the comment on line 1, with `drive:` and the rest outside it, makes the conductor refuse: `parseContract` needs the whole contract inside one HTML comment). `harness` = the current harness. The `budget` field is rejected on fresh and resumed gear-3 contracts; do not author it or ask a replacement resource or profile question. Future gear-3 autopilot contracts write `log-mode: safe` by default; do not add a logging question. Offer `exact` only when the user explicitly requests sensitive exact capture: warn that exact raw logs may contain secrets, write `log-mode: exact`, and state that the conductor will print and record `EXACT_LOGGING`.
+   Keep the verdict text and gear unchanged — only turn the one-line comment into this multi-line contract block, so the closing `-->` moves to its own line at the end (`parseContract` reads the contract only when every field sits inside that one HTML comment). `harness` = the current harness. The `budget` field is rejected on fresh and resumed gear-3 contracts; do not author it. Write `log-mode: safe` by default and ask no logging question. Offer `exact` only when the user explicitly requests sensitive exact capture: warn that exact raw logs may contain secrets, write `log-mode: exact`, and state that the conductor will print and record `EXACT_LOGGING`.
 3. Launch the conductor in background: `node <engine-root>/scripts/autopilot.mjs <spec-path>`.
-4. Report the run's status path and live artifacts: `.apex/work/tasks/<spec-basename>/autopilot-status.md`, per-attempt readable `phase-<n>-attempt-<m>.log`, per-attempt raw `phase-<n>-attempt-<m>.raw.jsonl`, and aggregate `phase-<n>.log`. Report the native open/resume reference when supported. The run is no-steer: it halts on anything needing a human, and its branch-only boundary is stop-before-PR (`READY_FOR_PR`). Gate 8 stays human, in an interactive session.
+4. Report the run's status path and live artifacts: `.apex/work/tasks/<spec-basename>/autopilot-status.md`, per-attempt readable `phase-<n>-attempt-<m>.log`, per-attempt raw `phase-<n>-attempt-<m>.raw.jsonl`, and aggregate `phase-<n>.log`. Report the native open/resume reference when supported. The run is no-steer: it halts on anything needing a human, and its branch-only boundary is stop-before-PR (`READY_FOR_PR`). The version-bump/PR decision (review Step 5) stays human, in an interactive session.
 
-Drive mode adds nothing to the manual path: no new question is asked at gears 1-2, and answering `manual` changes nothing downstream. (The draft-first spec file of Steps 4-5 is a separate change, shared by both modes.)
+Drive mode adds nothing to the manual path: no new question is asked at gears 1-2, and answering `manual` changes nothing downstream.
 
 ### Step 8 — Hand off
 

@@ -73,9 +73,12 @@
   `.apex/work/tasks/<plan-basename>/ledger.md`, with per-task brief/diff files in the
   same folder. It is a work artifact under `.apex/work/`, excluded from the hub linter
   like all work artifacts.
-- **Managed block** — the `<!-- steepy:start -->` / `<!-- steepy:end -->` marker pair
-  delimiting the auto-generated nav section inside a target repo's root `CLAUDE.md`;
-  re-rendering replaces only that region and preserves the surrounding user content.
+- **Managed block** — the `<!-- steepy:managed:<artifact-id>:v1:start -->` /
+  `<!-- steepy:managed:<artifact-id>:v1:end -->` marker pair delimiting generated content
+  inside a mixed artifact: the root `AGENTS.md` spine (`project-instructions`) and the
+  `CLAUDE.md` import wrapper (`claude-import`). Re-rendering replaces only that region and
+  preserves the surrounding user bytes. A bare `<!-- steepy:start -->` / `<!-- steepy:end -->`
+  pair is unsupported: the planner classifies it as `customized`.
 - **Managed root spine** — the managed common-instruction block in a target project's
   `AGENTS.md`. It is the sole common rule source; `CLAUDE.md` imports it through a thin
   managed wrapper.
@@ -217,10 +220,12 @@
   copied verbatim (not a placeholder). `init`'s repair mode adds it as the first line only
   when an existing `_INDEX.md` predates it, and otherwise leaves the file untouched.
 - **Code-rendered / agent-rendered template** — the two substitution paths for
-  `templates/*.md`: code-rendered (`CLAUDE.md`, `surface-standard.md`, `surface-agent.md`)
-  filled by `renderTemplate`, which throws on an unknown placeholder; agent-rendered
-  (`_INDEX.md`, `routing-row.md`, `bootstrap-skill.md`) filled by the `init` skill's
-  prose, with no code-level guard.
+  `templates/*`: code-rendered (`AGENTS.md`, `claude-import.md`,
+  `project-bootstrap-skill.md`, `claude-bootstrap-stub.md`, the `surface-agent-*` triad, and
+  `surface-standard.md` when `new-surface.mjs` creates it) filled by `renderTemplate`, which
+  throws on an unknown placeholder; agent-rendered (`_INDEX.md`, `routing-row.md`, and
+  `surface-standard.md` during `init`) filled by the `init` skill's prose, with no code-level
+  guard.
 - **Content-byte-lock** — a canonical string constant embedded in a test and asserted
   byte-identical across N target files (e.g. `MODEL_SECTION_WITH_REVIEW` /
   `MODEL_SECTION_WITHOUT_REVIEW` across the five chain SKILL.mds in

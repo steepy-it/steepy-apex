@@ -92,12 +92,12 @@ not merely one *on the topic*):
 
 **Drive modes (gear 3)** — an axis orthogonal to the gear: the gear classifies coverage ×
 value, drive mode says *who pushes the button between phases*. Gear 3 only:
-- `manual` (default, absent field) — today's chain, unchanged.
+- `manual` (default, absent field) — the human invokes each phase.
 - `autopilot` — after the blocking spec gate, the conductor (`scripts/autopilot.mjs`)
   runs plan → implement → review as fresh headless sessions; the collapsed gates become
   non-blocking checkpoints (artifacts still land on disk; the human can interrupt); halts
   on BLOCKED / CONFLICT / an explicit safety condition / a non-zero exit; stops before bump/PR
-  (`READY_FOR_PR` — gate 8 stays human). Contract = the extended verdict artifact at the
+  (`READY_FOR_PR` — the version-bump/PR decision stays human). Contract = the extended verdict artifact at the
   spec head (`drive`, `branch`, `commit-auth`, `harness`, `blast-radius` — field
   names shared with the gear-4 goal contract on purpose); trust envelope shared with gear
   4: the blast radius (dedicated branch, never push, never bump/PR) is a declared trust
@@ -290,7 +290,7 @@ would add a read, not save tokens — do not DRY them.
 - **Branch & commit authorization** — on `main`/`master`, ask once whether to branch; take
   one commit-authorization decision per `implement` run and honor it throughout; `review`
   offers a PR only when the branch has commits ahead.
-- **Anti-chatter** — during plan execution, narrate at most one line between tasks and never
+- **Anti-chatter** — during plan execution, keep between-task updates brief and never
   ask "should I continue?"; one-question-at-a-time dialogue belongs only to interview steps
   (brainstorm, discovery).
 - **Next-step routing** — every chain skill ends by naming the next skill; a downstream

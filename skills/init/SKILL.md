@@ -192,7 +192,7 @@ Create `.apex/work/specs/` and `.apex/work/plans/` for local workflow artifacts.
 existing `.apex/work/.gitignore` untouched. Never create `.apex/specs/`, `.apex/plans/`, or specs/plans
 sub-index files.
 
-### Step 8 — Validate and report
+### Step 5 — Validate and report
 
 Run:
 
