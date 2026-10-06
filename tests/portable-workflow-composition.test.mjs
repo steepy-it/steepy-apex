@@ -161,6 +161,80 @@ function captureValidateHub(argv) {
   }
 }
 
+// Literal v1.0.0-v1.0.6 adapter renderings for the baseModel() triad, keyed by path.
+// A deliberate copy of the same constant in tests/validate-hub.test.mjs: rendered once
+// from `git show v1.0.0:templates/<name>` with `model: 'inherit'`, never computed from
+// templates/prior/ at test time.
+const V1_0_PORTABLE_DEMO_ADAPTERS = {
+  '.claude/agents/web-agent.md': [
+    '---',
+    'name: web-agent',
+    'description: >-',
+    '  Portable demo project.',
+    'model: inherit',
+    '---',
+    '<!-- steepy:generated:web-agent-claude:v1 -->',
+    '',
+    '# web-agent',
+    '',
+    'You are the specialist agent for the `web` surface at `apps/web`.',
+    '',
+    'Run the `portable-demo-bootstrap` skill, then read `.apex/standards/web.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '',
+  ].join('\n'),
+  '.codex/agents/web-agent.toml': [
+    '# steepy:generated:web-agent-codex:v1',
+    '# Project description: Portable demo project.',
+    '# Surface path: apps/web',
+    'name = "web-agent"',
+    'description = "Specialist agent for web work."',
+    'developer_instructions = """',
+    'You are the web-agent specialist for the web surface.',
+    '',
+    'Run the `portable-demo-bootstrap` skill, then read `.apex/standards/web.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '"""',
+    '',
+  ].join('\n'),
+  '.opencode/agents/web-agent.md': [
+    '---',
+    'description: >-',
+    '  Portable demo project.',
+    'mode: subagent',
+    'model: inherit',
+    '---',
+    '<!-- steepy:generated:web-agent-opencode:v1 -->',
+    '',
+    '# web-agent',
+    '',
+    'You are the specialist agent for the `web` surface at `apps/web`.',
+    '',
+    'Run the `portable-demo-bootstrap` skill, then read `.apex/standards/web.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '',
+  ].join('\n'),
+};
+
+// A current canonical hub whose web-agent triad is then overwritten with the
+// untouched v1.0.0-v1.0.6 bytes.
+function seedV1_0Hub(model = baseModel()) {
+  const hubRoot = seedHub(model);
+  for (const [path, content] of Object.entries(V1_0_PORTABLE_DEMO_ADAPTERS)) put(hubRoot, path, content);
+  return hubRoot;
+}
+
+// GC10 warn text for one untouched v1.0.0-v1.0.6 web-agent adapter.
+const WEB_AGENT_STALE_WARNS = [
+  ['claude', '.claude/agents/web-agent.md'],
+  ['codex', '.codex/agents/web-agent.toml'],
+  ['opencode', '.opencode/agents/web-agent.md'],
+].map(([adapter, path]) => ({
+  level: 'warn',
+  msg: `portable-v1: web-agent ${adapter} adapter at ${path} is the v1.0.0-v1.0.6 rendering; init repair updates it to the current rendering`,
+}));
+
+function portableEntries(violations) {
+  return violations.filter(({ msg }) => msg.startsWith('portable-v1:'));
+}
+
 test('empty-description public apply composes with validation and an exact second no-op', () => {
   const model = baseModel({ description: '' });
   const hubRoot = seedHub(model);
@@ -309,7 +383,7 @@ test('active-v1 new-surface uses the full project identity and repairs to an exa
   for (const [adapter, extension] of [['claude', 'md'], ['codex', 'toml'], ['opencode', 'md']]) {
     const content = readFileSync(join(hubRoot, `.${adapter}/agents/api-agent.${extension}`), 'utf8');
     assert.match(content, /portable-demo-bootstrap/u);
-    assert.match(content, /\.apex\/standards\/api\.md/u);
+    assert.match(content, /read the standard linked in the `api` row of the routing table in `\.apex\/_INDEX\.md`/u);
   }
   assert.deepEqual(collectViolations(hubRoot).filter(({ level }) => level === 'error'), []);
 
@@ -539,6 +613,118 @@ test('generated-adapter CRLF drift is customized in both validator and planner',
     reason: 'customized',
     choices: ['replace', 'abort'],
   });
+});
+
+test('linter and planner treat an untouched v1.0 adapter triad as stale', () => {
+  const model = baseModel();
+  const hubRoot = seedV1_0Hub(model);
+  try {
+    assert.deepEqual(portableEntries(collectViolations(hubRoot)), WEB_AGENT_STALE_WARNS);
+
+    const plan = planProjectScaffold({ hubRoot, model, templatesDir });
+    assert.deepEqual(plan.conflicts, []);
+    const paths = ['.claude/agents/web-agent.md', '.codex/agents/web-agent.toml', '.opencode/agents/web-agent.md'];
+    assert.deepEqual(previewProjectScaffold(plan), ['claude', 'codex', 'opencode'].map((adapter, index) => ({
+      id: `v1:op:web-agent-${adapter}`,
+      kind: 'replace-generated',
+      artifactId: `web-agent-${adapter}`,
+      path: paths[index],
+      priorState: 'stale',
+    })));
+    assert.deepEqual(applyProjectScaffold({ hubRoot, plan }), { applied: 3, paths });
+
+    assert.deepEqual(portableEntries(collectViolations(hubRoot)), []);
+    const before = fileState(hubRoot);
+    const second = planProjectScaffold({ hubRoot, model, templatesDir });
+    assert.deepEqual(previewProjectScaffold(second), []);
+    assert.deepEqual(second.conflicts, []);
+    assert.deepEqual(applyProjectScaffold({ hubRoot, plan: second }), { applied: 0, paths: [] });
+    assert.deepEqual(fileState(hubRoot), before);
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
+  }
+});
+
+test('new-surface repairs and extends a v1.0 hub without an adapter conflict', () => {
+  const model = baseModel();
+  const repairHub = seedV1_0Hub(model);
+  const extendHub = seedV1_0Hub(model);
+  try {
+    const repaired = captureNewSurface([
+      '--name', 'web', '--path', 'apps/web', '--agent', 'web-agent', '--hub', repairHub,
+      '--test', 'npm test', '--repair',
+    ]);
+    assert.equal(repaired.code, 0, repaired.stderr);
+    const normalized = normalizeProjectModel(model);
+    for (const [adapter, path] of [
+      ['claude', '.claude/agents/web-agent.md'],
+      ['codex', '.codex/agents/web-agent.toml'],
+      ['opencode', '.opencode/agents/web-agent.md'],
+    ]) {
+      assert.equal(
+        readFileSync(join(repairHub, path), 'utf8'),
+        renderProjectArtifact(`web-agent-${adapter}`, normalized, templatesDir),
+        path,
+      );
+    }
+    assert.deepEqual(portableEntries(collectViolations(repairHub)), []);
+
+    // The new surface's owning directory exists before new-surface runs (check 10).
+    mkdirSync(join(extendHub, 'services', 'api'), { recursive: true });
+    const addition = [
+      '--name', 'api', '--path', 'services/api', '--agent', 'api-agent', '--hub', extendHub,
+      '--test', 'npm run test:api',
+    ];
+    const unresolved = captureNewSurface(addition);
+    assert.equal(unresolved.code, 1);
+    assert.match(unresolved.stderr, /v1:project-instructions:customized/u);
+    assert.doesNotMatch(unresolved.stderr, /web-agent-/u);
+
+    const extended = captureNewSurface([
+      ...addition,
+      '--resolution', 'v1:project-instructions:customized=replace',
+    ]);
+    assert.equal(extended.code, 0, extended.stderr);
+    assert.doesNotMatch(extended.stderr, /web-agent-/u);
+    assert.deepEqual(portableEntries(collectViolations(extendHub)), []);
+  } finally {
+    rmSync(repairHub, { recursive: true, force: true });
+    rmSync(extendHub, { recursive: true, force: true });
+  }
+});
+
+test('one extra byte on a v1.0 adapter is customized in linter, planner and new-surface', () => {
+  const model = baseModel();
+  const hubRoot = seedV1_0Hub(model);
+  const path = '.claude/agents/web-agent.md';
+  try {
+    put(hubRoot, path, `${V1_0_PORTABLE_DEMO_ADAPTERS[path]}\n`);
+    assert.deepEqual(portableEntries(collectViolations(hubRoot)), [
+      { level: 'error', msg: `portable-v1: web-agent claude adapter at ${path} is customized` },
+      ...WEB_AGENT_STALE_WARNS.slice(1),
+    ]);
+
+    const conflict = planProjectScaffold({ hubRoot, model, templatesDir }).conflicts
+      .find(({ artifactId }) => artifactId === 'web-agent-claude');
+    assert.deepEqual(conflict, {
+      id: 'v1:web-agent-claude:customized',
+      artifactId: 'web-agent-claude',
+      path,
+      reason: 'customized',
+      choices: ['replace', 'abort'],
+    });
+
+    const before = fileState(hubRoot);
+    const repaired = captureNewSurface([
+      '--name', 'web', '--path', 'apps/web', '--agent', 'web-agent', '--hub', hubRoot,
+      '--test', 'npm test', '--repair',
+    ]);
+    assert.equal(repaired.code, 1);
+    assert.match(repaired.stderr, /v1:web-agent-claude:customized/u);
+    assert.deepEqual(fileState(hubRoot), before);
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
+  }
 });
 
 test('adjacent user-owned AGENTS bytes conflict, repair with CRLF preserved, and become an exact no-op', () => {
@@ -813,15 +999,14 @@ test('external project mounts compose scoped paths, repair, validation and a zer
       // under a mounted provider. Logical paths remain the public identities.
       const desired = { ...model, description: 'Repaired external project.',
         resolutions: { 'v1:project-instructions:customized': 'replace',
-          'v1:web-agent-codex:customized': 'replace', 'v1:web-agent-opencode:customized': 'replace' } };
+          'v1:web-agent-codex:customized': 'replace' } };
       unlinkSync(join(outside, '.claude/agents/web-agent.md'));
       chmodSync(join(outside, 'AGENTS.md'), 0o640);
       const plan = planProjectScaffold({ hubRoot, model: desired, templatesDir });
       assert.deepEqual(plan.conflicts, []);
       assert.deepEqual(new Set(plan.operations.map(({ path }) => path)),
-        new Set(['AGENTS.md', '.claude/agents/web-agent.md',
-          '.codex/agents/web-agent.toml', '.opencode/agents/web-agent.md']));
-      assert.equal(applyProjectScaffold({ hubRoot, plan }).applied, 4);
+        new Set(['AGENTS.md', '.claude/agents/web-agent.md', '.codex/agents/web-agent.toml']));
+      assert.equal(applyProjectScaffold({ hubRoot, plan }).applied, 3);
       assert.match(readFileSync(join(outside, 'AGENTS.md'), 'utf8'), /Repaired external project/);
       assert.equal(lstatSync(join(outside, 'AGENTS.md')).mode & 0o777, 0o640);
       assert.deepEqual(names.map((name) => readlinkSync(join(hubRoot, name))), links);
@@ -874,8 +1059,7 @@ test('repair detects a mount retargeted after staging before writing either dest
     symlinkSync(first, logical);
     const desired = { ...model, description: 'Changed.',
       resolutions: { 'v1:project-instructions:customized': 'replace',
-        'v1:web-agent-claude:customized': 'replace',
-        'v1:web-agent-codex:customized': 'replace', 'v1:web-agent-opencode:customized': 'replace' } };
+        'v1:web-agent-codex:customized': 'replace' } };
     const plan = planProjectScaffold({ hubRoot, model: desired, templatesDir });
     assert.deepEqual(plan.conflicts, []);
     const before = fileState(outside);

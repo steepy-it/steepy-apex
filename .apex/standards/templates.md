@@ -31,9 +31,12 @@
 - The canonical project bootstrap is a harness-neutral navigation router: it reads `AGENTS.md` and
   `.apex/_INDEX.md`, resolves minimum surface docs and the specialist, and invokes workflows by
   semantic skill name; coverage, gear, ratification, branch, and workflow-state ceremony stay in
-  the gear-aware workflow skills. Claude delegates to it through a thin stub;
-  each specialist adapter names its agent, surface/path, semantic bootstrap, and owning standard
-  without copying rules from the standard.
+  the gear-aware workflow skills. Claude delegates to it through a thin stub. Each specialist
+  adapter names its agent, surface/path and semantic bootstrap. It reaches its standard through its
+  surface's row in the routing table in `.apex/_INDEX.md`, never through a standard path, so a
+  surface split into the modular form keeps a valid untouched adapter. It copies no rules from the
+  standard. Claude and OpenCode descriptions name the surface and its path. The Codex `description`
+  stays slug-only, per the "Until a renderer owns TOML escaping" bullet.
 - `{{placeholder}}` substitution is strict in code-rendered paths: `renderTemplate` throws for an
   unknown value. The prose-generated hub sources need every declared value supplied by the owning
   skill.

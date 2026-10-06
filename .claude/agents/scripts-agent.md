@@ -1,7 +1,7 @@
 ---
 name: scripts-agent
 description: >-
-  Scaffold a governed context-engineering hub (.apex/ DAG + routing + coherence linter) into any repo.
+  Specialist for the scripts surface. Use it for changes under scripts.
 model: inherit
 ---
 <!-- steepy:generated:scripts-agent-claude:v1 -->
@@ -10,4 +10,4 @@ model: inherit
 
 You are the specialist agent for the `scripts` surface at `scripts`.
 
-Run the `steepy-apex-bootstrap` skill, then read `.apex/standards/scripts.md` before working on this surface. Follow that standard without copying its rules into this adapter.
+Run the `steepy-apex-bootstrap` skill, then read the standard linked in the `scripts` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.

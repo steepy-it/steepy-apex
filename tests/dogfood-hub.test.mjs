@@ -195,6 +195,32 @@ test('public scaffold CLI repair is a complete no-op for the dogfood hub', () =>
   assert.deepEqual(artifactSnapshot(), before, 'no-op repair must preserve bytes, mode, and mtime');
 });
 
+test('specialist adapters route by surface and cite no standard path', () => {
+  const descriptions = { claude: new Set(), opencode: new Set() };
+  for (const { name, path, agent } of dogfoodModel.surfaces) {
+    const adapters = {
+      claude: readFileSync(join(repoRoot, '.claude', 'agents', `${agent}.md`), 'utf8'),
+      codex: readFileSync(join(repoRoot, '.codex', 'agents', `${agent}.toml`), 'utf8'),
+      opencode: readFileSync(join(repoRoot, '.opencode', 'agents', `${agent}.md`), 'utf8'),
+    };
+    const descriptionLine = `  Specialist for the ${name} surface. Use it for changes under ${path}.`;
+    for (const kind of ['claude', 'opencode']) {
+      assert.ok(adapters[kind].split('\n').includes(descriptionLine), `${kind} ${agent} must name its surface and path`);
+      descriptions[kind].add(adapters[kind].match(/^description: >-\n(.*)$/m)?.[1]);
+    }
+    const route = `read the standard linked in the \`${name}\` row of the routing table in \`.apex/_INDEX.md\``;
+    for (const [kind, text] of Object.entries(adapters)) {
+      assert.doesNotMatch(text, /\.apex\/standards\//, `${kind} ${agent} must not cite a standard path`);
+      assert.ok(text.includes(route), `${kind} ${agent} must reach its standard through the ${name} routing row`);
+    }
+  }
+  assert.equal(descriptions.claude.size, 5, 'Claude descriptions must be distinct');
+  assert.equal(descriptions.opencode.size, 5, 'OpenCode descriptions must be distinct');
+
+  const release = readFileSync(join(repoRoot, 'RELEASE.md'), 'utf8');
+  assert.match(release, /Upgrade note for existing hubs \(first release after 1\.0\.6\)[\s\S]*v1\.0\.0-v1\.0\.6/);
+});
+
 test('public dogfood preview cleans its temporary model directory', () => {
   const before = dogfoodTempDirectories();
   runDogfoodScaffold();

@@ -147,17 +147,20 @@ test('v1 generated templates render complete provenance and native thin adapters
   for (const [name, provenance] of adapters) {
     const text = rendered[name];
     assert.match(text, /web-agent/);
-    assert.match(text, /A portable demo project\./);
     assert.match(text, /web/);
     assert.match(text, /apps\/web/);
     assert.match(text, /demo-project-bootstrap/);
-    assert.match(text, /\.apex\/standards\/web\.md/);
+    // All three adapters reach the standard through the surface's routing row.
+    assert.match(text, /read the standard linked in the `web` row of the routing table in `\.apex\/_INDEX\.md`/);
+    assert.doesNotMatch(text, /\.apex\/standards\//);
+    assert.equal(text.split('.apex/_INDEX.md').length - 1, 1, `${name} must point to the routing table once`);
+    if (name === 'surface-agent-codex.toml') {
+      assert.match(text, /# Project description: A portable demo project\./);
+    } else {
+      assert.match(text, /^  Specialist for the web surface\. Use it for changes under apps\/web\.$/m);
+      assert.doesNotMatch(text, /A portable demo project\./);
+    }
     assert.equal(text.split(provenance).length - 1, 1, `${name} must carry one provenance marker`);
-    assert.equal(
-      text.split('.apex/standards/web.md').length - 1,
-      1,
-      `${name} must point to the standard once instead of duplicating its rules`,
-    );
     assert.doesNotMatch(text, /Surface non-negotiables|Anti-patterns|## Conventions/);
   }
   assert.match(

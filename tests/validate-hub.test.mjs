@@ -26,6 +26,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const fx = (n) => join(here, 'fixtures', n);
 const templates = join(here, '..', 'templates');
 const validator = join(here, '..', 'scripts', 'validate-hub.mjs');
+const stopHook = join(here, '..', 'scripts', 'stop-hook.mjs');
 
 function runValidator(hub, timeout = 2_000, cwd) {
   return spawnSync(process.execPath, [validator, hub], { encoding: 'utf8', timeout, cwd });
@@ -250,6 +251,57 @@ const V1_0_PREPARATORY_ADAPTERS = {
   ].join('\n'),
 };
 
+// Literal current adapter renderings for the portable-demo triad that portableHub()
+// writes, keyed by path. Written out on purpose instead of rendered, so a template
+// change shows up here as a customized adapter rather than passing silently.
+const PORTABLE_DEMO_ADAPTERS = {
+  '.claude/agents/web-agent.md': [
+    '---',
+    'name: web-agent',
+    'description: >-',
+    '  Specialist for the web surface. Use it for changes under apps/web.',
+    'model: inherit',
+    '---',
+    '<!-- steepy:generated:web-agent-claude:v1 -->',
+    '',
+    '# web-agent',
+    '',
+    'You are the specialist agent for the `web` surface at `apps/web`.',
+    '',
+    'Run the `portable-demo-bootstrap` skill, then read the standard linked in the `web` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '',
+  ].join('\n'),
+  '.codex/agents/web-agent.toml': [
+    '# steepy:generated:web-agent-codex:v1',
+    '# Project description: Portable demo project.',
+    '# Surface path: apps/web',
+    'name = "web-agent"',
+    'description = "Specialist agent for web work."',
+    'developer_instructions = """',
+    'You are the web-agent specialist for the web surface.',
+    '',
+    'Run the `portable-demo-bootstrap` skill, then read the standard linked in the `web` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '"""',
+    '',
+  ].join('\n'),
+  '.opencode/agents/web-agent.md': [
+    '---',
+    'description: >-',
+    '  Specialist for the web surface. Use it for changes under apps/web.',
+    'mode: subagent',
+    'model: inherit',
+    '---',
+    '<!-- steepy:generated:web-agent-opencode:v1 -->',
+    '',
+    '# web-agent',
+    '',
+    'You are the specialist agent for the `web` surface at `apps/web`.',
+    '',
+    'Run the `portable-demo-bootstrap` skill, then read the standard linked in the `web` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '',
+  ].join('\n'),
+};
+
 function portableHub() {
   const hub = mkdtempSync(join(tmpdir(), 'steepy-portable-v1-'));
   putPortable(hub, '.apex/_INDEX.md', [
@@ -327,7 +379,7 @@ function portableHub() {
     'Read `.agents/skills/portable-demo-bootstrap/SKILL.md` in full and execute that canonical bootstrap exactly.',
     '',
   ].join('\n'));
-  for (const [path, content] of Object.entries(V1_0_PORTABLE_DEMO_ADAPTERS)) {
+  for (const [path, content] of Object.entries(PORTABLE_DEMO_ADAPTERS)) {
     putPortable(hub, path, content);
   }
   return hub;
@@ -399,6 +451,13 @@ function portableErrors(hub) {
   return collectViolations(hub).filter((item) => item.level === 'error');
 }
 
+// Replaces the first `from` with `to`, and throws when `from` is absent, so an
+// adapter mutation can never silently leave the bytes unchanged.
+function mustReplace(text, from, to) {
+  if (!text.includes(from)) throw new Error(`mustReplace: ${JSON.stringify(from)} is absent`);
+  return text.replace(from, to);
+}
+
 test('good hub: zero error-level violations', () => {
   const v = collectViolations(fx('good-hub')).filter((x) => x.level === 'error');
   assert.deepEqual(v, []);
@@ -463,7 +522,7 @@ test('portable v1: invalid preparatory versions, markers, bodies, targets, ident
     ['unknown-version', (hub) => putPortable(
       hub,
       '.codex/agents/web-agent.toml',
-      readFileSync(join(hub, '.codex/agents/web-agent.toml'), 'utf8').replace(':v1', ':v2'),
+      mustReplace(readFileSync(join(hub, '.codex/agents/web-agent.toml'), 'utf8'), ':v1', ':v2'),
     )],
     ['malformed-marker', (hub) => putPortable(
       hub,
@@ -473,7 +532,7 @@ test('portable v1: invalid preparatory versions, markers, bodies, targets, ident
     ['customized-body', (hub) => putPortable(
       hub,
       '.opencode/agents/web-agent.md',
-      readFileSync(join(hub, '.opencode/agents/web-agent.md'), 'utf8').replace('mode: subagent', 'mode: primary'),
+      mustReplace(readFileSync(join(hub, '.opencode/agents/web-agent.md'), 'utf8'), 'mode: subagent', 'mode: primary'),
     )],
     ['wrong-target', (hub) => renameSync(
       join(hub, '.codex/agents/web-agent.toml'),
@@ -482,20 +541,20 @@ test('portable v1: invalid preparatory versions, markers, bodies, targets, ident
     ['identity-mismatch', (hub) => putPortable(
       hub,
       '.codex/agents/web-agent.toml',
-      readFileSync(join(hub, '.codex/agents/web-agent.toml'), 'utf8')
-        .replace('web-agent-codex:v1', 'api-agent-codex:v1'),
+      mustReplace(readFileSync(join(hub, '.codex/agents/web-agent.toml'), 'utf8'),
+        'web-agent-codex:v1', 'api-agent-codex:v1'),
     )],
-    ['wrong-standard', (hub) => putPortable(
+    ['wrong-route', (hub) => putPortable(
       hub,
       '.claude/agents/web-agent.md',
-      readFileSync(join(hub, '.claude/agents/web-agent.md'), 'utf8')
-        .replace('.apex/standards/web.md', '.apex/standards/api.md'),
+      mustReplace(readFileSync(join(hub, '.claude/agents/web-agent.md'), 'utf8'),
+        'the `web` row', 'the `api` row'),
     )],
     ['mixed-project-bound', (hub) => putPortable(
       hub,
       '.opencode/agents/web-agent.md',
-      readFileSync(join(hub, '.opencode/agents/web-agent.md'), 'utf8')
-        .replace('`project-bootstrap`', '`portable-demo-bootstrap`'),
+      mustReplace(readFileSync(join(hub, '.opencode/agents/web-agent.md'), 'utf8'),
+        '`project-bootstrap`', '`portable-demo-bootstrap`'),
     )],
   ];
 
@@ -585,7 +644,7 @@ test('portable v1: Task 5 modular-core repair triads are exact only while comple
   assert.equal(captureMain([activated]).code, 1);
 });
 
-test('portable v1: a full project fails when producer adapters target single-file but routing targets modular core', () => {
+test('portable v1: a full project still fails a modular route even though adapters name only the routing row', () => {
   const hub = mkdtempSync(join(tmpdir(), 'steepy-portable-active-modular-'));
   putPortable(hub, '.apex/standards/web/web-core.md', [
     '# web — Surface Core',
@@ -620,9 +679,11 @@ test('portable v1: a full project fails when producer adapters target single-fil
   applyProjectScaffold({ hubRoot: hub, plan });
 
   assert.equal(existsSync(join(hub, '.apex/standards/web.md')), false);
+  const claudeAdapter = readFileSync(join(hub, '.claude/agents/web-agent.md'), 'utf8');
+  assert.doesNotMatch(claudeAdapter, /\.apex\/standards\//);
   assert.match(
-    readFileSync(join(hub, '.claude/agents/web-agent.md'), 'utf8'),
-    /\.apex\/standards\/web\.md/,
+    claudeAdapter,
+    /read the standard linked in the `web` row of the routing table in `\.apex\/_INDEX\.md`/,
   );
   const messages = portableErrors(hub).map(({ msg }) => msg).join('\n');
   assert.match(messages, /portable-v1: standard\/producer mismatch for surface 'web'/);
@@ -730,6 +791,75 @@ test('portable v1: a drifted v1.0 preparatory adapter closes validation', () => 
   }
 });
 
+// Reverse direction against the real engine and the packaged templates (no seam):
+// an untouched v1.0.0-v1.0.6 hub stays green everywhere, a drifted one does not.
+test('portable v1: untouched v1.0 adapters warn under the real templates and stay silent when quiet and in the Stop hook', () => {
+  const hub = portableHub();
+  try {
+    putAdapters(hub, V1_0_PORTABLE_DEMO_ADAPTERS);
+    // The adapters and AGENTS.md cite the surface path; it exists so the stale warns are the only warns.
+    mkdirSync(join(hub, 'apps', 'web'), { recursive: true });
+    const violations = collectViolations(hub);
+    assert.deepEqual(violations.filter((item) => item.level === 'error'), [], JSON.stringify(violations));
+    assert.deepEqual(violations, WEB_AGENT_STALE_WARNS);
+
+    const loud = captureMain([hub]);
+    assert.equal(loud.code, 0, loud.err);
+    assert.match(loud.out, /OK/);
+    assert.match(loud.err, /warn: portable-v1: web-agent claude adapter at .* is the v1\.0\.0-v1\.0\.6 rendering/);
+    assert.deepEqual(captureMain([hub, '--quiet']), { code: 0, out: '', err: '' });
+
+    const quiet = spawnSync(process.execPath, [validator, hub, '--quiet'], { encoding: 'utf8' });
+    assert.deepEqual([quiet.status, quiet.stdout, quiet.stderr], [0, '', '']);
+    const hook = spawnSync(process.execPath, [stopHook, hub], { encoding: 'utf8', input: '{}' });
+    assert.deepEqual([hook.status, hook.stdout, hook.stderr], [0, '', '']);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('portable v1: a drifted bound v1.0 adapter errors under the real templates, fails quiet, and blocks the Stop hook', () => {
+  const path = '.claude/agents/web-agent.md';
+  const rendering = V1_0_PORTABLE_DEMO_ADAPTERS[path];
+  const cases = [
+    ['one extra trailing newline', `${rendering}\n`],
+    ['one doubled inner space', mustReplace(rendering, 'You are the specialist', 'You are  the specialist')],
+    ['CRLF line endings', rendering.replaceAll('\n', '\r\n')],
+  ];
+  for (const [name, observed] of cases) {
+    const hub = portableHub();
+    try {
+      putAdapters(hub, V1_0_PORTABLE_DEMO_ADAPTERS);
+      assert.notEqual(observed, rendering, name);
+      putPortable(hub, path, observed);
+      const errors = portableErrors(hub).map(({ msg }) => msg);
+      assert.ok(
+        errors.includes('portable-v1: web-agent claude adapter at .claude/agents/web-agent.md is customized'),
+        `${name}: ${JSON.stringify(errors)}`,
+      );
+      assert.equal(captureMain([hub, '--quiet']).code, 1, name);
+      const hook = spawnSync(process.execPath, [stopHook, hub], { encoding: 'utf8', input: '{}' });
+      assert.equal(hook.status, 0, name);
+      assert.equal(JSON.parse(hook.stdout).decision, 'block', name);
+    } finally {
+      rmSync(hub, { recursive: true, force: true });
+    }
+  }
+});
+
+test('portable v1: an untouched v1.0 preparatory triad exits 0 with three warns under the real templates', () => {
+  const hub = preparatoryHub();
+  try {
+    putAdapters(hub, V1_0_PREPARATORY_ADAPTERS);
+    const result = runValidator(hub);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /OK/);
+    assert.equal(result.stderr, WEB_AGENT_STALE_WARNS.map(({ msg }) => `  - warn: ${msg}\n`).join(''));
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
 test('portable v1: managed root blocks require producer placement and accept producer-preserved content', () => {
   const preserved = portableHub();
   putPortable(preserved, 'AGENTS.md', '# User-owned AGENTS instructions\n');
@@ -824,11 +954,11 @@ test('portable v1: any v1 fragment closes validation and missing canonicals cann
 test('portable v1: routing, standard, and adapter identities are a coherent bijection', () => {
   const mismatch = portableHub();
   putPortable(mismatch, '.codex/agents/web-agent.toml',
-    readFileSync(join(mismatch, '.codex/agents/web-agent.toml'), 'utf8')
-      .replace('web-agent-codex:v1', 'api-agent-codex:v1'));
+    mustReplace(readFileSync(join(mismatch, '.codex/agents/web-agent.toml'), 'utf8'),
+      'web-agent-codex:v1', 'api-agent-codex:v1'));
   putPortable(mismatch, '.opencode/agents/web-agent.md',
-    readFileSync(join(mismatch, '.opencode/agents/web-agent.md'), 'utf8')
-      .replace('.apex/standards/web.md', '.apex/standards/api.md'));
+    mustReplace(readFileSync(join(mismatch, '.opencode/agents/web-agent.md'), 'utf8'),
+      'the `web` row', 'the `api` row'));
   const mismatchMessages = collectViolations(mismatch).map((item) => item.msg).join('\n');
   assert.match(mismatchMessages, /portable-v1:.*codex.*surface-mismatch/i);
   assert.match(mismatchMessages, /portable-v1:.*opencode.*customized|portable-v1:.*standard.*mismatch/i);
@@ -849,9 +979,10 @@ test('portable v1: malformed, unknown-version, duplicate, orphan, and customized
   putPortable(hub, 'AGENTS.md',
     `${readFileSync(join(hub, 'AGENTS.md'), 'utf8')}<!-- steepy:managed:project-instructions:v1:start -->\n`);
   putPortable(hub, '.codex/agents/web-agent.toml',
-    readFileSync(join(hub, '.codex/agents/web-agent.toml'), 'utf8').replace(':v1', ':v2'));
+    mustReplace(readFileSync(join(hub, '.codex/agents/web-agent.toml'), 'utf8'), ':v1', ':v2'));
   putPortable(hub, '.claude/agents/web-agent.md',
-    readFileSync(join(hub, '.claude/agents/web-agent.md'), 'utf8').replace('Portable demo project.', 'Customized description.'));
+    mustReplace(readFileSync(join(hub, '.claude/agents/web-agent.md'), 'utf8'),
+      'Use it for changes under apps/web.', 'Customized description.'));
   putPortable(hub, '.opencode/agents/ghost-agent.md', '<!-- steepy:generated:ghost-agent-opencode:v1 -->\n');
 
   const messages = collectViolations(hub).filter((item) => item.level === 'error').map((item) => item.msg).join('\n');
@@ -1634,6 +1765,10 @@ test('modular-hub fixture: zero errors (modular folder form is supported)', () =
     'modular-hub fixture leaf standards/web/web-auth.md must exist');
   const all = collectViolations(fx('modular-hub')).filter((item) => item.level === 'error');
   assert.deepEqual(all, [], JSON.stringify(all));
+  // No warn either: the route-aware adapters cite no standard path, so the modular
+  // form leaves no dead code-anchor citation behind.
+  const violations = collectViolations(fx('modular-hub'));
+  assert.deepEqual(violations, [], JSON.stringify(violations));
 });
 
 test('modular-hub regression: a leaf not linked from its folder core is an anti-orphan', () => {
