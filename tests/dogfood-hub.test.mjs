@@ -218,6 +218,12 @@ test('stable workflow knowledge is content-locked and manual transport remains m
   const scripts = readStable('.apex', 'standards', 'scripts.md');
   const tests = readStable('.apex', 'standards', 'tests.md');
 
+  assert.match(glossary, /Prior canonical rendering[\s\S]*digest-pinned[\s\S]*stale[\s\S]*customized/i);
+  assert.match(templates, /keeps `v1`[\s\S]*templates\/prior\/[\s\S]*stale, not customized/i);
+  assert.doesNotMatch(templates, /remains unchanged/i);
+  assert.match(scripts, /prior canonical rendering is\s+`stale`[\s\S]*warn/i);
+  assert.match(scripts, /standard\/producer mismatch/i);
+
   for (const text of [glossary, conventions, skills, templates, scripts, tests]) {
     assert.doesNotMatch(text, /\]\([^)]*\.apex\/work\//, 'stable Markdown must not link a concrete work artifact');
   }

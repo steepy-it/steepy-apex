@@ -11,6 +11,8 @@
   adapter triad `surface-agent-claude.md` / `surface-agent-codex.toml` /
   `surface-agent-opencode.md`, and the hub-building sources `_INDEX.md`, `routing-row.md`,
   `surface-standard.md`, and `surface-standard-core.md`.
+- The digest-pinned prior sources under `templates/prior/v1.0/` are part of the package but are
+  never rendered as output.
 - Does NOT own: the project-model values fed to templates (→ `skills` interview), the rendering
   implementation (→ `scripts`), or the target project's hub content.
 - Exemplar: `templates/surface-standard.md`
@@ -22,6 +24,10 @@
 - Entirely generated v1 Markdown places `<!-- steepy:generated:<artifact-id>:v1 -->` immediately
   after frontmatter (or on the first line without frontmatter); generated TOML places the equivalent
   `# steepy:generated:<artifact-id>:v1` on its first line.
+- Generated provenance is `v1`. When a released generated template changes, it keeps `v1`. Its
+  exact released source is copied to `templates/prior/<release line>/`. The scripts' prior registry
+  pins that source by sha256 and keys it by adapter kind, so an untouched earlier rendering is
+  recognized as stale, not customized. Never edit a registered prior source.
 - The canonical project bootstrap is a harness-neutral navigation router: it reads `AGENTS.md` and
   `.apex/_INDEX.md`, resolves minimum surface docs and the specialist, and invokes workflows by
   semantic skill name; coverage, gear, ratification, branch, and workflow-state ceremony stay in
@@ -51,7 +57,6 @@
   is limited to bounded workflow-header recovery discovery; and a user may explicitly authorize an
   exact path or broader work-area scope. This rule applies transitively to child agents, while only
   the phase orchestrator interprets the handoff.
-- Generated provenance remains unchanged at `v1`.
 - Templates do not define phase role maps, lifecycle transitions, envelope grammar, or
   harness-native invocation rendering; those remain outside the generated bootstrap contract.
 
