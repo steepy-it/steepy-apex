@@ -54,7 +54,9 @@ Add one governed surface through the common specialist planner.
 
    Do not reproduce planner provenance markers or hand-render an adapter in this skill. The standard
    remains create-only. If the surface is a repair of an incomplete scaffold, add `--repair`; repair
-   preserves existing artifacts and creates only absent members of the standard-plus-triad result.
+   keeps current artifacts and creates only absent members of the standard-plus-triad result.
+   An adapter byte-identical to an earlier canonical rendering is stale: the planner updates it to
+   the current rendering without a conflict question. Any other changed adapter is a conflict.
 
 3. In **active-v1** mode, do not edit generated or managed artifacts after the command: the public
    workflow has already made the root, routing row, standard, and triad agree. In
@@ -69,4 +71,5 @@ Add one governed surface through the common specialist planner.
 
    Fix coherence errors before reporting completion. Then rerun with `--repair`; a complete result
    must report every standard/triad member preserved and leave bytes, modes, and mtimes unchanged.
-   Report each member of the standard-plus-triad result as created or preserved.
+   Report each member of the standard-plus-triad result as created, updated, or preserved, and
+   report every other file the command lists as created or updated.

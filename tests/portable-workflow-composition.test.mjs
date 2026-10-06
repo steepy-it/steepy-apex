@@ -656,17 +656,23 @@ test('new-surface repairs and extends a v1.0 hub without an adapter conflict', (
     ]);
     assert.equal(repaired.code, 0, repaired.stderr);
     const normalized = normalizeProjectModel(model);
-    for (const [adapter, path] of [
+    const webTriad = [
       ['claude', '.claude/agents/web-agent.md'],
       ['codex', '.codex/agents/web-agent.toml'],
       ['opencode', '.opencode/agents/web-agent.md'],
-    ]) {
+    ];
+    for (const [adapter, path] of webTriad) {
       assert.equal(
         readFileSync(join(repairHub, path), 'utf8'),
         renderProjectArtifact(`web-agent-${adapter}`, normalized, templatesDir),
         path,
       );
+      // A replaced stale adapter is reported as updated, never as created.
+      assert.ok(repaired.stdout.split('\n').some((line) => (
+        line.startsWith('updated ') && line.includes(path)
+      )), `${path} must be reported as updated:\n${repaired.stdout}`);
     }
+    assert.doesNotMatch(repaired.stdout, /^created /mu);
     assert.deepEqual(portableEntries(collectViolations(repairHub)), []);
 
     // The new surface's owning directory exists before new-surface runs (check 10).
@@ -686,6 +692,15 @@ test('new-surface repairs and extends a v1.0 hub without an adapter conflict', (
     ]);
     assert.equal(extended.code, 0, extended.stderr);
     assert.doesNotMatch(extended.stderr, /web-agent-/u);
+    // Adding `api` also rewrites the other surface's stale triad; every rewrite is listed.
+    const extendedLines = extended.stdout.split('\n');
+    for (const [, path] of webTriad) {
+      assert.ok(extendedLines.some((line) => line.startsWith('updated ') && line.includes(path)),
+        `${path} must be reported as updated:\n${extended.stdout}`);
+    }
+    assert.ok(extendedLines.some((line) => (
+      line.startsWith('created ') && line.includes('.claude/agents/api-agent.md')
+    )), extended.stdout);
     assert.deepEqual(portableEntries(collectViolations(extendHub)), []);
   } finally {
     rmSync(repairHub, { recursive: true, force: true });

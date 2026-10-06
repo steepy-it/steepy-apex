@@ -82,14 +82,16 @@ test('fresh scaffold creates one standard and the Claude, Codex, and OpenCode ad
   const result = scaffold(args(hubRoot));
   const expectedAdapters = adapterPaths(hubRoot);
   assert.deepEqual(Object.keys(result), [
-    'standardPath', 'agentPath', 'adapterPaths', 'row', 'created', 'preserved', 'mode',
+    'standardPath', 'agentPath', 'adapterPaths', 'row', 'created', 'updated', 'preserved', 'otherWrites', 'mode',
   ]);
   assert.equal(result.mode, 'preparatory-unbound');
   assert.equal(result.standardPath, join(hubRoot, '.apex', 'standards', 'web.md'));
   assert.equal(result.agentPath, expectedAdapters.claude);
   assert.deepEqual(result.adapterPaths, expectedAdapters);
   assert.deepEqual(result.created, ['standard', 'claude', 'codex', 'opencode']);
+  assert.deepEqual(result.updated, []);
   assert.deepEqual(result.preserved, []);
+  assert.deepEqual(result.otherWrites, []);
   assert.equal(result.row, '| `web` | [standards/web.md](standards/web.md) | `web-agent` | — |');
   assert.equal(readFileSync(indexPath, 'utf8'), 'CUSTOM INDEX\n');
   const renderedStandard = readFileSync(result.standardPath, 'utf8');

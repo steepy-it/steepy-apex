@@ -27,6 +27,7 @@ const fx = (n) => join(here, 'fixtures', n);
 const templates = join(here, '..', 'templates');
 const validator = join(here, '..', 'scripts', 'validate-hub.mjs');
 const stopHook = join(here, '..', 'scripts', 'stop-hook.mjs');
+const newSurfaceScript = join(here, '..', 'scripts', 'new-surface.mjs');
 
 function runValidator(hub, timeout = 2_000, cwd) {
   return spawnSync(process.execPath, [validator, hub], { encoding: 'utf8', timeout, cwd });
@@ -857,6 +858,44 @@ test('portable v1: an untouched v1.0 preparatory triad exits 0 with three warns 
     assert.equal(result.stderr, WEB_AGENT_STALE_WARNS.map(({ msg }) => `  - warn: ${msg}\n`).join(''));
   } finally {
     rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('portable v1: new-surface --repair reports an untouched v1.0 preparatory triad as updated, then preserved', () => {
+  const library = preparatoryHub();
+  const cli = preparatoryHub();
+  const surface = { name: 'web', surfacePath: 'apps/web', agent: 'web-agent', templatesDir: templates, testCmd: 'npm test' };
+  try {
+    putAdapters(library, V1_0_PREPARATORY_ADAPTERS);
+    const result = scaffold({ ...surface, hubRoot: library, repair: true });
+    assert.deepEqual(
+      [result.created, result.updated, result.preserved],
+      [[], ['claude', 'codex', 'opencode'], ['standard']],
+    );
+
+    putAdapters(cli, V1_0_PREPARATORY_ADAPTERS);
+    const run = spawnSync(process.execPath, [
+      newSurfaceScript, '--name', 'web', '--path', 'apps/web', '--agent', 'web-agent',
+      '--test', 'npm test', '--hub', cli, '--repair',
+    ], { encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    const lines = run.stdout.split('\n');
+    for (const path of Object.keys(V1_0_PREPARATORY_ADAPTERS)) {
+      assert.ok(lines.some((line) => line.startsWith('updated ') && line.includes(path)),
+        `${path} must be reported as updated:\n${run.stdout}`);
+    }
+    assert.doesNotMatch(run.stdout, /^created /m);
+    assert.doesNotMatch(run.stdout, /partial surface|nothing to scaffold/);
+    assert.deepEqual(collectViolations(cli), []);
+
+    const rerun = scaffold({ ...surface, hubRoot: cli, repair: true });
+    assert.deepEqual(
+      [rerun.created, rerun.updated, rerun.preserved],
+      [[], [], ['standard', 'claude', 'codex', 'opencode']],
+    );
+  } finally {
+    rmSync(library, { recursive: true, force: true });
+    rmSync(cli, { recursive: true, force: true });
   }
 });
 
