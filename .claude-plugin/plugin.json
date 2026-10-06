@@ -1,6 +1,6 @@
 {
   "name": "steepy-apex",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Scaffold a governed context-engineering hub (.apex/ DAG + routing + coherence linter) into any repo.",
   "author": {
     "name": "steepy-it",
