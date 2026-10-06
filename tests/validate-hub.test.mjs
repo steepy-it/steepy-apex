@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 import {
   chmodSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdtempSync,
@@ -88,6 +89,167 @@ function putPortable(hub, path, content) {
   writeFileSync(join(hub, path), content);
 }
 
+// Copies `templates/` into a temp directory and writes the next adapter template text,
+// so the linter is proved before the real templates change. Full contents are written
+// (never `.replace` on the old text), so this stays valid after the real templates
+// change. Exactly two copies of this helper exist on purpose: this one and the one in
+// tests/project-scaffold.test.mjs. Keep them identical. The caller removes the directory
+// in `finally`.
+function nextTemplatesDir() {
+  const dir = mkdtempSync(join(tmpdir(), 'steepy-next-templates-'));
+  cpSync(templates, dir, { recursive: true });
+  writeFileSync(join(dir, 'surface-agent-claude.md'), [
+    '---',
+    'name: {{agent}}',
+    'description: >-',
+    '  Specialist for the {{surface}} surface. Use it for changes under {{path}}.',
+    'model: {{model}}',
+    '---',
+    '<!-- steepy:generated:{{agent}}-claude:v1 -->',
+    '',
+    '# {{agent}}',
+    '',
+    'You are the specialist agent for the `{{surface}}` surface at `{{path}}`.',
+    '',
+    'Run the `{{projectName}}-bootstrap` skill, then read the standard linked in the `{{surface}}` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '',
+  ].join('\n'));
+  writeFileSync(join(dir, 'surface-agent-opencode.md'), [
+    '---',
+    'description: >-',
+    '  Specialist for the {{surface}} surface. Use it for changes under {{path}}.',
+    'mode: subagent',
+    'model: {{model}}',
+    '---',
+    '<!-- steepy:generated:{{agent}}-opencode:v1 -->',
+    '',
+    '# {{agent}}',
+    '',
+    'You are the specialist agent for the `{{surface}}` surface at `{{path}}`.',
+    '',
+    'Run the `{{projectName}}-bootstrap` skill, then read the standard linked in the `{{surface}}` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '',
+  ].join('\n'));
+  writeFileSync(join(dir, 'surface-agent-codex.toml'), [
+    '# steepy:generated:{{agent}}-codex:v1',
+    '# Project description: {{description}}',
+    '# Surface path: {{path}}',
+    'name = "{{agent}}"',
+    'description = "Specialist agent for {{surface}} work."',
+    'developer_instructions = """',
+    'You are the {{agent}} specialist for the {{surface}} surface.',
+    '',
+    'Run the `{{projectName}}-bootstrap` skill, then read the standard linked in the `{{surface}}` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '"""',
+    '',
+  ].join('\n'));
+  return dir;
+}
+
+// Literal v1.0.0-v1.0.6 adapter renderings for the portable-demo triad that
+// portableHub() writes, keyed by path. Duplicated on purpose: rendered once from
+// `git show v1.0.0:templates/<name>` with `model: 'inherit'`, never computed from
+// templates/prior/ at test time.
+const V1_0_PORTABLE_DEMO_ADAPTERS = {
+  '.claude/agents/web-agent.md': [
+    '---',
+    'name: web-agent',
+    'description: >-',
+    '  Portable demo project.',
+    'model: inherit',
+    '---',
+    '<!-- steepy:generated:web-agent-claude:v1 -->',
+    '',
+    '# web-agent',
+    '',
+    'You are the specialist agent for the `web` surface at `apps/web`.',
+    '',
+    'Run the `portable-demo-bootstrap` skill, then read `.apex/standards/web.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '',
+  ].join('\n'),
+  '.codex/agents/web-agent.toml': [
+    '# steepy:generated:web-agent-codex:v1',
+    '# Project description: Portable demo project.',
+    '# Surface path: apps/web',
+    'name = "web-agent"',
+    'description = "Specialist agent for web work."',
+    'developer_instructions = """',
+    'You are the web-agent specialist for the web surface.',
+    '',
+    'Run the `portable-demo-bootstrap` skill, then read `.apex/standards/web.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '"""',
+    '',
+  ].join('\n'),
+  '.opencode/agents/web-agent.md': [
+    '---',
+    'description: >-',
+    '  Portable demo project.',
+    'mode: subagent',
+    'model: inherit',
+    '---',
+    '<!-- steepy:generated:web-agent-opencode:v1 -->',
+    '',
+    '# web-agent',
+    '',
+    'You are the specialist agent for the `web` surface at `apps/web`.',
+    '',
+    'Run the `portable-demo-bootstrap` skill, then read `.apex/standards/web.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '',
+  ].join('\n'),
+};
+
+// Literal v1.0.0-v1.0.6 adapter renderings for the unbound preparatory triad
+// (projectName `project`, empty description), keyed by path. Duplicated on purpose:
+// rendered once from `git show v1.0.0:templates/<name>` with `model: 'inherit'`,
+// never computed from templates/prior/ at test time.
+const V1_0_PREPARATORY_ADAPTERS = {
+  '.claude/agents/web-agent.md': [
+    '---',
+    'name: web-agent',
+    'description: >-',
+    '  ',
+    'model: inherit',
+    '---',
+    '<!-- steepy:generated:web-agent-claude:v1 -->',
+    '',
+    '# web-agent',
+    '',
+    'You are the specialist agent for the `web` surface at `apps/web`.',
+    '',
+    'Run the `project-bootstrap` skill, then read `.apex/standards/web.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '',
+  ].join('\n'),
+  '.codex/agents/web-agent.toml': [
+    '# steepy:generated:web-agent-codex:v1',
+    '# Project description: ',
+    '# Surface path: apps/web',
+    'name = "web-agent"',
+    'description = "Specialist agent for web work."',
+    'developer_instructions = """',
+    'You are the web-agent specialist for the web surface.',
+    '',
+    'Run the `project-bootstrap` skill, then read `.apex/standards/web.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '"""',
+    '',
+  ].join('\n'),
+  '.opencode/agents/web-agent.md': [
+    '---',
+    'description: >-',
+    '  ',
+    'mode: subagent',
+    'model: inherit',
+    '---',
+    '<!-- steepy:generated:web-agent-opencode:v1 -->',
+    '',
+    '# web-agent',
+    '',
+    'You are the specialist agent for the `web` surface at `apps/web`.',
+    '',
+    'Run the `project-bootstrap` skill, then read `.apex/standards/web.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
+    '',
+  ].join('\n'),
+};
+
 function portableHub() {
   const hub = mkdtempSync(join(tmpdir(), 'steepy-portable-v1-'));
   putPortable(hub, '.apex/_INDEX.md', [
@@ -165,51 +327,9 @@ function portableHub() {
     'Read `.agents/skills/portable-demo-bootstrap/SKILL.md` in full and execute that canonical bootstrap exactly.',
     '',
   ].join('\n'));
-  putPortable(hub, '.claude/agents/web-agent.md', [
-    '---',
-    'name: web-agent',
-    'description: >-',
-    '  Portable demo project.',
-    'model: inherit',
-    '---',
-    '<!-- steepy:generated:web-agent-claude:v1 -->',
-    '',
-    '# web-agent',
-    '',
-    'You are the specialist agent for the `web` surface at `apps/web`.',
-    '',
-    'Run the `portable-demo-bootstrap` skill, then read `.apex/standards/web.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
-    '',
-  ].join('\n'));
-  putPortable(hub, '.codex/agents/web-agent.toml', [
-    '# steepy:generated:web-agent-codex:v1',
-    '# Project description: Portable demo project.',
-    '# Surface path: apps/web',
-    'name = "web-agent"',
-    'description = "Specialist agent for web work."',
-    'developer_instructions = """',
-    'You are the web-agent specialist for the web surface.',
-    '',
-    'Run the `portable-demo-bootstrap` skill, then read `.apex/standards/web.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
-    '"""',
-    '',
-  ].join('\n'));
-  putPortable(hub, '.opencode/agents/web-agent.md', [
-    '---',
-    'description: >-',
-    '  Portable demo project.',
-    'mode: subagent',
-    'model: inherit',
-    '---',
-    '<!-- steepy:generated:web-agent-opencode:v1 -->',
-    '',
-    '# web-agent',
-    '',
-    'You are the specialist agent for the `web` surface at `apps/web`.',
-    '',
-    'Run the `portable-demo-bootstrap` skill, then read `.apex/standards/web.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
-    '',
-  ].join('\n'));
+  for (const [path, content] of Object.entries(V1_0_PORTABLE_DEMO_ADAPTERS)) {
+    putPortable(hub, path, content);
+  }
   return hub;
 }
 
@@ -505,8 +625,109 @@ test('portable v1: a full project fails when producer adapters target single-fil
     /\.apex\/standards\/web\.md/,
   );
   const messages = portableErrors(hub).map(({ msg }) => msg).join('\n');
-  assert.match(messages, /portable-v1:.*standard.*adapter.*mismatch/i);
+  assert.match(messages, /portable-v1: standard\/producer mismatch for surface 'web'/);
   assert.equal(captureMain(['--quiet', hub]).code, 1);
+});
+
+// GC10 warn text for one untouched v1.0.0-v1.0.6 web-agent adapter.
+function staleWarn(adapter, path) {
+  return {
+    level: 'warn',
+    msg: `portable-v1: web-agent ${adapter} adapter at ${path} is the v1.0.0-v1.0.6 rendering; init repair updates it to the current rendering`,
+  };
+}
+
+const WEB_AGENT_STALE_WARNS = [
+  staleWarn('claude', '.claude/agents/web-agent.md'),
+  staleWarn('codex', '.codex/agents/web-agent.toml'),
+  staleWarn('opencode', '.opencode/agents/web-agent.md'),
+];
+
+function portableEntries(violations) {
+  return violations.filter(({ msg }) => msg.startsWith('portable-v1:'));
+}
+
+function putAdapters(hub, adapters) {
+  for (const [path, content] of Object.entries(adapters)) putPortable(hub, path, content);
+}
+
+test('portable v1: untouched v1.0 adapters in a bound hub only warn', () => {
+  const next = nextTemplatesDir();
+  const hub = portableHub();
+  try {
+    // GC12: write the v1.0 literals explicitly instead of relying on portableHub().
+    putAdapters(hub, V1_0_PORTABLE_DEMO_ADAPTERS);
+    const violations = collectViolations(hub, { templatesDir: next });
+    assert.deepEqual(violations.filter((item) => item.level === 'error'), [], JSON.stringify(violations));
+    assert.deepEqual(portableEntries(violations), WEB_AGENT_STALE_WARNS);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+    rmSync(next, { recursive: true, force: true });
+  }
+});
+
+test('portable v1: any byte beyond a bound v1.0 adapter stays customized', () => {
+  const path = '.claude/agents/web-agent.md';
+  const rendering = V1_0_PORTABLE_DEMO_ADAPTERS[path];
+  const cases = [
+    ['one extra trailing newline', `${rendering}\n`],
+    ['one doubled inner space', rendering.replace('You are the specialist', 'You are  the specialist')],
+    ['CRLF line endings', rendering.replaceAll('\n', '\r\n')],
+  ];
+  const next = nextTemplatesDir();
+  const hub = portableHub();
+  try {
+    putAdapters(hub, V1_0_PORTABLE_DEMO_ADAPTERS);
+    for (const [name, observed] of cases) {
+      assert.notEqual(observed, rendering, name);
+      putPortable(hub, path, observed);
+      assert.deepEqual(portableEntries(collectViolations(hub, { templatesDir: next })), [
+        {
+          level: 'error',
+          msg: 'portable-v1: web-agent claude adapter at .claude/agents/web-agent.md is customized',
+        },
+        ...WEB_AGENT_STALE_WARNS.slice(1),
+      ], name);
+    }
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+    rmSync(next, { recursive: true, force: true });
+  }
+});
+
+test('portable v1: an untouched v1.0 preparatory triad stays compatible with one warn per adapter', () => {
+  const next = nextTemplatesDir();
+  const hub = preparatoryHub();
+  try {
+    putAdapters(hub, V1_0_PREPARATORY_ADAPTERS);
+    const violations = collectViolations(hub, { templatesDir: next });
+    assert.deepEqual(violations.filter((item) => item.level === 'error'), [], JSON.stringify(violations));
+    assert.deepEqual(portableEntries(violations), WEB_AGENT_STALE_WARNS);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+    rmSync(next, { recursive: true, force: true });
+  }
+});
+
+test('portable v1: a drifted v1.0 preparatory adapter closes validation', () => {
+  const path = '.claude/agents/web-agent.md';
+  const drifted = V1_0_PREPARATORY_ADAPTERS[path].replace('You are the specialist', 'You are  the specialist');
+  assert.notEqual(drifted, V1_0_PREPARATORY_ADAPTERS[path]);
+  const next = nextTemplatesDir();
+  const hub = preparatoryHub();
+  try {
+    putAdapters(hub, V1_0_PREPARATORY_ADAPTERS);
+    putPortable(hub, path, drifted);
+    const errors = collectViolations(hub, { templatesDir: next }).filter((item) => item.level === 'error');
+    assert.ok(errors.length > 0, 'a drifted preparatory adapter fell through');
+    assert.ok(
+      errors.some(({ msg }) => msg === 'portable-v1: project instructions at AGENTS.md are missing'),
+      JSON.stringify(errors),
+    );
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+    rmSync(next, { recursive: true, force: true });
+  }
 });
 
 test('portable v1: managed root blocks require producer placement and accept producer-preserved content', () => {
