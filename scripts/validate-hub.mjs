@@ -17,6 +17,7 @@ import {
   countActiveClaudeImports,
   normalizeProjectModel,
   parseProjectInstructions,
+  priorCanonicalRelease,
   renderProjectArtifact,
 } from './project-scaffold.mjs';
 
@@ -377,12 +378,12 @@ function routingRows(indexText) {
   return rows;
 }
 
-function renderBootstrap(model) {
-  return renderProjectArtifact('project-bootstrap', normalizedProject(model));
+function renderBootstrap(model, templatesDir) {
+  return renderProjectArtifact('project-bootstrap', normalizedProject(model), templatesDir);
 }
 
-function renderBootstrapStub(model) {
-  return renderProjectArtifact('claude-bootstrap-stub', normalizedProject(model));
+function renderBootstrapStub(model, templatesDir) {
+  return renderProjectArtifact('claude-bootstrap-stub', normalizedProject(model), templatesDir);
 }
 
 function normalizedProject(model) {
@@ -395,11 +396,24 @@ function normalizedProject(model) {
   });
 }
 
-function renderSurfaceAdapter(adapter, model, surface) {
+function renderSurfaceAdapter(adapter, model, surface, templatesDir) {
   return renderProjectArtifact(`${surface.agent}-${adapter}`, normalizedProject({
     ...model,
     surfaces: [surface],
-  }));
+  }), templatesDir);
+}
+
+// The release label of the pinned prior canonical rendering that `text` equals
+// byte for byte, or null. Uses the same single-surface model as renderSurfaceAdapter.
+function priorSurfaceAdapterRelease(adapter, model, surface, text, templatesDir) {
+  return priorCanonicalRelease(`${surface.agent}-${adapter}`, text, normalizedProject({
+    ...model,
+    surfaces: [surface],
+  }), templatesDir);
+}
+
+function staleAdapterMessage(agent, adapter, path, release) {
+  return `${agent} ${adapter} adapter at ${path} is the ${release} rendering; init repair updates it to the current rendering`;
 }
 
 function classifyManaged(text, artifactId, expectedContent) {
@@ -466,14 +480,14 @@ function routedStandardIdentity(hubRoot, surface, target, reader) {
   };
 }
 
-function preparatoryTriadState(hubRoot, indexText, generatedCandidates, candidateResults, reader) {
+function preparatoryTriadState(hubRoot, indexText, generatedCandidates, candidateResults, reader, templatesDir) {
   const rows = routingRows(indexText);
   const generatedFiles = generatedCandidates.map((file) => ({
     file,
     path: displayNativePath(file),
     content: candidateResults.get(file)?.text,
   })).filter(({ content }) => content !== undefined && generatedMarkers(content).length > 0);
-  if (generatedFiles.length === 0) return { present: false, exact: false };
+  if (generatedFiles.length === 0) return { present: false, exact: false, stale: [] };
 
   const expected = new Map();
   const triads = [];
@@ -499,32 +513,44 @@ function preparatoryTriadState(hubRoot, indexText, generatedCandidates, candidat
     const surfacePath = standardIdentity.ownerPath;
     const surface = { name, path: surfacePath, agent, testCmd: '' };
     const model = { projectName: 'project', description: '', devCommands: [], surfaces: [surface] };
-    const paths = [];
+    const entries = [];
     try {
       for (const adapter of ['claude', 'codex', 'opencode']) {
         const extension = adapter === 'codex' ? 'toml' : 'md';
         const path = `.${adapter}/agents/${agent}.${extension}`;
-        paths.push(path);
-        expected.set(path, renderSurfaceAdapter(adapter, model, surface));
+        entries.push({ path, adapter, agent, model, surface });
+        expected.set(path, renderSurfaceAdapter(adapter, model, surface, templatesDir));
       }
     } catch {
       routingClosed = false;
       continue;
     }
-    triads.push(paths);
+    triads.push(entries);
   }
 
+  // A routed adapter is exact when it equals the current rendering, or when its
+  // bytes equal a pinned prior canonical rendering; the latter is recorded as stale.
+  const stale = [];
+  const isExactOrStale = ({ path, adapter, agent, model, surface }) => {
+    const text = reader.read(path).text;
+    if (text === expected.get(path)) return true;
+    if (typeof text !== 'string') return false;
+    const release = priorSurfaceAdapterRelease(adapter, model, surface, text, templatesDir);
+    if (release === null) return false;
+    stale.push({ agent, adapter, path, release });
+    return true;
+  };
   const candidatePathsAreCanonical = generatedFiles.every(({ path }) => expected.has(path));
-  const routedTriadsAreExact = triads.length === rows.length && triads.every((paths) => paths.every((path) => (
-    reader.read(path).text === expected.get(path)
-  )));
-  const expectedCandidateCount = triads.reduce((count, paths) => count + paths.length, 0);
+  const routedTriadsAreExact = triads.length === rows.length
+    && triads.every((entries) => entries.every(isExactOrStale));
+  const expectedCandidateCount = triads.reduce((count, entries) => count + entries.length, 0);
   return {
     present: true,
     exact: routingClosed
       && candidatePathsAreCanonical
       && routedTriadsAreExact
       && generatedFiles.length === expectedCandidateCount,
+    stale,
   };
 }
 
@@ -640,9 +666,10 @@ function reachableMarkdownFiles(reader, indexPath) {
   return visited;
 }
 
-function validatePortableV1(hubRoot, indexText, reader) {
+function validatePortableV1(hubRoot, indexText, reader, templatesDir) {
   const violations = [];
   const error = (msg) => violations.push({ level: 'error', msg: `portable-v1: ${msg}` });
+  const warn = (msg) => violations.push({ level: 'warn', msg: `portable-v1: ${msg}` });
   const rootCandidates = ['AGENTS.md', 'CLAUDE.md'];
   const generatedCandidates = ['.agents', '.claude', '.codex', '.opencode']
     .flatMap((provider) => walkProviderFiles(
@@ -670,14 +697,19 @@ function validatePortableV1(hubRoot, indexText, reader) {
       .test(rootEvidenceResults.get(file)?.text ?? '')
   ));
   const preparatory = hasRootEvidence
-    ? { present: false, exact: false }
-    : preparatoryTriadState(hubRoot, indexText, generatedCandidates, candidateResults, reader);
+    ? { present: false, exact: false, stale: [] }
+    : preparatoryTriadState(hubRoot, indexText, generatedCandidates, candidateResults, reader, templatesDir);
   // New-surface may prepare an exact, complete triad before project identity exists.
   // Only that whole producer-rendered set is compatible; any root/bootstrap signal
   // or any partial/drifted/mixed triad activates the ordinary closed v1 contract.
   const hasPortableEvidence = hasRootEvidence || (preparatory.present && !preparatory.exact);
   if (!hasPortableEvidence) {
-    if (preparatory.exact) return [];
+    if (preparatory.exact) {
+      for (const { agent, adapter, path, release } of preparatory.stale) {
+        warn(staleAdapterMessage(agent, adapter, path, release));
+      }
+      return violations;
+    }
     const hasUnsupportedArtifacts = reader.inspect('CLAUDE.md', { reportUnsafe: false }).state !== 'missing'
       || walkProviderFiles(reader, join('.claude', 'agents'), (file) => file.endsWith('.md')).length > 0
       || walkProviderFiles(reader, join('.claude', 'skills'), (file) => basename(file) === 'SKILL.md').length > 0;
@@ -706,7 +738,7 @@ function validatePortableV1(hubRoot, indexText, reader) {
       error(`standard identity mismatch for surface '${surface}' at ${standard}`);
     }
     if (standardIdentity && standard !== `standards/${surface}.md`) {
-      error(`standard/adapter mismatch for surface '${surface}': routing targets ${standard}, but canonical project adapters target standards/${surface}.md`);
+      error(`standard/producer mismatch for surface '${surface}': routing targets ${standard}, but the bound v1 project producer supports only standards/${surface}.md`);
     }
     parsedRows.push({ surface, agent, standard });
   }
@@ -799,13 +831,13 @@ function validatePortableV1(hubRoot, indexText, reader) {
         label: 'canonical bootstrap',
         artifactId: `${model.projectName}-bootstrap`,
         path: `.agents/skills/${model.projectName}-bootstrap/SKILL.md`,
-        content: renderBootstrap(model),
+        content: renderBootstrap(model, templatesDir),
       },
       {
         label: 'Claude bootstrap stub',
         artifactId: `${model.projectName}-bootstrap-stub`,
         path: `.claude/skills/${model.projectName}-bootstrap/SKILL.md`,
-        content: renderBootstrapStub(model),
+        content: renderBootstrapStub(model, templatesDir),
       },
     ];
     for (const artifact of bootstrapArtifacts) {
@@ -855,9 +887,13 @@ function validatePortableV1(hubRoot, indexText, reader) {
       }
       const content = result.text;
       const reason = modelSurface
-        ? classifyGenerated(content, artifactId, renderSurfaceAdapter(adapter, model, modelSurface))
+        ? classifyGenerated(content, artifactId, renderSurfaceAdapter(adapter, model, modelSurface, templatesDir))
         : classifyGenerated(content, artifactId, normalizedLf(content));
-      if (reason) error(`${row.agent} ${adapter} adapter at ${path} is ${reason}`);
+      const release = reason === 'customized' && modelSurface
+        ? priorSurfaceAdapterRelease(adapter, model, modelSurface, content, templatesDir)
+        : null;
+      if (release) warn(staleAdapterMessage(row.agent, adapter, path, release));
+      else if (reason) error(`${row.agent} ${adapter} adapter at ${path} is ${reason}`);
     }
   }
 
@@ -942,7 +978,8 @@ export function collectViolations(hubRoot, opts = {}) {
     [],
     { skipDir: skipWorkDir },
   );
-  violations.push(...validatePortableV1(admittedRoot, indexText, reader));
+  // opts.templatesDir is a test seam for the packaged-template default; main() never sets it.
+  violations.push(...validatePortableV1(admittedRoot, indexText, reader, opts.templatesDir));
   const routingRowTokens = backtickTokens(indexText, isRoutingTableRow);
   const seenWorkLinkViolations = new Set();
   const rejectWorkLink = (fileRelative, target) => {

@@ -85,6 +85,10 @@
 - **Generated artifact provenance** — the v1 marker carried by an entirely generated
   scaffold artifact. It identifies the generated artifact type without claiming ownership
   of bytes outside a mixed-artifact managed block.
+- **Prior canonical rendering** — the exact output of a released generated template that has
+  since changed while keeping `v1` provenance, rendered from its digest-pinned source under
+  `templates/prior/` with the current variables. An artifact byte-identical to it is stale (a
+  planner update and a linter warn), not customized; any other byte stays customized.
 - **Project scaffold plan** — the validated, public preview from `project-scaffold.mjs`:
   exact create/update/no-op operations plus conflicts that require an explicit offered
   resolution before apply.

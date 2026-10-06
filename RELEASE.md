@@ -110,6 +110,16 @@ and `.codex-plugin/plugin.json` in three-way lockstep at completion, using one s
 A `## vX.Y.Z (YYYY-MM-DD)` section is added to `CHANGELOG.md`. Bump and
 changelog land as one commit on the branch before the PR opens.
 
+**Upgrade note for existing hubs (first release after 1.0.6).** Carry it into that
+release's `CHANGELOG.md` section. The specialist adapter templates changed while their
+generated provenance stayed `v1`: Claude and OpenCode descriptions now name the surface and
+its path, and all three adapters reach the standard through the surface's routing row in
+`.apex/_INDEX.md`. Untouched v1.0.0-v1.0.6 adapters stay valid: `validate-hub` exits 0 with
+one warning per adapter (silent under `--quiet` and in the Stop hook), and
+`/steepy-apex:init` repair or `/steepy-apex:new-surface` rewrites them to the current
+rendering with no conflict question. An adapter changed by even one byte or line ending
+remains a `customized` conflict with `replace` or `abort`.
+
 **Interrupted bumps.** The writer provides recoverable per-file atomicity, not a
 multi-file atomic transaction. It holds the existing repository scaffold lease for cooperating
 writers, validates all initial versions, and durably records exact before/after bytes and modes

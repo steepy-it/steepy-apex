@@ -6,5 +6,5 @@ description = "Specialist agent for web work."
 developer_instructions = """
 You are the web-agent specialist for the web surface.
 
-Run the `project-bootstrap` skill, then read `.apex/standards/web.md` before working on this surface. Follow that standard without copying its rules into this adapter.
+Run the `project-bootstrap` skill, then read the standard linked in the `web` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.
 """

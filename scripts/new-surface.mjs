@@ -318,8 +318,9 @@ function conflictDetails(conflicts) {
 }
 
 // `repair: true` repairs the current public layout: current generated adapters and an existing
-// standard are preserved, noncanonical adapters are refused, and missing
-// targets are created. Every target is planned before the first output write.
+// standard are preserved, an adapter byte-identical to a prior canonical rendering is updated,
+// any other noncanonical adapter is refused, and missing targets are created. Every target is
+// planned before the first output write.
 export function scaffold({
   name,
   surfacePath,
@@ -429,18 +430,27 @@ export function scaffold({
       { name, path: surfacePath, testCmd },
     );
 
-  const operationByAdapter = new Map(plan.operations.map((operation) => [
-    ADAPTERS.find((adapterName) => operation.artifactId === `${agent}-${adapterName}`),
-    operation,
-  ]));
+  const triadArtifactIds = new Map(ADAPTERS.map((adapterName) => [`${agent}-${adapterName}`, adapterName]));
+  const operationByAdapter = new Map(plan.operations
+    .filter(({ artifactId }) => triadArtifactIds.has(artifactId))
+    .map((operation) => [triadArtifactIds.get(operation.artifactId), operation]));
+  // A `create` operation is a new file; every replace kind rewrites an existing one
+  // (a stale earlier rendering, or a customization the user chose to replace).
   const created = [];
+  const updated = [];
   const preserved = [];
   if (haveStandard) preserved.push('standard');
   else created.push('standard');
   for (const adapterName of ADAPTERS) {
-    if (operationByAdapter.has(adapterName)) created.push(adapterName);
-    else preserved.push(adapterName);
+    const operation = operationByAdapter.get(adapterName);
+    if (operation === undefined) preserved.push(adapterName);
+    else if (operation.kind === 'create') created.push(adapterName);
+    else updated.push(adapterName);
   }
+  // Active-v1 plans the full Project, so it may also write files outside this triad.
+  const otherWrites = plan.operations
+    .filter(({ artifactId }) => !triadArtifactIds.has(artifactId))
+    .map(({ kind, path }) => ({ path: join(hubRoot, path), kind }));
 
   let standardStage = null;
   let routingStage = null;
@@ -496,7 +506,9 @@ export function scaffold({
     adapterPaths,
     row,
     created,
+    updated,
     preserved,
+    otherWrites,
     mode,
   };
 }
@@ -550,12 +562,20 @@ export function main(argv = process.argv.slice(2)) {
   }
   const pathFor = (artifact) => (artifact === 'standard' ? res.standardPath : res.adapterPaths[artifact]);
   for (const artifact of res.created) console.log(`created ${pathFor(artifact)}`);
+  for (const artifact of res.updated) console.log(`updated ${pathFor(artifact)} (replaced with the current rendering)`);
   for (const artifact of res.preserved) console.log(`preserved ${pathFor(artifact)} (already exists)`);
+  for (const { kind, path } of res.otherWrites) {
+    if (kind === 'create') console.log(`created ${path}`);
+    else if (kind === 'replace-generated') console.log(`updated ${path} (replaced with the current rendering)`);
+    else console.log(`updated ${path}`);
+  }
   if (res.mode === 'active-v1') {
     console.log('\nactive-v1 root instructions and routing are coherent with the surface result.');
-  } else if (res.created.length === 0) {
+  } else if (res.created.length === 0 && res.updated.length === 0) {
     console.log('\nnothing to scaffold — all targets already exist; its routing row should already be in .apex/_INDEX.md.');
-  } else if (res.preserved.length === 0) {
+  } else if (res.created.length === 0) {
+    console.log('\nUpdated existing adapters to the current rendering; its routing row should already be in .apex/_INDEX.md (leave it as-is).');
+  } else if (res.preserved.length === 0 && res.updated.length === 0) {
     // A brand-new (or fully-missing) surface: its routing row still needs to be added.
     console.log('\nPaste this row into .apex/_INDEX.md routing table (the script does not edit _INDEX.md):\n');
     console.log(res.row);

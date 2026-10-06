@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.1.0 (2026-10-06)
+
+- Specialist adapters reach their standard through the surface's row in the routing
+  table in `.apex/_INDEX.md` instead of a `standards/<surface>.md` path, so a surface
+  split into the modular form keeps a valid untouched adapter. Claude and OpenCode
+  descriptions now name the surface and its path, so each specialist is distinct.
+- A digest-pinned registry of prior canonical renderings (`templates/prior/v1.0/`)
+  recognizes untouched v1.0.0-v1.0.6 adapters as stale: `validate-hub` warns instead
+  of erroring, and the scaffold planner updates them with no conflict question.
+- `new-surface --repair` reports each adapter as created, updated, or preserved, and
+  lists every other file it writes.
+- Upgrade note for existing hubs: the specialist adapter templates changed while their
+  generated provenance stayed `v1`. Untouched v1.0.0-v1.0.6 adapters stay valid:
+  `validate-hub` exits 0 with one warning per adapter (silent under `--quiet` and in
+  the Stop hook), and `/steepy-apex:init` repair or `/steepy-apex:new-surface` rewrites
+  them to the current rendering with no conflict question. An adapter changed by even
+  one byte or line ending remains a `customized` conflict with `replace` or `abort`.
+
 ## v1.0.6 (2026-10-06)
 
 - Correct stale hub facts: the glossary's managed-block markers and template names,

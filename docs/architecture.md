@@ -210,6 +210,7 @@ Markdown templates with `{{placeholder}}` variables — project instruction arti
 | `project-bootstrap-skill.md` | The canonical, harness-neutral project bootstrap under `.agents/skills/`. |
 | `claude-bootstrap-stub.md` | Claude's thin stub pointing to the canonical bootstrap. |
 | `surface-agent-claude.md` / `surface-agent-codex.toml` / `surface-agent-opencode.md` | One thin native adapter triad for each routed surface. |
+| `prior/v1.0/surface-agent-claude.md` / `prior/v1.0/surface-agent-codex.toml` / `prior/v1.0/surface-agent-opencode.md` | Nothing: the digest-pinned v1.0.0-v1.0.6 adapter sources, rendered only so repair and the linter recognize an untouched earlier adapter as a stale update. |
 | `_INDEX.md` | The `.apex/` hub root — the DAG root every doc is reachable from. |
 | `surface-standard.md` | A per-surface standard doc. |
 | `routing-row.md` | One row of the routing table. |

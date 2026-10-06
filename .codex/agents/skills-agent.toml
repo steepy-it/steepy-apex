@@ -6,5 +6,5 @@ description = "Specialist agent for skills work."
 developer_instructions = """
 You are the skills-agent specialist for the skills surface.
 
-Run the `steepy-apex-bootstrap` skill, then read `.apex/standards/skills.md` before working on this surface. Follow that standard without copying its rules into this adapter.
+Run the `steepy-apex-bootstrap` skill, then read the standard linked in the `skills` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.
 """

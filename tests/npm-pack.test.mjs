@@ -149,6 +149,9 @@ test('npm tarball includes the portable scaffold runtime, v1 sources, and canoni
     'templates/surface-agent-claude.md',
     'templates/surface-agent-codex.toml',
     'templates/surface-agent-opencode.md',
+    'templates/prior/v1.0/surface-agent-claude.md',
+    'templates/prior/v1.0/surface-agent-codex.toml',
+    'templates/prior/v1.0/surface-agent-opencode.md',
   ], 'portable scaffold payload');
 });
 

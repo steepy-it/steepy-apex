@@ -6,5 +6,5 @@ description = "Specialist agent for scripts work."
 developer_instructions = """
 You are the scripts-agent specialist for the scripts surface.
 
-Run the `steepy-apex-bootstrap` skill, then read `.apex/standards/scripts.md` before working on this surface. Follow that standard without copying its rules into this adapter.
+Run the `steepy-apex-bootstrap` skill, then read the standard linked in the `scripts` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.
 """
