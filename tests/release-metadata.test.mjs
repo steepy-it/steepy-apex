@@ -648,10 +648,8 @@ test('tracked PNGs outside tests/ carry no caBX chunk', () => {
   }
 });
 
-test('docs/workflow.md shows the gears diagram through one Markdown image only', () => {
-  const GEARS_ALT = 'Four workflow gears: Gear 1 implements directly and checks the hub; Gear 2 adds a light spec, self-review and tests; Gear 3 runs brainstorm, plan, implement and review in manual or autopilot mode; Gear 4 runs an authorized, bounded autonomous loop followed by review.';
+test('docs/workflow.md does not reference the gears diagram', () => {
   const workflow = readFileSync(join(root, 'docs/workflow.md'), 'utf8');
-  assert.equal(workflow.split('workflow-gears.png').length - 1, 1);
-  assert.ok(workflow.split('\n').includes(`![${GEARS_ALT}](../assets/workflow-gears.png)`));
+  assert.ok(!workflow.includes('workflow-gears.png'));
   assert.doesNotMatch(workflow, /<img\b|<picture\b|<a\b/i);
 });

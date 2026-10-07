@@ -19,8 +19,6 @@ Every verdict carries `file:line` evidence. Cross that verdict with how conseque
 | **3** | GAP + high value, or irreversible | Full chain: brainstorm → plan → implement → review. |
 | **4** | Closed design + machine-verifiable goal + human confirmation | Autonomous bounded loop: author the goal contract, the loop iterates without per-turn gates, review morning-after. |
 
-![Four workflow gears: Gear 1 implements directly and checks the hub; Gear 2 adds a light spec, self-review and tests; Gear 3 runs brainstorm, plan, implement and review in manual or autopilot mode; Gear 4 runs an authorized, bounded autonomous loop followed by review.](../assets/workflow-gears.png)
-
 In gear 3, subagent reviewers are spent only on the **code diff** (per-task and whole-branch); prose artifacts (spec, plan) get a self-review plus a human approval gate — blocking in manual drive, and in autopilot the plan gate collapses to a non-blocking checkpoint (the contract carries the pre-authorization). The entry records the ratified gear once; downstream phases honor their accepted artifact metadata or manifest contract scalars without reopening undeclared upstream work.
 
 Gear 2 takes the lean short circuit: `brainstorm` produces a READY light spec whose default next
