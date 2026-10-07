@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.2 (2026-10-07)
+
+- The README has a "Data and external services" section. It states that steepy-apex has
+  no server and sends no telemetry, and lists the services skills reach: the autopilot
+  harness's model provider, the public model pages that `check` reads, and GitHub for the
+  pull request that `review` opens after confirmation.
+
 ## v1.1.1 (2026-10-07)
 
 - The Release workflow appends one payload commit per new version to the
