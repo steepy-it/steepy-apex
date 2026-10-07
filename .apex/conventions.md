@@ -361,9 +361,10 @@ served verbatim to every harness; per-harness manifests and thin runtime adapter
   root-anchored denylist `tests/`, `.github/`, `.codex-plugin/`, `CLAUDE.md`; no file
   content is rewritten, so fixes land on `main` and both channels share them. Why: the
   directory scans the whole plugin folder and puts every version that ships dev files
-  referencing images or credential-shaped names into reviewer holds; a clean payload keeps
-  versions out of reviewer holds. Repository and folder are fixed at submission, so this is
-  hard to reverse.
+  referencing images or credential-shaped names into reviewer holds. The payload removes
+  those dev-file causes, but the scanner is heuristic and can still raise reviewer holds:
+  submit with 0 Blocking and record each remaining hold with its reason. Repository and
+  folder are fixed at submission, so this is hard to reverse.
 - **Scoping:** this policy governs THIS repo's own automation. The shipped `review`
   skill's bump step self-disables in target repos that lack `scripts/bump-version.mjs`
   + `.github/workflows/version-gate.yml`.

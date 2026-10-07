@@ -44,7 +44,7 @@ claude plugin validate .
 
 Then run the local marketplace and throwaway repo smoke tests documented in `RELEASE.md`.
 
-Finally, press **Validate** in the developer portal on branch `claude-directory`, and submit for review only when it reports 0 Blocking results and 0 Policy holds.
+Finally, press **Validate** in the developer portal on branch `claude-directory`, and submit for review only when it reports 0 Blocking results. The portal scanner is heuristic, so Policy holds and Warnings can remain on a clean payload: record each one with the reason you accept it.
 
 ## Review notes
 

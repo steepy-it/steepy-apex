@@ -173,7 +173,8 @@ The Claude plugin directory scans the whole plugin folder of the submitted branc
 the payload branch `claude-directory`, never `main`. The Release workflow appends one commit
 per new version, built by `scripts/publish-directory-branch.mjs` from the release commit minus
 `tests/`, `.github/`, `.codex-plugin/` and `CLAUDE.md`. The branch is append-only and never
-force-pushed.
+force-pushed. The script copies the release commit's subject through `git log`, so on any host
+that runs it, leave `i18n.logOutputEncoding` and `i18n.commitEncoding` unset or set to UTF-8.
 
 Before submitting, run:
 
