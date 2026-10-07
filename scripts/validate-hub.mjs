@@ -20,6 +20,7 @@ import {
   priorCanonicalRelease,
   renderProjectArtifact,
 } from './project-scaffold.mjs';
+import { RUN_DESCRIPTOR_PATH, parseRunDescriptor, nextStepFor } from './inception-state.mjs';
 
 // A standard past this many lines is a candidate for the modular folder form
 // (a directory of smaller files instead of one long one). This is a `warn`, not
@@ -27,6 +28,17 @@ import {
 const STANDARD_WARN_LINES = 150;
 const MAX_STABLE_FILE_BYTES = 1024 * 1024;
 const ROOT_ADMISSION = Symbol('root-admission');
+// Private reader option: admits exactly `.apex/inception/run.json` through the
+// local-area exclusion. Only the pre-hub descriptor read passes it.
+const RUN_DESCRIPTOR_READ = Symbol('run-descriptor-read');
+const RUN_DESCRIPTOR_COMPONENTS = RUN_DESCRIPTOR_PATH.split('/');
+// Private collectViolations option: receives the pre-hub run status that the
+// same descriptor read produced, so main() never reads the descriptor twice.
+const PRE_HUB_STATUS = Symbol('pre-hub-status');
+// Descriptor text is strict UTF-8, as in the inception helper: an invalid byte
+// is a parse failure, never a silent U+FFFD. `ignoreBOM` keeps a BOM for JSON
+// parsing to reject.
+const STRICT_UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 function displayNativePath(path) {
   return sep === '/' ? path : path.split(sep).join('/');
@@ -161,7 +173,9 @@ function createStableReader(hubRoot, violations, rootAdmission = admitHubRoot(hu
   };
   if (rootAdmission.state === 'unsafe') report('hub root', rootAdmission.reason);
 
-  function inspect(rawPath, { base = '', kind = 'file', reportUnsafe = true } = {}) {
+  function inspect(rawPath, options = {}) {
+    const { base = '', kind = 'file', reportUnsafe = true } = options;
+    const descriptorRead = options[RUN_DESCRIPTOR_READ] === true;
     if (typeof rawPath !== 'string' || rawPath.length === 0 || isAbsolute(rawPath)) {
       if (reportUnsafe) report(rawPath || '.', 'escapes the repository root');
       return { state: 'unsafe' };
@@ -171,6 +185,14 @@ function createStableReader(hubRoot, violations, rootAdmission = admitHubRoot(hu
     const baseParts = splitNativePath(base).filter((part) => part !== '' && part !== '.');
     const rawParts = splitNativePath(rawPath);
     const display = displayNativePath([base, rawPath].filter(Boolean).join(sep));
+    // The descriptor admission takes the exact components `.apex`, `inception`,
+    // `run.json`: no base, no `.`/`..`, no other spelling.
+    if (descriptorRead && (base !== '' || kind !== 'file'
+      || rawParts.length !== RUN_DESCRIPTOR_COMPONENTS.length
+      || rawParts.some((part, index) => part !== RUN_DESCRIPTOR_COMPONENTS[index]))) {
+      if (reportUnsafe) report(display, 'is not the inception run descriptor');
+      return { state: 'unsafe', label: display };
+    }
     const stack = [];
     let cursor = root;
     const parts = [...baseParts, ...rawParts];
@@ -191,7 +213,7 @@ function createStableReader(hubRoot, violations, rootAdmission = admitHubRoot(hu
       const candidateStack = [...stack, part];
       const candidateRel = candidateStack.join('/');
       const lexicalArea = localAreaOf(candidateRel);
-      if (lexicalArea) {
+      if (lexicalArea && !(descriptorRead && lexicalArea.name === 'inception')) {
         if (reportUnsafe) report(display, `enters excluded ${lexicalArea.area}`);
         return { state: 'unsafe', label: display, physicalReason: lexicalArea.physicalReason };
       }
@@ -226,7 +248,10 @@ function createStableReader(hubRoot, violations, rootAdmission = admitHubRoot(hu
       const reservedArea = stat.isDirectory()
         ? reservedAreaIdentities.find(({ dev, ino }) => stat.dev === dev && stat.ino === ino)
         : undefined;
-      if (reservedArea) {
+      const admittedArea = descriptorRead
+        && reservedArea?.name === 'inception'
+        && candidateRel === reservedArea.area;
+      if (reservedArea && !admittedArea) {
         if (reportUnsafe) report(display, `enters excluded ${reservedArea.area}`);
         return { state: 'unsafe', label: display, physicalReason: reservedArea.physicalReason };
       }
@@ -274,6 +299,15 @@ function createStableReader(hubRoot, violations, rootAdmission = admitHubRoot(hu
     const admitted = inspect(rawPath, { ...options, kind: 'file' });
     if (admitted.state !== 'present') return { ...admitted, text: undefined };
     const reportUnsafe = options.reportUnsafe !== false;
+    // PD3c: the admitted area file must have exactly one link, so a hard link
+    // can never expose bytes outside the area.
+    const descriptorRead = options[RUN_DESCRIPTOR_READ] === true;
+    const hardLinked = (stat) => {
+      if (!descriptorRead || stat.nlink === 1n) return false;
+      if (reportUnsafe) report(admitted.label, 'is hard-linked');
+      return true;
+    };
+    if (hardLinked(admitted.stat)) return { state: 'unsafe', label: admitted.label, text: undefined };
     if (admitted.stat.size > BigInt(MAX_STABLE_FILE_BYTES)) {
       if (reportUnsafe) report(admitted.label, `exceeds ${MAX_STABLE_FILE_BYTES} bytes`);
       return { state: 'unsafe', label: admitted.label, text: undefined };
@@ -291,6 +325,7 @@ function createStableReader(hubRoot, violations, rootAdmission = admitHubRoot(hu
         if (reportUnsafe) report(admitted.label, 'changed physical identity during open');
         return { state: 'unsafe', label: admitted.label, text: undefined };
       }
+      if (hardLinked(opened)) return { state: 'unsafe', label: admitted.label, text: undefined };
       if (opened.size > BigInt(MAX_STABLE_FILE_BYTES)) {
         if (reportUnsafe) report(admitted.label, `exceeds ${MAX_STABLE_FILE_BYTES} bytes`);
         return { state: 'unsafe', label: admitted.label, text: undefined };
@@ -309,7 +344,9 @@ function createStableReader(hubRoot, violations, rootAdmission = admitHubRoot(hu
         }
         chunks.push(chunk.subarray(0, count));
       }
-      return { ...admitted, text: Buffer.concat(chunks, total).toString('utf8') };
+      const bytes = Buffer.concat(chunks, total);
+      // The descriptor read also returns its raw bytes for strict decoding.
+      return { ...admitted, text: bytes.toString('utf8'), ...(descriptorRead ? { bytes } : {}) };
     } catch {
       if (reportUnsafe) report(admitted.label, 'could not be opened safely');
       return { state: 'unsafe', label: admitted.label, text: undefined };
@@ -969,6 +1006,58 @@ function validatePortableV1(hubRoot, indexText, reader, templatesDir) {
   return violations;
 }
 
+// Pre-hub state: `.apex/` is present without `_INDEX.md`, so the only stable
+// read is the inception run descriptor at its canonical path; no other run file
+// is ever read. Returns `missing` on ENOENT, `valid` with the parsed descriptor,
+// or `invalid` with only the errors that name `.apex/inception/run.json`.
+function decodeRunDescriptor(bytes) {
+  try {
+    return STRICT_UTF8.decode(bytes);
+  } catch {
+    throw new Error('run descriptor is not valid UTF-8');
+  }
+}
+
+function readPreHubDescriptor(reader, violations) {
+  const before = violations.length;
+  const result = reader.read(RUN_DESCRIPTOR_PATH, { [RUN_DESCRIPTOR_READ]: true });
+  if (result.state === 'missing') return { state: 'missing' };
+  if (result.text === undefined) return { state: 'invalid', violations: violations.slice(before) };
+  try {
+    return { state: 'valid', descriptor: parseRunDescriptor(decodeRunDescriptor(result.bytes)) };
+  } catch (error) {
+    return {
+      state: 'invalid',
+      violations: [{
+        level: 'error',
+        msg: `inception run descriptor ${RUN_DESCRIPTOR_PATH} cannot be parsed: ${error.message}`,
+      }],
+    };
+  }
+}
+
+function preHubStatusOf(descriptor) {
+  return {
+    runId: descriptor.runId,
+    phase: descriptor.phase,
+    status: descriptor.status,
+    nextStep: nextStepFor(descriptor),
+  };
+}
+
+// `{ runId, phase, status, nextStep }` when `.apex/` is present without
+// `_INDEX.md` and holds a valid inception run descriptor; otherwise `null`.
+export function preHubInceptionStatus(hubRoot) {
+  const rootAdmission = admitHubRoot(hubRoot);
+  if (rootAdmission.state !== 'present') return null;
+  const violations = [];
+  const reader = createStableReader(hubRoot, violations, rootAdmission);
+  if (reader.inspect('.apex', { kind: 'directory' }).state !== 'present') return null;
+  if (reader.read(join('.apex', '_INDEX.md')).state !== 'missing') return null;
+  const descriptor = readPreHubDescriptor(reader, violations);
+  return descriptor.state === 'valid' ? preHubStatusOf(descriptor.descriptor) : null;
+}
+
 export function collectViolations(hubRoot, opts = {}) {
   const violations = [];
   const rootAdmission = opts[ROOT_ADMISSION] ?? admitHubRoot(hubRoot);
@@ -990,7 +1079,15 @@ export function collectViolations(hubRoot, opts = {}) {
   if (apexState.state !== 'present') return violations;
   const indexResult = reader.read(join('.apex', '_INDEX.md'));
   if (indexResult.state === 'missing') {
-    return [{ level: 'error', msg: `missing _INDEX.md at ${indexPath}` }];
+    // Before a hub exists, a valid inception run descriptor is the whole state:
+    // no other check runs. Without one, the hub is broken as before.
+    const descriptor = readPreHubDescriptor(reader, violations);
+    if (descriptor.state === 'missing') {
+      return [{ level: 'error', msg: `missing _INDEX.md at ${indexPath}` }];
+    }
+    if (descriptor.state === 'invalid') return descriptor.violations;
+    if (opts[PRE_HUB_STATUS]) opts[PRE_HUB_STATUS].status = preHubStatusOf(descriptor.descriptor);
+    return [];
   }
   if (indexResult.text === undefined) return violations;
   const indexText = indexResult.text;
@@ -1325,18 +1422,27 @@ export function main(argv = process.argv.slice(2)) {
   const enforceSingleClaudeMd = argv.includes('--single-claude');
   const root = argv.find((a) => !a.startsWith('--')) || process.cwd();
   const rootAdmission = admitHubRoot(root);
-  const all = collectViolations(root, { enforceSingleClaudeMd, [ROOT_ADMISSION]: rootAdmission });
+  const preHub = { status: null };
+  const all = collectViolations(root, {
+    enforceSingleClaudeMd,
+    [ROOT_ADMISSION]: rootAdmission,
+    [PRE_HUB_STATUS]: preHub,
+  });
   const errors = all.filter((v) => v.level === 'error');
   const warns = all.filter((v) => v.level === 'warn');
   if (errors.length === 0) {
     // No .apex/ hub means the repo never opted into steepy — there is genuinely
     // nothing to validate, so don't claim the doc graph is "coherent". In --quiet
     // mode (the Stop hook, which runs in every repo) stay a silent no-op regardless.
+    // Before a hub exists, an inception run reports its phase and next step.
     if (!quiet) {
+      const run = preHub.status;
       console.log(
-        rootAdmission.state === 'present' && existsSync(join(rootAdmission.root, '.apex'))
-          ? 'steepy validate-hub: OK — doc graph is coherent'
-          : 'steepy validate-hub: no .apex hub found — run /steepy-apex:init to create one'
+        run
+          ? `steepy validate-hub: no hub yet — inception run ${run.runId} is in phase ${run.phase} (${run.status}); next: ${run.nextStep}`
+          : rootAdmission.state === 'present' && existsSync(join(rootAdmission.root, '.apex'))
+            ? 'steepy validate-hub: OK — doc graph is coherent'
+            : 'steepy validate-hub: no .apex hub found — run /steepy-apex:init to create one'
       );
       for (const v of warns) console.warn(`  - warn: ${v.msg}`);
     }

@@ -3169,3 +3169,394 @@ test('PD3(b): a stable orphan hard-linked to an inception file is an anti-orphan
     rmSync(hub, { recursive: true, force: true });
   }
 });
+
+// Pre-hub inception state (Task 4). The lexical `.apex/inception` exclusion in
+// the stable reader is pinned first, with the area absent so no physical
+// identity check can refuse before it: only the pre-hub descriptor read may
+// admit `.apex/inception/run.json`.
+test('a root instruction link into an absent inception area is a lexical refusal, never a broken link', () => {
+  const hub = inceptionTempRoot('lexical-absent');
+  try {
+    mkdirSync(join(hub, '.apex'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(join(hub, 'AGENTS.md'), '# proj\n\nSee [run](.apex/inception/run.json).\n');
+    assert.equal(existsSync(join(hub, '.apex', 'inception')), false);
+
+    assert.deepEqual(collectViolations(hub), [
+      { level: 'error', msg: 'stable-read: .apex/inception/run.json enters excluded .apex/inception' },
+    ]);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('a root instruction link to a present run descriptor beside a hub index stays a lexical refusal', () => {
+  const hub = inceptionTempRoot('lexical-present');
+  try {
+    mkdirSync(join(hub, '.apex', 'inception'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(join(hub, '.apex', 'inception', 'run.json'), '{}\n');
+    writeFileSync(join(hub, 'AGENTS.md'), '# proj\n\nSee [run](.apex/inception/run.json).\n');
+
+    assert.deepEqual(collectViolations(hub), [
+      { level: 'error', msg: 'stable-read: .apex/inception/run.json enters excluded .apex/inception' },
+    ]);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+// Pre-hub state: `.apex/` holds the inception area but no `_INDEX.md`. A valid
+// run descriptor makes validation exit 0 with the run's phase and next step;
+// an unsafe or unparseable one is an error naming `.apex/inception/run.json`.
+import { createRunDescriptor, parseRunDescriptor, serializeRunDescriptor } from '../scripts/inception-state.mjs';
+
+const PRE_HUB_RUN_ID = 'inc-20261007T120000Z-1a2b3c4d';
+const PRE_HUB_COMPLETE = {
+  phase: 'complete',
+  status: 'complete',
+  nextRecord: 2,
+  checkpoints: ['.apex/inception/checkpoints/0001.json'],
+  finalCheckpoint: '.apex/inception/checkpoints/0001.json',
+  verification: { path: '.apex/inception/verification/results.md', bytes: 12, sha256: 'a'.repeat(64) },
+};
+
+function preHubDescriptor(changes = {}) {
+  const initial = createRunDescriptor({
+    runId: PRE_HUB_RUN_ID,
+    harnessName: 'claude-code',
+    capabilities: ['shell', 'subagents'],
+    git: { present: false, branch: null, commits: 'none' },
+  });
+  return serializeRunDescriptor({ ...initial, ...changes });
+}
+
+// A valid descriptor's bytes; parsing here keeps a fixture bug from posing as
+// the parse-failure path.
+function validPreHubDescriptor(changes = {}) {
+  const bytes = preHubDescriptor(changes);
+  parseRunDescriptor(bytes);
+  return bytes;
+}
+
+function preHubRoot(suffix, descriptorBytes) {
+  const repo = inceptionTempRoot(`prehub-${suffix}`);
+  mkdirSync(join(repo, '.apex', 'inception'), { recursive: true });
+  writeFileSync(join(repo, '.apex', 'inception', '.gitignore'), '*\n');
+  if (descriptorBytes !== undefined) {
+    writeFileSync(join(repo, '.apex', 'inception', 'run.json'), descriptorBytes);
+  }
+  return repo;
+}
+
+function preHubLine(phase, status, nextStep) {
+  return `steepy validate-hub: no hub yet — inception run ${PRE_HUB_RUN_ID} is in phase ${phase} (${status}); next: ${nextStep}\n`;
+}
+
+function runQuietValidator(hub) {
+  return spawnSync(process.execPath, [validator, '--quiet', hub], { encoding: 'utf8', timeout: 2_000 });
+}
+
+function assertPreHubError(repo, msg) {
+  assert.deepEqual(collectViolations(repo), [{ level: 'error', msg }]);
+  const cli = runValidator(repo);
+  assert.equal(cli.status, 1, cli.stderr);
+  assert.equal(cli.stdout, '');
+  assert.equal(cli.stderr, `steepy validate-hub: 1 violation(s):\n  - ${msg}\n`);
+  const quiet = runQuietValidator(repo);
+  assert.equal(quiet.status, 1, quiet.stderr);
+  assert.equal(quiet.stderr, cli.stderr);
+}
+
+test('pre-hub: an area-only .apex with a valid descriptor exits 0 with the run phase and next step', () => {
+  const repo = preHubRoot('active', validPreHubDescriptor());
+  try {
+    writeFileSync(join(repo, '.apex', '.DS_Store'), Buffer.from([0, 0, 0, 1, 66, 117, 100, 49]));
+
+    assert.deepEqual(collectViolations(repo), []);
+    const cli = runValidator(repo);
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.equal(cli.stdout, preHubLine(
+      'reconnaissance',
+      'active',
+      'resume with the inception skill (phase reconnaissance)',
+    ));
+    assert.equal(cli.stderr, '');
+    const quiet = runQuietValidator(repo);
+    assert.equal(quiet.status, 0, quiet.stderr);
+    assert.equal(quiet.stdout, '');
+    assert.equal(quiet.stderr, '');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: a complete run names init, then discovery, as the next step', () => {
+  const repo = preHubRoot('complete', validPreHubDescriptor(PRE_HUB_COMPLETE));
+  try {
+    assert.deepEqual(collectViolations(repo), []);
+    const cli = runValidator(repo);
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.equal(cli.stdout, preHubLine(
+      'complete',
+      'complete',
+      'run the init skill, then the discovery skill with the inception source',
+    ));
+    assert.equal(cli.stderr, '');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: a blocked run names the blocked next step', () => {
+  const repo = preHubRoot('blocked', validPreHubDescriptor({ phase: 'research', status: 'blocked' }));
+  try {
+    assert.deepEqual(collectViolations(repo), []);
+    const cli = runValidator(repo);
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.equal(cli.stdout, preHubLine(
+      'research',
+      'blocked',
+      'resolve the block recorded in the latest resume note, then resume with the inception skill',
+    ));
+    assert.equal(cli.stderr, '');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: an unparseable descriptor is one error naming .apex/inception/run.json', () => {
+  const invalidJson = preHubRoot('invalid-json', '{ "schema": \n');
+  const invalidState = preHubRoot('invalid-state', preHubDescriptor({ phase: 'complete' }));
+  try {
+    assertPreHubError(
+      invalidJson,
+      'inception run descriptor .apex/inception/run.json cannot be parsed: run descriptor is not valid JSON',
+    );
+    assertPreHubError(
+      invalidState,
+      'inception run descriptor .apex/inception/run.json cannot be parsed: phase complete and status complete must go together',
+    );
+  } finally {
+    rmSync(invalidJson, { recursive: true, force: true });
+    rmSync(invalidState, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: a descriptor with invalid UTF-8 is a parse failure, not a lossy valid run', () => {
+  const marked = Buffer.from(validPreHubDescriptor({
+    git: { present: true, branch: 'mainZZ', commits: 'allowed' },
+  }));
+  const at = marked.indexOf('ZZ');
+  const bytes = Buffer.concat([marked.subarray(0, at), Buffer.from([0xff]), marked.subarray(at + 2)]);
+  const repo = preHubRoot('invalid-utf8', bytes);
+  try {
+    assertPreHubError(
+      repo,
+      'inception run descriptor .apex/inception/run.json cannot be parsed: run descriptor is not valid UTF-8',
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: a symlinked descriptor or area is refused unread, naming the descriptor path', () => {
+  const linkedFile = preHubRoot('symlink-file');
+  const linkedArea = inceptionTempRoot('prehub-symlink-area');
+  try {
+    writeFileSync(join(linkedFile, 'elsewhere.json'), validPreHubDescriptor());
+    symlinkSync(join(linkedFile, 'elsewhere.json'), join(linkedFile, '.apex', 'inception', 'run.json'));
+    assertPreHubError(linkedFile, 'stable-read: .apex/inception/run.json is symlink');
+
+    mkdirSync(join(linkedArea, '.apex'));
+    mkdirSync(join(linkedArea, 'area'));
+    writeFileSync(join(linkedArea, 'area', 'run.json'), validPreHubDescriptor());
+    symlinkSync(join(linkedArea, 'area'), join(linkedArea, '.apex', 'inception'));
+    assertPreHubError(linkedArea, 'stable-read: .apex/inception/run.json has symlinked component');
+  } finally {
+    rmSync(linkedFile, { recursive: true, force: true });
+    rmSync(linkedArea, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: a hard-linked descriptor is refused, naming the descriptor path', () => {
+  const repo = preHubRoot('hardlink', validPreHubDescriptor());
+  try {
+    linkSync(join(repo, '.apex', 'inception', 'run.json'), join(repo, 'outside.json'));
+    assert.equal(lstatSync(join(repo, '.apex', 'inception', 'run.json')).nlink, 2);
+    assertPreHubError(repo, 'stable-read: .apex/inception/run.json is hard-linked');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: a non-file or oversized descriptor is refused, naming the descriptor path', () => {
+  const directory = preHubRoot('non-file');
+  const oversized = preHubRoot('oversized', 'x'.repeat(1024 * 1024 + 1));
+  try {
+    mkdirSync(join(directory, '.apex', 'inception', 'run.json'));
+    assertPreHubError(directory, 'stable-read: .apex/inception/run.json is non-file');
+    assertPreHubError(oversized, 'stable-read: .apex/inception/run.json exceeds 1048576 bytes');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(oversized, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: an unreadable descriptor is refused, naming the descriptor path', {
+  skip: process.platform === 'win32' || process.getuid?.() === 0,
+}, () => {
+  const repo = preHubRoot('unreadable', validPreHubDescriptor());
+  const descriptor = join(repo, '.apex', 'inception', 'run.json');
+  try {
+    chmodSync(descriptor, 0o000);
+    assertPreHubError(repo, 'stable-read: .apex/inception/run.json could not be opened safely');
+  } finally {
+    chmodSync(descriptor, 0o644);
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: .apex without an index or a descriptor keeps the missing-index error', () => {
+  const empty = inceptionTempRoot('prehub-empty');
+  const areaOnly = preHubRoot('area-only');
+  try {
+    mkdirSync(join(empty, '.apex'));
+    for (const repo of [empty, areaOnly]) {
+      const msg = `missing _INDEX.md at ${join(repo, '.apex', '_INDEX.md')}`;
+      assert.deepEqual(collectViolations(repo), [{ level: 'error', msg }]);
+      const cli = runValidator(repo);
+      assert.equal(cli.status, 1, cli.stderr);
+      assert.equal(cli.stderr, `steepy validate-hub: 1 violation(s):\n  - ${msg}\n`);
+    }
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+    rmSync(areaOnly, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: a repository without .apex keeps the no-hub line', () => {
+  const repo = inceptionTempRoot('prehub-no-apex');
+  try {
+    assert.deepEqual(collectViolations(repo), []);
+    const cli = runValidator(repo);
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.equal(cli.stdout, 'steepy validate-hub: no .apex hub found — run /steepy-apex:init to create one\n');
+    assert.equal(cli.stderr, '');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: other inception area files are never read, whether the descriptor is valid or not', () => {
+  const sentinel = 'PRE_HUB_AREA_SENTINEL_MUST_NOT_BE_READ';
+  const seed = (repo) => {
+    const area = join(repo, '.apex', 'inception');
+    mkdirSync(join(area, 'project'));
+    mkdirSync(join(area, 'research'));
+    writeFileSync(join(area, 'project', 'decision-register.md'), `# ${sentinel}\n[Broken](missing.md)\n`);
+    writeFileSync(join(area, 'effects.jsonl'), `${sentinel}\n`);
+    writeFileSync(join(area, 'research', 'oversized.md'), `${sentinel}\n${'x'.repeat(1024 * 1024)}`);
+    writeFileSync(join(repo, 'outside.md'), `${sentinel}\n`);
+    symlinkSync(join(repo, 'outside.md'), join(area, 'project', 'linked.md'));
+    writeFileSync(join(area, 'research', 'locked.md'), `${sentinel}\n`);
+    chmodSync(join(area, 'research', 'locked.md'), 0o000);
+    return join(area, 'research', 'locked.md');
+  };
+  const valid = preHubRoot('sentinel-valid', validPreHubDescriptor());
+  const invalid = preHubRoot('sentinel-invalid', '{\n');
+  const locked = [];
+  try {
+    locked.push(seed(valid), seed(invalid));
+
+    assert.deepEqual(collectViolations(valid), []);
+    const green = runValidator(valid);
+    assert.equal(green.status, 0, green.stderr);
+    assert.equal(green.stdout, preHubLine(
+      'reconnaissance',
+      'active',
+      'resume with the inception skill (phase reconnaissance)',
+    ));
+    assert.equal(green.stderr, '');
+
+    const msg = 'inception run descriptor .apex/inception/run.json cannot be parsed: run descriptor is not valid JSON';
+    assert.deepEqual(collectViolations(invalid), [{ level: 'error', msg }]);
+    const red = runValidator(invalid);
+    assert.equal(red.status, 1, red.stderr);
+    assert.equal(red.stderr, `steepy validate-hub: 1 violation(s):\n  - ${msg}\n`);
+    for (const output of [green, red]) {
+      assert.doesNotMatch(`${output.stdout}\n${output.stderr}`, new RegExp(sentinel, 'u'));
+    }
+  } finally {
+    for (const path of locked) chmodSync(path, 0o644);
+    rmSync(valid, { recursive: true, force: true });
+    rmSync(invalid, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: with _INDEX.md present the descriptor is ignored and validation is normal', () => {
+  const invalid = preHubRoot('index-invalid', '{\n');
+  const valid = preHubRoot('index-valid', validPreHubDescriptor());
+  try {
+    writeFileSync(join(invalid, '.apex', '_INDEX.md'), '# Index\n');
+    assert.deepEqual(collectViolations(invalid), []);
+    const ok = runValidator(invalid);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(ok.stdout, 'steepy validate-hub: OK — doc graph is coherent\n');
+
+    writeFileSync(join(valid, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(join(valid, '.apex', 'orphan.md'), '# Orphan\n');
+    const msg = 'anti-orphan: .apex/orphan.md is not linked from .apex/_INDEX.md';
+    assert.deepEqual(collectViolations(valid), [{ level: 'error', msg }]);
+    const failed = runValidator(valid);
+    assert.equal(failed.status, 1, failed.stderr);
+    assert.equal(failed.stdout, '');
+    assert.equal(failed.stderr, `steepy validate-hub: 1 violation(s):\n  - ${msg}\n`);
+  } finally {
+    rmSync(invalid, { recursive: true, force: true });
+    rmSync(valid, { recursive: true, force: true });
+  }
+});
+
+import { preHubInceptionStatus } from '../scripts/validate-hub.mjs';
+
+test('pre-hub: preHubInceptionStatus reports a valid run and is null outside the pre-hub state', () => {
+  const active = preHubRoot('status-active', validPreHubDescriptor());
+  const blocked = preHubRoot('status-blocked', validPreHubDescriptor({ phase: 'approval', status: 'blocked' }));
+  const complete = preHubRoot('status-complete', validPreHubDescriptor(PRE_HUB_COMPLETE));
+  const noApex = inceptionTempRoot('status-no-apex');
+  const noDescriptor = preHubRoot('status-no-descriptor');
+  const withIndex = preHubRoot('status-index', validPreHubDescriptor());
+  const invalid = preHubRoot('status-invalid', '{\n');
+  const linked = preHubRoot('status-linked', validPreHubDescriptor());
+  try {
+    writeFileSync(join(withIndex, '.apex', '_INDEX.md'), '# Index\n');
+    linkSync(join(linked, '.apex', 'inception', 'run.json'), join(linked, 'outside.json'));
+
+    assert.deepEqual(preHubInceptionStatus(active), {
+      runId: PRE_HUB_RUN_ID,
+      phase: 'reconnaissance',
+      status: 'active',
+      nextStep: 'resume with the inception skill (phase reconnaissance)',
+    });
+    assert.deepEqual(preHubInceptionStatus(blocked), {
+      runId: PRE_HUB_RUN_ID,
+      phase: 'approval',
+      status: 'blocked',
+      nextStep: 'resolve the block recorded in the latest resume note, then resume with the inception skill',
+    });
+    assert.deepEqual(preHubInceptionStatus(complete), {
+      runId: PRE_HUB_RUN_ID,
+      phase: 'complete',
+      status: 'complete',
+      nextStep: 'run the init skill, then the discovery skill with the inception source',
+    });
+    for (const repo of [noApex, noDescriptor, withIndex, invalid, linked, join(noApex, 'absent')]) {
+      assert.equal(preHubInceptionStatus(repo), null, repo);
+    }
+  } finally {
+    for (const repo of [active, blocked, complete, noApex, noDescriptor, withIndex, invalid, linked]) {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
