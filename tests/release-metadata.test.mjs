@@ -345,6 +345,9 @@ test('RELEASE.md documents validation, smoke test, release, and rollback steps',
     'Rollback',
     'docs/release-evidence.md',
     '`.codex-plugin/plugin.json` in three-way lockstep',
+    'claude.ai/directory/manage',
+    '`claude-directory`',
+    'scripts/publish-directory-branch.mjs',
   ]) {
     assert.ok(release.includes(required), `RELEASE.md must mention: ${required}`);
   }
@@ -355,6 +358,10 @@ test('RELEASE.md documents validation, smoke test, release, and rollback steps',
   assert.doesNotMatch(release, /official Anthropic/i);
   assert.doesNotMatch(release, /<owner>/);
   assert.doesNotMatch(release, /steepy@steepy/);
+  assert.doesNotMatch(release, /admin-settings\/directory\/submissions|platform\.claude\.com\/plugins\/submit/);
+  assert.doesNotMatch(release, /GitHub Releases only/);
+  assert.doesNotMatch(release, /pinned to a commit SHA/);
+  assert.doesNotMatch(release, /\.png\b/i);
 });
 
 test('release evidence reference documents the optional release audit verification and release independence', () => {
@@ -582,8 +589,8 @@ test('COMMUNITY_SUBMISSION.md contains marketplace review copy and safety disclo
     'steepy-apex',
     'steepy-it',
     'Your AI documentation stops rotting',
-    'https://claude.ai/admin-settings/directory/submissions/plugins/new',
-    'https://platform.claude.com/plugins/submit',
+    'claude.ai/directory/manage',
+    '`claude-directory`',
     'five native harnesses',
     'Command-family effects matrix',
     'zero third-party runtime dependencies',
@@ -594,6 +601,8 @@ test('COMMUNITY_SUBMISSION.md contains marketplace review copy and safety disclo
   }
 
   assert.doesNotMatch(submission, /official Anthropic/i);
+  assert.doesNotMatch(submission, /admin-settings\/directory\/submissions|platform\.claude\.com\/plugins\/submit/);
+  assert.doesNotMatch(submission, /\.png\b/i);
   assert.doesNotMatch(submission, /<owner>/);
   assertIncludesNamespacedWorkflow(submission, 'COMMUNITY_SUBMISSION.md');
   assertNoBareWorkflowInvocations(submission, 'COMMUNITY_SUBMISSION.md');

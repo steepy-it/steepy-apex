@@ -6,9 +6,8 @@
 - Owner: `steepy-it`
 - License: Apache-2.0
 - Distribution target: Claude Code community marketplace
-- Submission forms:
-  - `https://claude.ai/admin-settings/directory/submissions/plugins/new`
-  - `https://platform.claude.com/plugins/submit`
+- Submission: developer portal `claude.ai/directory/manage` → **Submit new** → **Plugin bundle**
+- Repository and branch: `steepy-it/steepy-apex`, branch `claude-directory` (the Release workflow appends one payload commit per version; `main` is never submitted)
 
 ## Short description
 
@@ -44,6 +43,8 @@ claude plugin validate .
 ```
 
 Then run the local marketplace and throwaway repo smoke tests documented in `RELEASE.md`.
+
+Finally, press **Validate** in the developer portal on branch `claude-directory`, and submit for review only when it reports 0 Blocking results and 0 Policy holds.
 
 ## Review notes
 
