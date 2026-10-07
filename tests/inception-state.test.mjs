@@ -210,6 +210,21 @@ test('parseRunDescriptor rejects every invalid descriptor shape with a one-line 
     'verification outside its directory': text({
       ...base, verification: { path: '.apex/inception/project/results.md', bytes: 1, sha256: 'b'.repeat(64) },
     }),
+    'verification escaping its directory': text({
+      ...base, verification: { path: '.apex/inception/verification/../../../etc/passwd', bytes: 1, sha256: 'b'.repeat(64) },
+    }),
+    'verification with an empty segment': text({
+      ...base, verification: { path: '.apex/inception/verification//results.md', bytes: 1, sha256: 'b'.repeat(64) },
+    }),
+    'verification with a dot segment': text({
+      ...base, verification: { path: '.apex/inception/verification/./results.md', bytes: 1, sha256: 'b'.repeat(64) },
+    }),
+    'verification with a control character': text({
+      ...base, verification: { path: '.apex/inception/verification/results\n.md', bytes: 1, sha256: 'b'.repeat(64) },
+    }),
+    'verification naming its directory': text({
+      ...base, verification: { path: '.apex/inception/verification/', bytes: 1, sha256: 'b'.repeat(64) },
+    }),
     'verification with a bad digest': text({
       ...base, verification: { path: '.apex/inception/verification/results.md', bytes: 1, sha256: 'B'.repeat(64) },
     }),
