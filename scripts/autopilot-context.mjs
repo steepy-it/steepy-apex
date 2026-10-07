@@ -31,7 +31,7 @@ function complexityDistribution(tasks) {
   };
 }
 
-function distributionToken(distribution) {
+function distributionSegment(distribution) {
   return `distribution=mechanical:${distribution.mechanical},integration:${distribution.integration},design:${distribution.design}`;
 }
 
@@ -221,8 +221,8 @@ export function planPhaseContext(planText, { review = false } = {}) {
     ...(testCommands.length === 1 ? { testCommand: testCommands[0] } : {}),
     criterionIds,
     evidence: review && eligibleTier === 'cheap'
-      ? `phase-controller-tier=${modelTier};${distributionToken(distribution)};reviewer-floor=standard`
-      : `phase-controller-tier=${modelTier};${distributionToken(distribution)}`,
+      ? `phase-controller-tier=${modelTier};${distributionSegment(distribution)};reviewer-floor=standard`
+      : `phase-controller-tier=${modelTier};${distributionSegment(distribution)}`,
   };
 }
 
@@ -292,7 +292,7 @@ export function reviewPhaseContext(planText, resultIndexText) {
     evidence: [
       `result-index:reviewed-tasks=${reviewedIds.join(',')}`,
       `phase-controller-tier=${modelTier}`,
-      distributionToken(distribution),
+      distributionSegment(distribution),
       ...(eligibleTier === 'cheap' ? ['reviewer-floor=standard'] : []),
     ].join(';'),
   };
