@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.1.3 (2026-10-07)
+
+- The plugin description now reads "Context engineering and governed workflows for AI
+  coding agents. Keep project knowledge coherent, route work to specialists, and scale
+  from small fixes to bounded autonomous loops." It replaces the old scaffold tagline in
+  `package.json`, both plugin manifests and both marketplace files.
+- The dogfood `AGENTS.md` and the five Codex agent files are regenerated through the
+  public scaffold CLI with the new project description.
+
 ## v1.1.2 (2026-10-07)
 
 - The README has a "Data and external services" section. It states that steepy-apex has
