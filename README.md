@@ -124,6 +124,21 @@ Claude Code syntax is shown below; see the [installation guide](docs/installatio
 
 Deterministic runners support Claude, Codex, and OpenCode; Pi and DeepSeek report `runner-unavailable`. Gear-3 autopilot supports Linux and macOS. Native hooks and model selection depend on the host; use `check` and `review` as explicit verification gates.
 
+## Data and external services
+
+steepy-apex has no server and sends no telemetry: no data reaches steepy-it. Specs, plans, and
+workflow logs stay in your repository under the gitignored `.apex/work/`; autopilot logs are
+redacted by default (`log-mode: safe`). These skills reach services outside your agent session:
+
+| Skill | Service | What is sent |
+|---|---|---|
+| `/steepy-apex:brainstorm` in autopilot drive | The harness named in the run contract: Claude Code, Codex, or OpenCode | Phase prompts and repository content go to that harness's model provider, for example OpenAI through Codex. |
+| `/steepy-apex:check` | Public model pages from OpenAI and Anthropic, plus `opencode models` when OpenCode is installed | Requests for the current model list, used to verify the model table. No project data is sent. |
+| `/steepy-apex:review` | GitHub, through Git and the `gh` CLI | Your branch and a pull request to `main`, only after you confirm. |
+
+`/steepy-apex:loop-engineer` runs its attempts on the harness you are already using. Per-command
+effects are in the [Command-family effects matrix](docs/architecture.md#command-family-effects-matrix).
+
 ## Documentation
 
 - [Installation](docs/installation.md) — all harnesses, requirements, and troubleshooting.
