@@ -1,7 +1,7 @@
 <!-- steepy:managed:project-instructions:v1:start -->
 # steepy-apex
 
-Scaffold a governed context-engineering hub (.apex/ DAG + routing + coherence linter) into any repo.
+Context engineering and governed workflows for AI coding agents. Keep project knowledge coherent, route work to specialists, and scale from small fixes to bounded autonomous loops.
 
 ## Development commands
 

@@ -1,5 +1,5 @@
 # steepy:generated:skills-agent-codex:v1
-# Project description: Scaffold a governed context-engineering hub (.apex/ DAG + routing + coherence linter) into any repo.
+# Project description: Context engineering and governed workflows for AI coding agents. Keep project knowledge coherent, route work to specialists, and scale from small fixes to bounded autonomous loops.
 # Surface path: skills
 name = "skills-agent"
 description = "Specialist agent for skills work."
