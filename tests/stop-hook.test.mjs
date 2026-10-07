@@ -146,3 +146,33 @@ test('a case alias into reserved work emits a Stop-hook block without consuming 
   assert.match(payload.reason, /enters excluded \.apex\/work|stable docs must not link into \.apex\/work/i);
   assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, /STOP_WORK_BYTE_SENTINEL/u);
 });
+
+// Inception area mirror of the reserved-work case-alias block above. The
+// temporary root is resolved with realpathSync and removed in `finally`.
+import { realpathSync, rmSync } from 'node:fs';
+
+test('a case alias into the inception area emits a Stop-hook block without consuming it', (t) => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), 'steepy-stop-inception-case-alias-')));
+  try {
+    if (!storageAliasesCase(repo)) {
+      t.skip('temporary storage keeps case-distinct directory identities');
+      return;
+    }
+    mkdirSync(join(repo, '.apex', 'inception'), { recursive: true });
+    writeFileSync(join(repo, '.apex', '_INDEX.md'), '# Index\n- [Hidden](INCEPTION/sentinel.md)\n');
+    writeFileSync(
+      join(repo, '.apex', 'inception', 'sentinel.md'),
+      '# Hidden\n[Sentinel](STOP_INCEPTION_BYTE_SENTINEL.md)\n',
+    );
+
+    const r = run([repo], '{}', 2_000);
+    assert.notEqual(r.error?.code, 'ETIMEDOUT');
+    assert.equal(r.status, 0, r.stderr);
+    const payload = JSON.parse(r.stdout);
+    assert.equal(payload.decision, 'block');
+    assert.match(payload.reason, /enters excluded \.apex\/inception/i);
+    assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, /STOP_INCEPTION_BYTE_SENTINEL/u);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
