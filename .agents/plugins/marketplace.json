@@ -1,0 +1,15 @@
+{
+  "name": "steepy-apex",
+  "description": "Steepy plugin marketplace: scaffold and lint a governed context-engineering hub (.apex/ DAG + routing) into any repo.",
+  "owner": {
+    "name": "steepy-it",
+    "email": "info@steepy.it"
+  },
+  "plugins": [
+    {
+      "name": "steepy-apex",
+      "source": "./",
+      "description": "Scaffold a governed context-engineering hub (.apex/ DAG + routing + coherence linter) into any repo."
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "artifact", "changed-paths", "signals"],
+  "properties": {
+    "status": { "enum": ["APPROVED", "ISSUES_FOUND", "BLOCKED", "NEEDS_CONTEXT"] },
+    "artifact": { "type": "string", "minLength": 1 },
+    "changed-paths": { "const": "none" },
+    "signals": { "type": "string", "minLength": 1 }
+  }
+}
