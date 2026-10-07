@@ -352,7 +352,19 @@ served verbatim to every harness; per-harness manifests and thin runtime adapter
 - Bump lands in-branch at PR time (review skill, human-confirmed) or on main via the
   push-guard prompt. Whoever bumps writes the `## vX.Y.Z (YYYY-MM-DD)` CHANGELOG section.
 - Enforcement: PreToolUse push guard (main), `Version gate` workflow (PRs, `no-release`
-  label opt-out), `Release` workflow (idempotent `vX.Y.Z` tag + GitHub Release on merge).
+  label opt-out), `Release` workflow (idempotent `vX.Y.Z` tag + GitHub Release + Claude
+  directory payload commit on merge).
+- **Claude directory payload:** the Claude plugin directory tracks the branch
+  `claude-directory`, never `main`. Each new version appends one commit built by
+  `scripts/publish-directory-branch.mjs`, parented on the previous payload commit and
+  never force-pushed. The payload is the release commit's tracked tree minus the
+  root-anchored denylist `tests/`, `.github/`, `.codex-plugin/`, `CLAUDE.md`; no file
+  content is rewritten, so fixes land on `main` and both channels share them. Why: the
+  directory scans the whole plugin folder and puts every version that ships dev files
+  referencing images or credential-shaped names into reviewer holds. The payload removes
+  those dev-file causes, but the scanner is heuristic and can still raise reviewer holds:
+  submit with 0 Blocking and record each remaining hold with its reason. Repository and
+  folder are fixed at submission, so this is hard to reverse.
 - **Scoping:** this policy governs THIS repo's own automation. The shipped `review`
   skill's bump step self-disables in target repos that lack `scripts/bump-version.mjs`
   + `.github/workflows/version-gate.yml`.

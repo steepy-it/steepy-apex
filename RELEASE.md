@@ -150,7 +150,10 @@ push to main, but can publish only after tests, hub coherence, version and packa
 validation succeed. If tag `vX.Y.Z` for the current version doesn't exist yet, it creates and pushes
 it. It then independently creates the GitHub Release, with the body pulled from the
 matching `CHANGELOG.md` section via `scripts/extract-changelog.mjs` (falls back to a stock
-body if extraction fails). Both publication steps are idempotent.
+body if extraction fails). Last, it appends one Claude directory payload commit for a new
+version to the `claude-directory` branch (see
+[Claude directory submission](#claude-directory-submission)). All three publication steps are
+idempotent.
 
 **Direct pushes to main.** A repo-local PreToolUse hook (`.claude/settings.json` →
 `scripts/push-version-guard.mjs`) blocks a `git push` on main for a known invalid version,
@@ -164,7 +167,14 @@ unavailable read/parse/Git context remain fail-open; known malformed version val
 passes on both until the first one merges; the second then fails the gate against the
 new main version and must re-bump before it can merge.
 
-## Community marketplace submission
+## Claude directory submission
+
+The Claude plugin directory scans the whole plugin folder of the submitted branch, so submit
+the payload branch `claude-directory`, never `main`. The Release workflow appends one commit
+per new version, built by `scripts/publish-directory-branch.mjs` from the release commit minus
+`tests/`, `.github/`, `.codex-plugin/` and `CLAUDE.md`. The branch is append-only and never
+force-pushed. The script copies the release commit's subject through `git log`, so on any host
+that runs it, leave `i18n.logOutputEncoding` and `i18n.commitEncoding` unset or set to UTF-8.
 
 Before submitting, run:
 
@@ -173,18 +183,21 @@ npm test
 claude plugin validate .
 ```
 
-Submit through one of the documented Claude plugin forms:
+Submit through the developer portal:
 
-- `https://claude.ai/admin-settings/directory/submissions/plugins/new`
-- `https://platform.claude.com/plugins/submit`
+1. Open `claude.ai/directory/manage` → **Submit new** → **Plugin bundle**.
+2. Choose repository `steepy-it/steepy-apex` and branch `claude-directory`.
+3. Press **Validate**, then **Submit for review**.
 
-Approved community plugins are pinned to a commit SHA in `anthropics/claude-plugins-community`; public catalog sync can lag review approval.
+The listing icon is fixed at the first save or submit. Later versions reach the directory
+through **Check for new commits** or the push webhook.
 
 ## Public distribution checklist
 
 Channel guidance checked on 2026-09-16. Recheck the linked provider instructions before
-submission. The GitHub workflow creates tags and GitHub Releases only: it does not publish
-to npm or submit to any plugin directory. Store approval is separate from technical validation.
+submission. The GitHub workflow creates tags and GitHub Releases and appends the Claude
+directory payload commit to `claude-directory`; it still does not publish to npm or submit to
+any plugin directory. Store approval is separate from technical validation.
 
 ### Shared launch preparation
 
@@ -214,7 +227,9 @@ to npm or submit to any plugin directory. Store approval is separate from techni
 1. Validate with `claude plugin validate .` and run the local marketplace smoke test above.
 2. After the repository is public, test its own marketplace install from GitHub. This distribution
    path is independent of review by Anthropic.
-3. Submit the repository and listing through one of the forms above; record submission status.
+3. Submit through the developer portal as described in
+   [Claude directory submission](#claude-directory-submission), on branch `claude-directory`;
+   record submission status.
 4. After approval and catalog sync, test `steepy-apex@claude-community` before advertising it.
    The official curated marketplace is a separate channel; submission does not guarantee inclusion.
 

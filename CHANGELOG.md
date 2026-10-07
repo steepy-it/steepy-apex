@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.1.1 (2026-10-07)
+
+- The Release workflow appends one payload commit per new version to the
+  `claude-directory` branch, which the Claude plugin directory tracks.
+  `scripts/publish-directory-branch.mjs` builds it from the release commit minus
+  `tests/`, `.github/`, `.codex-plugin/` and `CLAUDE.md`. The branch is append-only
+  and never force-pushed; a version it already carries is skipped.
+- `.claude-plugin/` ships the directory listing icon, a byte copy of the Codex plugin icon.
+- The workflow gears diagram drops a non-standard metadata chunk, and `docs/workflow.md`
+  no longer embeds it.
+- `RELEASE.md` and `COMMUNITY_SUBMISSION.md` describe submission through the developer
+  portal on branch `claude-directory`, and the UTF-8 log encoding that publishing hosts need.
+
 ## v1.1.0 (2026-10-06)
 
 - Specialist adapters reach their standard through the surface's row in the routing

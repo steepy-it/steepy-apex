@@ -772,3 +772,15 @@ test('standards/skills.md Conventions states the plan task-cutting criterion (di
   assert.match(section, /`plan`[\s\S]{0,120}discover/i, "Conventions must state plan's task-cutting criterion");
   assert.match(section, /mis-cut/i, 'the criterion must name a mis-cut task');
 });
+
+test('conventions.md Versioning & release records the Claude directory payload rule', () => {
+  const conventions = readFileSync(join(repoRoot, '.apex', 'conventions.md'), 'utf8');
+  const section = conventions.match(/## Versioning & release([\s\S]*?)(?=\n## |$)/)?.[1];
+  assert.ok(section, 'conventions.md must have a "## Versioning & release" section');
+  assert.match(section, /Enforcement:[\s\S]*?\+ Claude\s+directory\s+payload\s+commit on merge/);
+  assert.match(section, /`claude-directory`[\s\S]*never `main`/);
+  assert.match(section, /`tests\/`[\s\S]*`\.github\/`[\s\S]*`\.codex-plugin\/`[\s\S]*`CLAUDE\.md`/);
+  assert.match(section, /never force-pushed/);
+  assert.match(section, /reviewer holds?/);
+  assert.doesNotMatch(section, /\.png\b/i);
+});

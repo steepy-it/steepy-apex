@@ -1,6 +1,6 @@
 # Release: on every push to main, first require reusable tests and product validation.
-# Then tag an untagged plugin.json version and create
-# the matching GitHub Release. Tag and Release creation remain independently idempotent.
+# Then tag an untagged plugin.json version, create the matching GitHub Release, and
+# append the Claude directory payload commit. Each publication step is independently idempotent.
 name: Release
 
 on:
@@ -99,3 +99,15 @@ jobs:
           fi
 
           gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
+
+      # Appends one payload commit per new version to the append-only
+      # `claude-directory` branch that the Claude plugin directory tracks. The script
+      # skips a version the branch already carries, so a push to main without a bump
+      # is a no-op, mirroring the tag and Release steps above. Never force-pushed.
+      - name: Publish Claude directory branch
+        env:
+          GIT_AUTHOR_NAME: 'github-actions[bot]'
+          GIT_AUTHOR_EMAIL: '41898282+github-actions[bot]@users.noreply.github.com'
+          GIT_COMMITTER_NAME: 'github-actions[bot]'
+          GIT_COMMITTER_EMAIL: '41898282+github-actions[bot]@users.noreply.github.com'
+        run: node scripts/publish-directory-branch.mjs --source "$GITHUB_SHA" --branch claude-directory --push
