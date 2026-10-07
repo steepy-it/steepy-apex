@@ -12,7 +12,7 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const projectScaffold = join(repoRoot, 'scripts', 'project-scaffold.mjs');
 const dogfoodModel = {
   projectName: 'steepy-apex',
-  description: 'Scaffold a governed context-engineering hub (.apex/ DAG + routing + coherence linter) into any repo.',
+  description: 'Context engineering and governed workflows for AI coding agents. Keep project knowledge coherent, route work to specialists, and scale from small fixes to bounded autonomous loops.',
   devCommands: ['npm test'],
   surfaces: [
     { name: 'adapters', path: 'adapters', agent: 'adapters-agent', testCmd: 'npm test' },
