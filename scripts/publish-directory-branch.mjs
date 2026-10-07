@@ -93,8 +93,10 @@ function remoteHead(branch, at) {
 
 // Filters the source tree through a throwaway index file: `read-tree`, `update-index` and
 // `write-tree` only ever see GIT_INDEX_FILE, which lives in its own temporary directory.
+// The directory is resolved to an absolute path: Git runs at the top level, so a relative
+// TMPDIR would otherwise name a different directory for Git than the one created here.
 function buildTree(sha, at) {
-  const tmp = mkdtempSync(join(tmpdir(), 'steepy-directory-index-'));
+  const tmp = mkdtempSync(join(resolve(tmpdir()), 'steepy-directory-index-'));
   try {
     const scratch = { ...at, env: { ...process.env, GIT_INDEX_FILE: join(tmp, 'index') } };
     git('read-tree', [sha], scratch);
@@ -130,7 +132,9 @@ function publishDirectoryBranch({ source, branch, push }) {
   } catch {
     throw new PublishError('source is not a commit');
   }
-  const subject = git('log', ['-1', '--format=%s', sha], at);
+  // `--no-show-signature`: a configured `log.showSignature` would otherwise put GPG output
+  // ahead of the subject on stdout.
+  const subject = git('log', ['-1', '--no-show-signature', '--format=%s', sha], at);
   const version = manifestVersion(sha, 'source', at);
 
   const head = remoteHead(branch, at);
@@ -184,7 +188,14 @@ export function main(argv = process.argv.slice(2)) {
     console.error(`${PREFIX}--source and --branch values must not start with "-"`);
     return 2;
   }
-  if (runGit('check-ref-format', [`refs/heads/${branch}`]).status !== 0) {
+  // A Git that could not be spawned or died on a signal is a Git failure (1), not a usage
+  // error; only a real non-zero verdict means the branch name is invalid (2).
+  const checked = runGit('check-ref-format', [`refs/heads/${branch}`]);
+  if (checked.error || checked.status === null) {
+    console.error(`${PREFIX}git check-ref-format failed (exit ${checked.status ?? 'none'})`);
+    return 1;
+  }
+  if (checked.status !== 0) {
     console.error(`${PREFIX}--branch is not a valid branch name`);
     return 2;
   }
