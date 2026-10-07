@@ -2804,3 +2804,368 @@ test('permission-denied package metadata returns controlled violations without t
     chmodSync(manifest, 0o600);
   }
 });
+
+// Inception area exclusion (.apex/inception/**). These blocks mirror the
+// .apex/work exclusion coverage above. Every new block resolves its temporary
+// root with realpathSync and removes it in `finally`.
+import { linkSync, realpathSync } from 'node:fs';
+
+function inceptionTempRoot(suffix) {
+  return realpathSync(mkdtempSync(join(tmpdir(), `steepy-inception-${suffix}-`)));
+}
+
+test('inception area files with broken links and orphan Markdown are ignored by stable hub scans', () => {
+  const hub = inceptionTempRoot('ignored');
+  try {
+    mkdirSync(join(hub, '.apex', 'inception', 'project'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(
+      join(hub, '.apex', 'inception', 'project', 'decision-register.md'),
+      '# Register\n[Broken](missing.md)\n',
+    );
+    writeFileSync(join(hub, '.apex', 'inception', 'orphan.md'), '# Orphan\n');
+
+    assert.deepEqual(collectViolations(hub), []);
+    const cli = runValidator(hub);
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.match(cli.stdout, /OK — doc graph is coherent/);
+    assert.doesNotMatch(`${cli.stdout}\n${cli.stderr}`, /\.apex\/inception/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('stable hub docs must not link into the .apex/inception area', () => {
+  const hub = inceptionTempRoot('link');
+  try {
+    mkdirSync(join(hub, '.apex', 'inception', 'project'), { recursive: true });
+    writeFileSync(join(hub, '.apex', 'inception', 'project', 'decision-register.md'), '# Register\n');
+    writeFileSync(join(hub, '.apex', 'inception', 'run.json'), '{}\n');
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), [
+      '# Index',
+      '- [Guide](guide.md)',
+      '- [Register](inception/project/decision-register.md)',
+      '',
+    ].join('\n'));
+    writeFileSync(join(hub, '.apex', 'guide.md'), '# Guide\n- [Run](./inception/run.json)\n');
+
+    assert.deepEqual(collectViolations(hub), [
+      {
+        level: 'error',
+        msg: 'stable docs must not link into .apex/inception: .apex/_INDEX.md -> inception/project/decision-register.md',
+      },
+      {
+        level: 'error',
+        msg: 'stable docs must not link into .apex/inception: .apex/guide.md -> ./inception/run.json',
+      },
+    ]);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('routing-table links into .apex/inception are rejected once', () => {
+  const hub = inceptionTempRoot('routing-link');
+  try {
+    mkdirSync(join(hub, '.apex', 'inception', 'project', 'standards'), { recursive: true });
+    mkdirSync(join(hub, '.claude', 'agents'), { recursive: true });
+    writeFileSync(join(hub, '.apex', 'inception', 'project', 'standards', 'web.md'), '# Draft\n');
+    writeFileSync(join(hub, '.claude', 'agents', 'web-agent.md'), '# web-agent\n');
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), [
+      '# Index',
+      '',
+      '| Surface | Docs | Agent | Skill |',
+      '|---|---|---|---|',
+      '| `web` | [Draft](inception/project/standards/web.md) | `web-agent` | — |',
+    ].join('\n'));
+
+    const v = collectViolations(hub).filter((x) => x.msg.includes('.apex/inception'));
+    assert.deepEqual(v, [{
+      level: 'error',
+      msg: 'stable docs must not link into .apex/inception: .apex/_INDEX.md -> inception/project/standards/web.md',
+    }]);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('work link messages stay byte-identical beside the inception link message', () => {
+  const hub = inceptionTempRoot('work-message');
+  try {
+    mkdirSync(join(hub, '.apex', 'work', 'specs'), { recursive: true });
+    mkdirSync(join(hub, '.apex', 'inception', 'project'), { recursive: true });
+    writeFileSync(join(hub, '.apex', 'work', 'specs', 'draft.md'), '# Draft\n');
+    writeFileSync(join(hub, '.apex', 'inception', 'project', 'decision-register.md'), '# Register\n');
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), [
+      '# Index',
+      '- [Draft](work/specs/draft.md)',
+      '- [Register](inception/project/decision-register.md)',
+      '',
+    ].join('\n'));
+
+    assert.deepEqual(collectViolations(hub), [
+      {
+        level: 'error',
+        msg: 'stable docs must not link into .apex/work: .apex/_INDEX.md -> work/specs/draft.md',
+      },
+      {
+        level: 'error',
+        msg: 'stable docs must not link into .apex/inception: .apex/_INDEX.md -> inception/project/decision-register.md',
+      },
+    ]);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('code-anchor: backticked .apex/inception tokens in stable docs never warn', () => {
+  const hub = inceptionTempRoot('anchor');
+  try {
+    mkdirSync(join(hub, '.apex', 'notes'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), [
+      '# Index',
+      '- [Guide](notes/guide.md)',
+      '',
+      'The run descriptor is `.apex/inception/run.json`; the register is',
+      '`inception/project/decision-register.md`.',
+      '',
+    ].join('\n'));
+    writeFileSync(
+      join(hub, '.apex', 'notes', 'guide.md'),
+      '# Guide\n\nResults land in `../inception/verification/results.md`.\n',
+    );
+
+    assert.deepEqual(collectViolations(hub), []);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('case aliases into the inception area are refused before BFS consumes hidden bytes', (t) => {
+  const capability = inceptionTempRoot('case-capability');
+  const hubs = [];
+  try {
+    if (!storageAliasesCase(capability)) {
+      t.skip('temporary storage keeps case-distinct directory identities');
+      return;
+    }
+    for (const alias of ['INCEPTION', 'InCePtIoN']) {
+      const hub = inceptionTempRoot(`case-link-${alias}`);
+      hubs.push(hub);
+      mkdirSync(join(hub, '.apex', 'inception'), { recursive: true });
+      writeFileSync(join(hub, '.apex', '_INDEX.md'), [
+        '# Index',
+        `- [Hidden](${alias}/sentinel.md)`,
+        `- [Traversal](${alias}/../leaf.md)`,
+        '',
+      ].join('\n'));
+      writeFileSync(join(hub, '.apex', 'inception', 'sentinel.md'), [
+        '# Hidden',
+        '[Sentinel](SYNTHETIC_INCEPTION_BYTE_SENTINEL.md)',
+        '[Leaf](../leaf.md)',
+        '',
+      ].join('\n'));
+      writeFileSync(join(hub, '.apex', 'leaf.md'), '# Leaf\n');
+
+      const messages = collectViolations(hub).map(({ msg }) => msg).join('\n');
+      assert.match(messages, /enters excluded \.apex\/inception/i, alias);
+      assert.match(messages, /anti-orphan: \.apex\/leaf\.md/i, alias);
+      assert.doesNotMatch(messages, /SYNTHETIC_INCEPTION_BYTE_SENTINEL/u, alias);
+      const cli = runValidator(hub);
+      assert.equal(cli.status, 1, `${alias}: ${cli.stderr}`);
+      assert.doesNotMatch(`${cli.stdout}\n${cli.stderr}`, /SYNTHETIC_INCEPTION_BYTE_SENTINEL/u, alias);
+    }
+  } finally {
+    for (const dir of [capability, ...hubs]) rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('nested parent-relative inception aliases are refused before hidden BFS reads', (t) => {
+  const hub = inceptionTempRoot('case-nested');
+  try {
+    if (!storageAliasesCase(hub)) {
+      t.skip('temporary storage keeps case-distinct directory identities');
+      return;
+    }
+    mkdirSync(join(hub, '.apex', 'docs'), { recursive: true });
+    mkdirSync(join(hub, '.apex', 'inception'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n- [Start](docs/start.md)\n');
+    writeFileSync(join(hub, '.apex', 'docs', 'start.md'), [
+      '# Start',
+      '- [Hidden](../InCePtIoN/sentinel.md)',
+      '- [Traversal](../INCEPTION/../leaf.md)',
+      '',
+    ].join('\n'));
+    writeFileSync(join(hub, '.apex', 'inception', 'sentinel.md'), [
+      '# Hidden',
+      '[Sentinel](NESTED_INCEPTION_BYTE_SENTINEL.md)',
+      '[Leaf](../leaf.md)',
+      '',
+    ].join('\n'));
+    writeFileSync(join(hub, '.apex', 'leaf.md'), '# Leaf\n');
+
+    const messages = collectViolations(hub).map(({ msg }) => msg).join('\n');
+    assert.match(messages, /enters excluded \.apex\/inception/i);
+    assert.match(messages, /anti-orphan: \.apex\/leaf\.md/i);
+    assert.doesNotMatch(messages, /NESTED_INCEPTION_BYTE_SENTINEL/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('root instruction aliases into the inception area are controlled refusals', (t) => {
+  const hub = inceptionTempRoot('case-root-link');
+  try {
+    if (!storageAliasesCase(hub)) {
+      t.skip('temporary storage keeps case-distinct directory identities');
+      return;
+    }
+    mkdirSync(join(hub, '.apex', 'inception'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(
+      join(hub, '.apex', 'inception', 'sentinel.md'),
+      '# Hidden\n[Sentinel](ROOT_INCEPTION_BYTE_SENTINEL.md)\n',
+    );
+    writeFileSync(join(hub, 'AGENTS.md'), [
+      '# Instructions',
+      '- [Hidden](.APEX/INCEPTION/sentinel.md)',
+      '- [Traversal](.APEX/InCePtIoN/../_INDEX.md)',
+      '',
+    ].join('\n'));
+
+    const result = runValidator(hub);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /enters excluded \.apex\/inception/i);
+    assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /ROOT_INCEPTION_BYTE_SENTINEL/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('a noncanonical stored inception-case alias is silently excluded from incidental scans', (t) => {
+  const hub = inceptionTempRoot('case-stored');
+  try {
+    mkdirSync(join(hub, '.apex', 'INCEPTION'), { recursive: true });
+    if (!storageAliasesCase(hub) || !existsSync(join(hub, '.apex', 'inception'))) {
+      t.skip('temporary storage keeps case-distinct directory identities');
+      return;
+    }
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(
+      join(hub, '.apex', 'INCEPTION', 'sentinel.md'),
+      '# Hidden\n[Sentinel](STORED_INCEPTION_BYTE_SENTINEL.md)\n',
+    );
+    writeFileSync(join(hub, '.apex', 'INCEPTION', 'oversized.md'), 'x'.repeat(1024 * 1024 + 1));
+    symlinkSync(join(hub, '.apex', '_INDEX.md'), join(hub, '.apex', 'INCEPTION', 'refused.md'));
+
+    assert.deepEqual(collectViolations(hub), []);
+    const quiet = captureMain(['--quiet', hub]);
+    assert.equal(quiet.code, 0, quiet.err);
+    assert.equal(quiet.err, '');
+    assert.doesNotMatch(quiet.out, /STORED_INCEPTION_BYTE_SENTINEL/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('a physically distinct uppercase INCEPTION directory remains stable content', (t) => {
+  const hub = inceptionTempRoot('case-distinct');
+  try {
+    if (storageAliasesCase(hub)) {
+      t.skip('temporary storage aliases case spellings');
+      return;
+    }
+    mkdirSync(join(hub, '.apex', 'INCEPTION'), { recursive: true });
+    mkdirSync(join(hub, '.apex', 'inception'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(
+      join(hub, '.apex', 'INCEPTION', 'visible.md'),
+      '# Visible\n[Sentinel](CASE_DISTINCT_INCEPTION_VISIBLE_SENTINEL.md)\n',
+    );
+
+    const messages = collectViolations(hub).map(({ msg }) => msg).join('\n');
+    assert.match(messages, /\.apex\/INCEPTION\/visible\.md/u);
+    assert.match(messages, /CASE_DISTINCT_INCEPTION_VISIBLE_SENTINEL/u);
+    assert.doesNotMatch(messages, /enters excluded \.apex\/inception/i);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('a descendant symlink from a stable path into the inception area is refused unread', () => {
+  const hub = inceptionTempRoot('bfs-symlink');
+  try {
+    mkdirSync(join(hub, '.apex', 'decisions'), { recursive: true });
+    mkdirSync(join(hub, '.apex', 'inception', 'project'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), [
+      '# Index',
+      '- [Decisions](decisions/_INDEX.md)',
+      '- [Linked](linked/sentinel.md)',
+      '',
+    ].join('\n'));
+    writeFileSync(join(hub, '.apex', 'leaf.md'), '# Stable leaf\n');
+    writeFileSync(join(hub, '.apex', 'inception', 'project', 'sentinel.md'), [
+      '# Hidden',
+      '[Sentinel](INCEPTION_SENTINEL_MUST_NOT_BE_READ.md)',
+      '- [Leaf](../../leaf.md)',
+      '',
+    ].join('\n'));
+    symlinkSync(
+      join(hub, '.apex', 'inception', 'project', 'sentinel.md'),
+      join(hub, '.apex', 'decisions', '_INDEX.md'),
+    );
+    symlinkSync(join(hub, '.apex', 'inception', 'project'), join(hub, '.apex', 'linked'));
+
+    const messages = collectViolations(hub).map((item) => item.msg).join('\n');
+    assert.match(messages, /stable-read: \.apex\/decisions\/_INDEX\.md is symlink/i);
+    assert.match(messages, /stable-read: \.apex\/linked\/sentinel\.md has symlinked component/i);
+    assert.match(messages, /anti-orphan: \.apex\/leaf\.md/);
+    assert.doesNotMatch(messages, /INCEPTION_SENTINEL_MUST_NOT_BE_READ/u);
+    assert.doesNotMatch(messages, /\.apex\/inception/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('PD3(a): an inception file hard-linked to a linked stable doc keeps the hub green', () => {
+  const hub = inceptionTempRoot('hardlink-area');
+  try {
+    mkdirSync(join(hub, '.apex', 'inception', 'project'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n- [Leaf](leaf.md)\n');
+    writeFileSync(join(hub, '.apex', 'leaf.md'), '# Leaf\n');
+    linkSync(join(hub, '.apex', 'leaf.md'), join(hub, '.apex', 'inception', 'project', 'leaf.md'));
+    assert.equal(lstatSync(join(hub, '.apex', 'leaf.md')).nlink, 2);
+
+    assert.deepEqual(collectViolations(hub), []);
+    const cli = runValidator(hub);
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.match(cli.stdout, /OK — doc graph is coherent/);
+    assert.doesNotMatch(`${cli.stdout}\n${cli.stderr}`, /\.apex\/inception/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('PD3(b): a stable orphan hard-linked to an inception file is an anti-orphan by its stable path', () => {
+  const hub = inceptionTempRoot('hardlink-stable');
+  try {
+    mkdirSync(join(hub, '.apex', 'inception', 'project'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(join(hub, '.apex', 'inception', 'project', 'decision-register.md'), '# Register\n');
+    linkSync(
+      join(hub, '.apex', 'inception', 'project', 'decision-register.md'),
+      join(hub, '.apex', 'orphan.md'),
+    );
+    assert.equal(lstatSync(join(hub, '.apex', 'orphan.md')).nlink, 2);
+
+    assert.deepEqual(collectViolations(hub), [
+      { level: 'error', msg: 'anti-orphan: .apex/orphan.md is not linked from .apex/_INDEX.md' },
+    ]);
+    const cli = runValidator(hub);
+    assert.equal(cli.status, 1, cli.stderr);
+    assert.match(cli.stderr, /anti-orphan: \.apex\/orphan\.md is not linked/u);
+    assert.doesNotMatch(`${cli.stdout}\n${cli.stderr}`, /\.apex\/inception/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});

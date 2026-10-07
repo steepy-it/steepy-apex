@@ -753,6 +753,9 @@ function boundedGeneratedEntries(hubRoot) {
   let reservedWork;
   try { reservedWork = lstatSync(join(hubRoot, '.apex', 'work')); }
   catch { /* Work is excluded local state, never a required planner input. */ }
+  let reservedInception;
+  try { reservedInception = lstatSync(join(hubRoot, '.apex', 'inception')); }
+  catch { /* The inception run area is excluded local state, like work. */ }
   const visit = (absolute, logical) => {
     let stat;
     try {
@@ -763,6 +766,7 @@ function boundedGeneratedEntries(hubRoot) {
     }
     if (stat.isSymbolicLink() || !stat.isDirectory()) return;
     if (reservedWork && stat.dev === reservedWork.dev && stat.ino === reservedWork.ino) return;
+    if (reservedInception && stat.dev === reservedInception.dev && stat.ino === reservedInception.ino) return;
     for (const entry of readdirSync(absolute, { withFileTypes: true })) {
       const path = logical ? `${logical}/${entry.name}` : entry.name;
       const target = join(absolute, entry.name);
