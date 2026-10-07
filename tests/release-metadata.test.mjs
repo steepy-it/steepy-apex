@@ -598,3 +598,51 @@ test('COMMUNITY_SUBMISSION.md contains marketplace review copy and safety disclo
   assertIncludesNamespacedWorkflow(submission, 'COMMUNITY_SUBMISSION.md');
   assertNoBareWorkflowInvocations(submission, 'COMMUNITY_SUBMISSION.md');
 });
+
+function pngChunkTypes(buffer) {
+  assert.equal(buffer.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+  const types = [];
+  let o = 8;
+  while (o < buffer.length) {
+    const length = buffer.readUInt32BE(o);
+    const type = buffer.toString('latin1', o + 4, o + 8);
+    types.push(type);
+    o += 12 + length;
+    if (type === 'IEND') break;
+  }
+  return types;
+}
+
+test('.claude-plugin/icon.png is a byte copy of the Codex icon within directory bounds', () => {
+  const icon = readFileSync(join(root, '.claude-plugin/icon.png'));
+  const codexIcon = readFileSync(join(root, 'assets/plugin-icon.png'));
+  assert.ok(icon.equals(codexIcon), 'Claude icon must be a byte copy of the Codex icon');
+  pngChunkTypes(icon);
+  const width = icon.readUInt32BE(16);
+  const height = icon.readUInt32BE(20);
+  assert.equal(width, height, 'icon must be square');
+  assert.ok(width >= 512 && width <= 2048, `icon width ${width} out of bounds`);
+  assert.ok(icon.byteLength < 2 * 1024 * 1024, 'icon must stay under 2 MiB');
+  assert.equal(Object.hasOwn(readJson('.claude-plugin/plugin.json'), 'icon'), false);
+});
+
+test('tracked PNGs outside tests/ carry no caBX chunk', () => {
+  const listed = spawnSync('git', ['ls-files', '-z', '--', '*.png'], { cwd: root, encoding: 'utf8' });
+  assert.equal(listed.status, 0);
+  const files = listed.stdout.split('\0').filter((f) => f && !f.startsWith('tests/'));
+  for (const required of ['assets/workflow-gears.png', 'assets/plugin-icon.png', '.claude-plugin/icon.png']) {
+    assert.ok(files.includes(required), `${required} must be tracked`);
+  }
+  for (const file of files) {
+    const types = pngChunkTypes(readFileSync(join(root, file)));
+    assert.ok(!types.includes('caBX'), `${file} must not carry a caBX chunk`);
+  }
+});
+
+test('docs/workflow.md shows the gears diagram through one Markdown image only', () => {
+  const GEARS_ALT = 'Four workflow gears: Gear 1 implements directly and checks the hub; Gear 2 adds a light spec, self-review and tests; Gear 3 runs brainstorm, plan, implement and review in manual or autopilot mode; Gear 4 runs an authorized, bounded autonomous loop followed by review.';
+  const workflow = readFileSync(join(root, 'docs/workflow.md'), 'utf8');
+  assert.equal(workflow.split('workflow-gears.png').length - 1, 1);
+  assert.ok(workflow.split('\n').includes(`![${GEARS_ALT}](../assets/workflow-gears.png)`));
+  assert.doesNotMatch(workflow, /<img\b|<picture\b|<a\b/i);
+});
