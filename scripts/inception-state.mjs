@@ -110,6 +110,18 @@ function isSafeText(value) {
   return length >= 1 && length <= MAX_LINE_CHARACTERS;
 }
 
+// Area paths (HC5): `assertSafeRelPath` plus a non-empty remainder strictly under `prefix`,
+// without empty or `.` segments (`..` is already refused by `assertSafeRelPath`).
+function isAreaPathUnder(value, prefix) {
+  try {
+    assertSafeRelPath(value);
+  } catch {
+    return false;
+  }
+  return value.startsWith(prefix) && value.length > prefix.length
+    && value.split('/').every((segment) => segment !== '' && segment !== '.');
+}
+
 function recordPath(kind, number) {
   const { directory, extension } = RECORD_KINDS[kind];
   return `${directory}${String(number).padStart(4, '0')}${extension}`;
@@ -195,9 +207,7 @@ function validateRunDescriptor(d) {
   if (d.verification !== null) {
     expectKeys(d.verification, ['path', 'bytes', 'sha256'], 'verification');
     const { path, bytes, sha256 } = d.verification;
-    if (typeof path !== 'string' || !path.startsWith(VERIFICATION_PREFIX) || path.length === VERIFICATION_PREFIX.length) {
-      fail(`verification.path must be under ${VERIFICATION_PREFIX}`);
-    }
+    if (!isAreaPathUnder(path, VERIFICATION_PREFIX)) fail(`verification.path must be a safe path under ${VERIFICATION_PREFIX}`);
     if (!Number.isSafeInteger(bytes) || bytes < 0) fail('verification.bytes must be a safe integer >= 0');
     if (typeof sha256 !== 'string' || !SHA256_PATTERN.test(sha256)) fail('verification.sha256 must be lowercase hex');
   }
@@ -678,17 +688,8 @@ function transitionCommand(root, values) {
 // resume-note (HC11)
 // ---------------------------------------------------------------------------
 
-// Area paths (HC5): a safe relative path under the option's HC2 prefix, without empty or `.` segments.
 function assertAreaPath(value, option, prefix = `${INCEPTION_AREA}/`) {
-  try {
-    assertSafeRelPath(value, option);
-  } catch (error) {
-    throw refuse(message(error));
-  }
-  const segments = value.split('/');
-  if (!value.startsWith(prefix) || value.length === prefix.length || segments.some((segment) => segment === '' || segment === '.')) {
-    throw refuse(`${option} must be a path under ${prefix}: ${JSON.stringify(value)}`);
-  }
+  if (!isAreaPathUnder(value, prefix)) throw refuse(`${option} must be a safe path under ${prefix}: ${JSON.stringify(value)}`);
   return value;
 }
 
