@@ -171,3 +171,36 @@ test('ci.yml invokes reusable validation without requiring unavailable live evid
   assert.match(workflow, /uses:\s*\.\/\.github\/workflows\/validate\.yml/);
   assert.doesNotMatch(workflow, /require-release-evidence:\s*true/);
 });
+
+test('release.yml: appends the Claude directory payload after the GitHub Release, never forced', () => {
+  const workflow = readWorkflow('.github/workflows/release.yml');
+
+  const releaseIdx = workflow.indexOf('name: Create GitHub Release');
+  const dirIdx = workflow.indexOf('name: Publish Claude directory branch');
+
+  assert.ok(releaseIdx >= 0, 'should have Create GitHub Release step');
+  assert.ok(dirIdx >= 0, 'should have Publish Claude directory branch step');
+  assert.ok(dirIdx > releaseIdx, 'directory step should come after Release step');
+
+  assert.match(
+    workflow.slice(dirIdx),
+    /run:\s*node scripts\/publish-directory-branch\.mjs --source "\$GITHUB_SHA" --branch claude-directory --push\s*$/m,
+  );
+
+  const dirSlice = workflow.slice(dirIdx);
+  assert.ok(dirSlice.includes("GIT_AUTHOR_NAME: 'github-actions[bot]'"), 'should have GIT_AUTHOR_NAME');
+  assert.ok(dirSlice.includes("GIT_COMMITTER_NAME: 'github-actions[bot]'"), 'should have GIT_COMMITTER_NAME');
+  assert.ok(
+    dirSlice.includes("GIT_AUTHOR_EMAIL: '41898282+github-actions[bot]@users.noreply.github.com'"),
+    'should have GIT_AUTHOR_EMAIL',
+  );
+  assert.ok(
+    dirSlice.includes("GIT_COMMITTER_EMAIL: '41898282+github-actions[bot]@users.noreply.github.com'"),
+    'should have GIT_COMMITTER_EMAIL',
+  );
+
+  assert.doesNotMatch(workflow, /--force|force-with-lease/);
+
+  const usesMatches = (workflow.match(/^\s*(?:-\s*)?uses:/gm) ?? []).length;
+  assert.equal(usesMatches, 3, 'should have exactly 3 uses entries (no new actions)');
+});
