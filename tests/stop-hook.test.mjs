@@ -176,3 +176,55 @@ test('a case alias into the inception area emits a Stop-hook block without consu
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+// Pre-hub inception state: `.apex/` holds the inception area but no `_INDEX.md`.
+// The hook stays silent for a valid run descriptor and blocks on an unparseable
+// one. Each temporary root is resolved with realpathSync and removed in `finally`.
+import { createRunDescriptor, serializeRunDescriptor } from '../scripts/inception-state.mjs';
+
+function preHubRepo(suffix, descriptorBytes) {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), `steepy-stop-prehub-${suffix}-`)));
+  mkdirSync(join(repo, '.apex', 'inception'), { recursive: true });
+  writeFileSync(join(repo, '.apex', 'inception', '.gitignore'), '*\n');
+  writeFileSync(join(repo, '.apex', 'inception', 'run.json'), descriptorBytes);
+  return repo;
+}
+
+test('pre-hub: a valid inception run descriptor keeps the Stop hook silent', () => {
+  const repo = preHubRepo('valid', serializeRunDescriptor(createRunDescriptor({
+    runId: 'inc-20261007T120000Z-1a2b3c4d',
+    harnessName: 'claude-code',
+    capabilities: ['shell'],
+    git: { present: false, branch: null, commits: 'none' },
+  })));
+  try {
+    const r = run([repo], '{}', 2_000);
+    assert.notEqual(r.error?.code, 'ETIMEDOUT');
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, '');
+    assert.equal(r.stderr, '');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: an unparseable inception run descriptor emits a block naming its path', () => {
+  const repo = preHubRepo('invalid', '{ "schema": \n');
+  try {
+    const r = run([repo], '{}', 2_000);
+    assert.notEqual(r.error?.code, 'ETIMEDOUT');
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stderr, '');
+    const payload = JSON.parse(r.stdout);
+    assert.deepEqual(payload, {
+      decision: 'block',
+      reason: [
+        'steepy validate-hub: 1 hub violation(s):',
+        '  - inception run descriptor .apex/inception/run.json cannot be parsed: run descriptor is not valid JSON',
+        'Fix the hub (or run /steepy-apex:check) before ending the turn.',
+      ].join('\n'),
+    });
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
