@@ -558,8 +558,10 @@ test('step 6 and step 9 (SC15): each pause publishes the next phase, waits for c
     assert.match(step, /Wait for every active child to return/);
     assert.ok(step.indexOf(`--to ${phase}`) < step.indexOf('Wait for every active child'), `${heading}: the phase first`);
     assert.ok(step.indexOf('Wait for every active child') < step.indexOf('`resume-note'), `${heading}: the note last`);
-    assert.match(step, /`resume-note --next=<value> --need <path>`/);
+    assert.match(step, /`resume-note --next=<value> --need <path> --note=<value>`/);
     assert.match(step, /one `--need` for every exact path the next session needs/);
+    assert.match(step, /`--note=<value>` carries, on one line, the concrete model of each child dispatched in this session/);
+    assert.match(step, /Leave `--note` out when there is nothing to record/);
     assert.match(step, /Each `--need` is an existing file under `\.apex\/inception\/`/);
     assert.match(step, /The helper writes the descriptor path and the phase into the note/);
     assert.match(step, /The pause is not a block: the run stays `active`/);
@@ -569,6 +571,8 @@ test('step 6 and step 9 (SC15): each pause publishes the next phase, waits for c
     assert.match(step, /If the user explicitly asks to continue in the same session, continue, and state the cost/);
     assert.match(step, /A pause is never a refusal/);
   }
+  const step9 = flat(sectionOf(text, '### Step 9 — Pause after bootstrap'));
+  assert.match(step9, /dispatched in this session and any degradation first met since approval/);
   const step6 = flat(sectionOf(text, '### Step 6 — Pause after approval'));
   assert.match(step6, /Step 5 ends with `transition --to bootstrap --reason=<value>`; check that its output says phase `bootstrap`/);
 });
@@ -672,6 +676,7 @@ test('step 10 (SC15): clean-state checks, five distinct result values, the resul
   assert.match(step10, /output's `checkpoint` field is the path to pass/);
   assert.match(step10, /does not verify clean, or while any effect is `uncertain`/);
   assert.ok(step10.includes(`\`<value>\` is exactly \`${CLOSING_NEXT}\``), 'the closing note carries the helper next step');
+  assert.match(step10, /Add `--note=<value>` to the closing note when a degradation was first met in this session/);
   assert.match(step10, /the `init` skill, then the `discovery` skill with the inception source/);
   assert.match(step10, /The run ends at `complete`\. It does not run the `init` skill/);
 });
