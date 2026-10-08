@@ -29,11 +29,6 @@ function readJson(relativePath) {
   return JSON.parse(readFileSync(join(root, relativePath), 'utf8'));
 }
 
-// Manifest-declared relative paths (`./skills/`, `./hooks/...`, marketplace `source`)
-// are relative to the plugin root — i.e. the repo root, since `.codex-plugin/` and
-// `.agents/plugins/` are metadata subfolders, not the plugin root themselves (mirrors
-// the shipped superpowers `.codex-plugin/plugin.json` reference, where `skills` is a
-// sibling of `.codex-plugin/`, both at the plugin root).
 function resolveFromRoot(relativePath) {
   return join(root, relativePath);
 }

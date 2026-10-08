@@ -9,7 +9,21 @@
     {
       "name": "steepy-apex",
       "source": "./",
-      "description": "Context engineering and governed workflows for AI coding agents. Keep project knowledge coherent, route work to specialists, and scale from small fixes to bounded autonomous loops."
+      "description": "Context engineering and governed workflows for AI coding agents. Keep project knowledge coherent, route work to specialists, and scale from small fixes to bounded autonomous loops.",
+      "category": "development",
+      "keywords": [
+        "context-engineering",
+        "workflows",
+        "skills",
+        "spec-driven-development",
+        "code-review",
+        "subagents",
+        "autonomous-loops",
+        "project-knowledge",
+        "documentation-drift",
+        "agents-md",
+        "model-selection"
+      ]
     }
   ]
 }

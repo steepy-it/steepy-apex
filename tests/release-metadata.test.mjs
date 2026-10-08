@@ -75,6 +75,23 @@ test('release identity uses steepy-apex and steepy-it consistently', () => {
   assertNoGenericOwnerToken(codexPlugin, '.codex-plugin/plugin.json');
 });
 
+test('search keywords stay identical across npm, both plugin manifests and the Claude marketplace entry', () => {
+  const pkg = readJson('package.json');
+  const plugin = readJson('.claude-plugin/plugin.json');
+  const marketplace = readJson('.claude-plugin/marketplace.json');
+  const codexPlugin = readJson('.codex-plugin/plugin.json');
+
+  assert.ok(Array.isArray(plugin.keywords) && plugin.keywords.length > 0, '.claude-plugin/plugin.json must declare keywords');
+  for (const keyword of plugin.keywords) {
+    assert.match(keyword, /^[a-z0-9]+(?:-[a-z0-9]+)*$/, `keyword ${keyword} must be lowercase and hyphenated`);
+  }
+  assert.equal(new Set(plugin.keywords).size, plugin.keywords.length, 'keywords must not repeat');
+  assert.deepEqual(pkg.keywords, plugin.keywords, 'package.json keywords must match .claude-plugin/plugin.json');
+  assert.deepEqual(codexPlugin.keywords, plugin.keywords, '.codex-plugin/plugin.json keywords must match .claude-plugin/plugin.json');
+  assert.deepEqual(marketplace.plugins[0].keywords, plugin.keywords, 'marketplace entry keywords must match .claude-plugin/plugin.json');
+  assert.equal(marketplace.plugins[0].category, 'development');
+});
+
 test('CI covers the supported Node 24 floor without older runtimes', () => {
   const workflow = [
     readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8'),
@@ -181,7 +198,6 @@ test('npm package uses an explicit release files allowlist', () => {
 
   const filesText = pkg.files.join('\n');
   for (const localOnly of [
-    '.superpowers',
     '.claude/settings.local.json',
     '.apex/work',
     'tests/',
@@ -263,7 +279,6 @@ test('npm dry-run package excludes local development state', () => {
     }
 
     for (const path of paths) {
-      assert.ok(!path.startsWith('.superpowers/'), `package must not include ${path}`);
       assert.ok(!path.startsWith('.claude/'), `package must not include ${path}`);
       assert.ok(!path.startsWith('.apex/work/'), `package must not include ${path}`);
       assert.ok(!path.startsWith('tests/'), `package must not include ${path}`);
