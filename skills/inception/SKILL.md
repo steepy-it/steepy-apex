@@ -23,8 +23,9 @@ autopilot mode: a human answers its questions and approves the project.
 - Work only inside `.apex/inception/` and the application's own files.
 - Never create `.apex/_INDEX.md`, routing, standards, specialist adapters, or a project bootstrap:
   those belong to the `init` skill, after the run is complete.
-- Never edit the root `.gitignore`. The area ignores itself: the first run write is
-  `.apex/inception/.gitignore`, and `start` writes it.
+- Never create or edit the root `.gitignore` for the run's own area; only an approved bootstrap
+  tool may change it, as an application file (Step 7). The area ignores itself: the first run write
+  is `.apex/inception/.gitignore`, and `start` writes it.
 - One run per repository: its descriptor is `.apex/inception/run.json`. The descriptor changes only
   through the helper; never write it by hand.
 - Never rewrite a record bound to an approval or a checkpoint. The helper writes each record once,
@@ -159,7 +160,8 @@ before the run is complete, write a resume note first (see Blocking and abandon)
    still has to run is a new effect with its own `effect intent`. Never repeat a concluded or
    uncertain effect. A divergence you cannot explain blocks the run.
 4. Continue at the step that owns the descriptor's `phase`: Step 2 for `reconnaissance`, Step 3 for
-   `architecture`, Step 4 for `research`, Step 5 for `approval`.
+   `architecture`, Step 4 for `research`, Step 5 for `approval`, Step 7 for `bootstrap`, Step 10 for
+   `verification`. For `complete`, give the closing report (Step 10).
 
 ### Step 2 — Reconnaissance
 
@@ -301,6 +303,228 @@ the commit policy) needs a targeted decision and a new approval of the changed p
 3. Present the changed parts and obtain a new explicit human approval. Run `approve` again with
    every current project document: each approval record covers the complete set.
 4. Run `transition --to bootstrap --reason=<value>` again.
+
+### Step 6 — Pause after approval
+
+Session 1 ends here (see Sessions and context). Before you pause:
+
+1. Publish the next phase in the descriptor. Step 5 ends with
+   `transition --to bootstrap --reason=<value>`; check that its output says phase `bootstrap`. Do
+   not run it again.
+2. Wait for every active child to return.
+3. Write the resume note: `resume-note --next=<value> --need <path>`, with one `--need` for every
+   exact path the next session needs, such as each project document. Each `--need` is an existing
+   file under `.apex/inception/`. The helper writes the descriptor path and the phase into the note.
+
+The pause is not a block: the run stays `active`.
+
+Recommend a new session for bootstrap: everything earlier in this session stays in context, and that
+context is paid again on every turn. If the user explicitly asks to continue in the same session,
+continue, and state the cost. A pause is never a refusal.
+
+### Step 7 — Bootstrap
+
+Build the approved project: one representative path, not the whole product.
+
+Split the work into parts and build them in dependency order: a contract's producer comes before
+its consumers. Each part has explicit ownership, the exact application paths it may modify, and a
+report, `.apex/inception/bootstrap/<part>.md`.
+
+- When your harness has subagents, dispatch each part with `bootstrap-part-prompt.md`, one at a time
+  (see Children and dispatch policy). A child modifies only its own part.
+- You, the coordinator, keep the dialogue, the effect log, checkpoints, any commits, and the
+  descriptor.
+
+The bootstrap delivers:
+
+- manifests and lockfiles produced with the official tools at the approved versions;
+- install, build, test, and start commands usable from a clean checkout;
+- an example configuration without secrets;
+- the data, integrations, and migrations the representative path needs;
+- reuse of the chosen materials and preservation of the agreed behaviors;
+- the representative path, actually integrated across its boundaries;
+- CI and deploy instructions when the project includes them.
+
+Deploy is included or excluded with a reason, as the approved project says:
+
+- Included → it needs evidence of its result.
+- Excluded → it does not prevent bootstrap from concluding.
+
+A passing local test does not prove a remote deploy or CI.
+
+Never build every prototype screen: the other flows stay future context.
+
+Build and test fixes inside the scope are autonomous. A substantial change follows the re-approval
+rule in Step 5.
+
+The run never creates or edits the root `.gitignore` for its own area. An approved tool, such as a
+generator or a framework CLI, may create or edit the root `.gitignore` as an application file. That
+is an operation with effects, recorded with `effect intent` and `effect outcome` like any other
+generator output (Step 8).
+
+Every operation with effects follows Step 8. When every part is built and checked, go to Step 9.
+
+### Step 8 — Effects and checkpoints
+
+An operation with effects is an installation, a generator, a migration, an external resource, a
+deploy, a commit, or a remote operation. For each one, in this order:
+
+1. Before it runs: `effect intent --id <id> --kind <kind> --summary=<value>`.
+2. Run the operation.
+3. After it: `effect outcome --id <id> --result succeeded|failed --observed=<value>`, with what you
+   really observed.
+4. Run the relevant checks, for example the build and the tests.
+5. Record a checkpoint: `checkpoint create --label=<value> --file <path>`, with one `--file` for
+   every application file the operation created or changed.
+
+Remote operations (a push, a repository creation, a deploy) need the user's explicit authorization
+for that one operation. Quote it in `--authorization=<value>`, with kind `remote` or `deploy`. The
+commit policy never covers a remote operation.
+
+Commits follow the commit policy in the descriptor:
+
+- `allowed` → the commit and its checks come before the checkpoint. The commit is itself an
+  effect, of kind `commit`.
+- `forbidden`, or `none` without Git → make no commit. A repository without Git and an uncommitted
+  tree are supported when the checkpoint records them faithfully.
+
+Rules:
+
+- An interruption never authorizes repeating a concluded or uncertain effect. On resume, Step 1
+  settles every `uncertain` effect first.
+- A checkpoint is never replaced by a new baseline to hide changes. A later change gets its own
+  effect and a new checkpoint.
+- Children never run an operation with effects. A bootstrap part lists the effects it needs in its
+  report, and you run them. A research experiment stays in its isolated directory outside the
+  repository.
+- `checkpoint create` refuses an application file reached through a symlinked ancestor directory,
+  and a path named twice across `--file` and `--files-from`. Name each application file once, by its
+  real path.
+
+### Step 9 — Pause after bootstrap
+
+Session 2 ends here. Before you pause:
+
+1. Publish the next phase in the descriptor: `transition --to verification --reason=<value>`.
+2. Wait for every active child to return.
+3. Write the resume note: `resume-note --next=<value> --need <path>`, with one `--need` for every
+   exact path the next session needs, such as each bootstrap part report. Each `--need` is an
+   existing file under `.apex/inception/`. The helper writes the descriptor path and the phase into
+   the note.
+
+The pause is not a block: the run stays `active`.
+
+Recommend a new session for verification: everything earlier in this session stays in context, and
+that context is paid again on every turn. If the user explicitly asks to continue in the same
+session, continue, and state the cost. A pause is never a refusal.
+
+### Step 10 — Final verification and conclusion
+
+Session 3 verifies the application and concludes the run.
+
+Verify from a clean state, such as a fresh checkout without installed dependencies, build output,
+or processes left from bootstrap: install, build, test, start, the representative path, and the
+preserved behaviors. A verification step with effects, such as an install, follows Step 8.
+
+For each check, keep its environment, exact command or procedure, expected result, observed result,
+and limits. Each check gets exactly one of five result values:
+
+- `configured`: set up but not run here, such as CI or a deploy that only a remote run proves.
+- `executed`: run, but the observation cannot show whether the expected result holds.
+- `succeeded`: run, and the observed result matches the expected one.
+- `not-executed`: not run; the limits say why.
+- `failed`: run, and the observed result differs from the expected one.
+
+Check that the resolved versions, in the lockfiles and the tools' version output, match the approved
+combination.
+
+Write `.apex/inception/verification/results.md`; create `.apex/inception/verification/` as an
+ordinary directory if it is absent. It has two sections. `## Checks` has one row per check:
+
+| Check | Environment | Command or procedure | Expected | Observed | Limits | Result |
+|---|---|---|---|---|---|---|
+| install | <environment> | <exact command> | <expected> | <observed> | <limits, or none> | succeeded |
+
+`## Coverage` has one row for each decision-register ID and each component:
+
+| ID | Component | Status | Checks |
+|---|---|---|---|
+| DR-1 | <component> | verified | <the checks that cover it> |
+
+Status is `verified`, `unverified`, or `future`. Never edit the approved documents to record the
+results.
+
+Conclude the run after the last authorized commits:
+
+1. Create the final checkpoint: `checkpoint create --label=<value> --file <path>`. Its output's
+   `checkpoint` field is the path to pass next.
+2. Run `transition --to complete --checkpoint <path> --verification .apex/inception/verification/results.md --reason=<value>`.
+   The helper refuses while that checkpoint does not verify clean, or while any effect is
+   `uncertain`.
+3. Write the closing note: `resume-note --next=<value> --need .apex/inception/verification/results.md`,
+   where `<value>` is exactly `run the init skill, then the discovery skill with the inception source`.
+4. Give the closing report: what is verified, unverified, and future, and the next steps: the `init`
+   skill, then the `discovery` skill with the inception source.
+
+The run ends at `complete`. It does not run the `init` skill.
+
+## Sessions and context
+
+A run takes three sessions with two planned pauses: after approval (Step 6) and after bootstrap
+(Step 9).
+
+| Session | Phases | Ends at |
+|---|---|---|
+| 1 | reconnaissance, architecture, research, approval | the pause after approval (Step 6) |
+| 2 | bootstrap | the pause after bootstrap (Step 9) |
+| 3 | verification and conclusion | `complete` and the closing note (Step 10) |
+
+A new session starts from the descriptor and the latest resume note (Step 1), not from the earlier
+conversation. Earlier context is paid on every turn, so a new session at each pause keeps the cost
+down.
+
+## Children and dispatch policy
+
+A child is a subagent that does one bounded job for you, the coordinator.
+
+- A child receives exact input paths and one exact output path. It writes its detail to its own
+  report and returns a short answer: the four fields `status`, `artifact`, `changed-paths`,
+  `signals`.
+- Read a full child report only for a concrete missing fact.
+- Children never inherit the coordinator's read capability: a child reads only the paths you pass
+  it.
+- Only one child runs at a time. Research may continue in the background while you keep the dialogue
+  going.
+- Tiers are abstract: `standard` for research and experiments, `most-capable` for bootstrap parts.
+  Never write a concrete model ID; translate the tier to a concrete model when you dispatch.
+- Record the concrete model each child ran on, and any degradation, in the next resume note
+  (`--note=<value>` at Step 6 or Step 9).
+- Without subagents, run the work inline yourself, and write the explicit degradation in the report
+  the work produces.
+
+The two prompt templates live in this skill's base directory:
+
+| Template | Child | Tier | Placeholders |
+|---|---|---|---|
+| `research-prompt.md` | one research question or experiment (Step 4) | `standard` | `[INPUT_PATHS]`, `[OUTPUT_FILE]`, `[QUESTION]` |
+| `bootstrap-part-prompt.md` | one bootstrap part (Step 7) | `most-capable` | `[INPUT_PATHS]`, `[OUTPUT_FILE]`, `[PART]`, `[ALLOWED_PATHS]` |
+
+`[OUTPUT_FILE]` is `.apex/inception/research/<slug>.md` for research and
+`.apex/inception/bootstrap/<part>.md` for a bootstrap part.
+
+## Harness capabilities and degradations
+
+Use what your harness really has, as declared in Step 1:
+
+- No subagents → run each child's work inline, with a declared degradation.
+- No question tool → ask in plain prose: one question, numbered options, and a recommendation.
+- No network → the Step 4 rule: ask the user for official sources or block, and never pin a
+  remembered version.
+- There is no headless or autopilot mode on any harness: a human answers and approves.
+
+Record each exercised degradation in the reconnaissance record. A degradation first met after
+approval goes in the next resume note (`--note=<value>`), because the approved documents never
+change.
 
 ## Blocking and abandon
 

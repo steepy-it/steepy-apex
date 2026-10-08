@@ -1,12 +1,14 @@
-// Content contracts for skills/inception/SKILL.md, part 1: entry, local area, and
-// reconnaissance through the single human approval (SC2, SC4, SC14).
+// Content contracts for skills/inception/SKILL.md and its two prompt templates.
+// Part 1: entry, local area, and reconnaissance through the single human approval (SC2, SC4, SC14).
+// Part 2: the two pauses, bootstrap, effects and checkpoints, final verification, sessions,
+// children, harness degradations, and the research and bootstrap-part prompts (SC15).
 //
 // Doc-content-lock suite: it reads files only and never writes. The helper command spellings
 // below are the inception helper contract's HC7 lines with `<common>` written as
 // `--repo-root .`; the classification rows are HC8's; the run file locations are HC2's.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sectionBetween, frontmatter } from './support/markdown.mjs';
@@ -46,6 +48,14 @@ const HEADINGS = [
   '### Step 3 — Architecture decisions',
   '### Step 4 — Research and versions',
   '### Step 5 — Project and approval',
+  '### Step 6 — Pause after approval',
+  '### Step 7 — Bootstrap',
+  '### Step 8 — Effects and checkpoints',
+  '### Step 9 — Pause after bootstrap',
+  '### Step 10 — Final verification and conclusion',
+  '## Sessions and context',
+  '## Children and dispatch policy',
+  '## Harness capabilities and degradations',
   '## Blocking and abandon',
 ];
 
@@ -226,7 +236,10 @@ test('inception boundaries (SC2): local area only; the hub, routing, standards, 
     assert.match(boundaries, forbidden);
   }
   assert.match(boundaries, /Never create [^.]*`\.apex\/_INDEX\.md`[^.]*belong to the `init` skill/);
-  assert.match(boundaries, /Never edit the root `\.gitignore`/);
+  assert.match(
+    boundaries,
+    /Never create or edit the root `\.gitignore` for the run's own area; only an approved bootstrap tool may change it, as an application file \(Step 7\)/
+  );
   assert.match(boundaries, /first run write is `\.apex\/inception\/\.gitignore`[^.]*`start`/);
   assert.match(boundaries, /One run per repository[^.]*`\.apex\/inception\/run\.json`/);
   assert.match(boundaries, /descriptor changes only through the helper/);
@@ -334,6 +347,11 @@ test('step 1 (SC4): capability record and commit policy before start; resume onl
   assert.match(step1, /explain any divergence/);
   assert.match(step1, /complete only the missing step the evidence proves/);
   assert.match(step1, /Never repeat a concluded or uncertain effect/);
+  assert.match(
+    step1,
+    /Step 2 for `reconnaissance`, Step 3 for `architecture`, Step 4 for `research`, Step 5 for `approval`, Step 7 for `bootstrap`, Step 10 for `verification`/
+  );
+  assert.match(step1, /For `complete`, give the closing report \(Step 10\)/);
 });
 
 test('step 2 (SC14): reconnaissance record, real versus simulated, dialogue rules, and the identity check', () => {
@@ -467,4 +485,333 @@ test('blocking and abandon: block with a precise resume note; abandon only on re
   assert.match(blocking, /moves the run intact[^.]*deletes nothing/);
   assert.match(blocking, /start the new run in the same step/);
   assert.match(blocking, /Never delete `\.apex\/inception\/`/);
+});
+
+// ---------------------------------------------------------------------------
+// Part 2 (SC15): pauses, bootstrap, effects, verification, sessions, children, degradations
+// ---------------------------------------------------------------------------
+
+// Options each HC7 command cannot run without (HC6: a missing one is a usage error, exit 2).
+const REQUIRED_OPTIONS = new Map([
+  ['classify', []],
+  ['start', ['harness', 'capabilities', 'git-commits']],
+  ['transition', ['to', 'reason']],
+  ['resume-note', ['next']],
+  ['approve', ['statement', 'document']],
+  ['verify-approval', []],
+  ['effect intent', ['id', 'kind', 'summary']],
+  ['effect outcome', ['id', 'result', 'observed']],
+  ['effect status', []],
+  ['checkpoint create', ['label']],
+  ['checkpoint verify', []],
+  ['abandon', ['reason']],
+]);
+
+const CLOSING_NEXT = 'run the init skill, then the discovery skill with the inception source';
+
+const RESULT_VALUES = ['configured', 'executed', 'succeeded', 'not-executed', 'failed'];
+
+const CHECKS_HEADER = '| Check | Environment | Command or procedure | Expected | Observed | Limits | Result |';
+const COVERAGE_HEADER = '| ID | Component | Status | Checks |';
+
+// Every helper invocation the skill shows outside the `## Helper commands` table.
+function shownInvocations(text) {
+  const prose = text.replace(sectionOf(text, '## Helper commands'), '');
+  return [
+    ...[...prose.matchAll(/inception-state\.mjs ([^`\n]*)/g)].map((match) => match[1]),
+    ...[...prose.matchAll(/`([a-z][a-z-]*(?: [a-z]+)? --[^`\n]*)`/g)]
+      .map((match) => match[1])
+      .filter((span) => commandOf(span) !== null),
+  ];
+}
+
+test('helper commands (SC15): every invocation shown outside the table carries its required options and the = form', () => {
+  const invocations = shownInvocations(readSkill());
+  assert.ok(invocations.length >= 20, 'sanity: the scan finds the procedure invocations');
+  for (const invocation of invocations) {
+    const name = commandOf(invocation);
+    const options = new Set([...invocation.matchAll(/--([a-z][a-z-]*)/g)].map((match) => match[1]));
+    for (const option of REQUIRED_OPTIONS.get(name)) {
+      assert.ok(options.has(option), `'${invocation}' misses the required --${option}`);
+    }
+    if (name === 'checkpoint create') {
+      assert.ok(options.has('file') || options.has('files-from'), `'${invocation}' names no file`);
+    }
+    if (/--to complete\b/.test(invocation)) {
+      assert.ok(options.has('checkpoint') && options.has('verification'), `'${invocation}' misses the complete gate options`);
+    }
+    for (const option of FREE_TEXT_OPTIONS.filter((free) => options.has(free))) {
+      assert.match(invocation, new RegExp(`--${option}=`), `'${invocation}' must pass --${option} in the = form`);
+    }
+  }
+});
+
+test('step 6 and step 9 (SC15): each pause publishes the next phase, waits for children, writes a resume note, and stays active', () => {
+  const text = readSkill();
+  const pauses = [
+    ['### Step 6 — Pause after approval', 'bootstrap'],
+    ['### Step 9 — Pause after bootstrap', 'verification'],
+  ];
+  for (const [heading, phase] of pauses) {
+    const step = flat(sectionOf(text, heading));
+    assert.ok(step.includes(`\`transition --to ${phase} --reason=<value>\``), `${heading} publishes phase ${phase}`);
+    assert.match(step, /Wait for every active child to return/);
+    assert.ok(step.indexOf(`--to ${phase}`) < step.indexOf('Wait for every active child'), `${heading}: the phase first`);
+    assert.ok(step.indexOf('Wait for every active child') < step.indexOf('`resume-note'), `${heading}: the note last`);
+    assert.match(step, /`resume-note --next=<value> --need <path>`/);
+    assert.match(step, /one `--need` for every exact path the next session needs/);
+    assert.match(step, /Each `--need` is an existing file under `\.apex\/inception\/`/);
+    assert.match(step, /The helper writes the descriptor path and the phase into the note/);
+    assert.match(step, /The pause is not a block: the run stays `active`/);
+    assert.doesNotMatch(step, /--to blocked/, `${heading} never blocks the run`);
+    assert.match(step, /Recommend a new session/);
+    assert.match(step, /context is paid again on every turn/);
+    assert.match(step, /If the user explicitly asks to continue in the same session, continue, and state the cost/);
+    assert.match(step, /A pause is never a refusal/);
+  }
+  const step6 = flat(sectionOf(text, '### Step 6 — Pause after approval'));
+  assert.match(step6, /Step 5 ends with `transition --to bootstrap --reason=<value>`; check that its output says phase `bootstrap`/);
+});
+
+test('step 7 (SC15): dependency order, owned parts with reports, required deliverables, deploy with a reason, and the root .gitignore rule', () => {
+  const step7 = flat(sectionOf(readSkill(), '### Step 7 — Bootstrap'));
+  assert.match(step7, /dependency order: a contract's producer comes before its consumers/);
+  assert.match(step7, /explicit ownership/);
+  assert.match(step7, /`\.apex\/inception\/bootstrap\/<part>\.md`/);
+  assert.match(step7, /`bootstrap-part-prompt\.md`, one at a time/);
+  assert.match(step7, /A child modifies only its own part/);
+  assert.match(step7, /You, the coordinator, keep the dialogue, the effect log, checkpoints, any commits, and the descriptor/);
+  for (const deliverable of [
+    /manifests and lockfiles produced with the official tools at the approved versions/,
+    /install, build, test, and start commands usable from a clean checkout/,
+    /an example configuration without secrets/,
+    /the data, integrations, and migrations the representative path needs/,
+    /reuse of the chosen materials and preservation of the agreed behaviors/,
+    /the representative path, actually integrated/,
+    /CI and deploy instructions when the project includes them/,
+  ]) {
+    assert.match(step7, deliverable);
+  }
+  assert.match(step7, /Deploy is included or excluded with a reason/);
+  assert.match(step7, /Included → it needs evidence of its result/);
+  assert.match(step7, /Excluded → it does not prevent bootstrap from concluding/);
+  assert.ok(step7.includes('A passing local test does not prove a remote deploy or CI.'));
+  assert.match(step7, /Never build every prototype screen/);
+  assert.match(step7, /Build and test fixes inside the scope are autonomous/);
+  assert.match(step7, /A substantial change follows the re-approval rule in Step 5/);
+  assert.match(step7, /The run never creates or edits the root `\.gitignore` for its own area/);
+  assert.match(step7, /approved tool[^.]*may create or edit the root `\.gitignore` as an application file/);
+  assert.match(step7, /operation with effects, recorded with `effect intent` and `effect outcome` like any other generator output/);
+});
+
+test('step 8 (SC15): intent before, outcome after, checks, then a checkpoint; authorized remote operations; nothing repeated or hidden', () => {
+  const raw = sectionOf(readSkill(), '### Step 8 — Effects and checkpoints');
+  const step8 = flat(raw);
+  assert.match(
+    step8,
+    /an installation, a generator, a migration, an external resource, a deploy, a commit, or a remote operation/
+  );
+  const order = [
+    'Before it runs: `effect intent --id <id> --kind <kind> --summary=<value>`',
+    'Run the operation.',
+    'After it: `effect outcome --id <id> --result succeeded|failed --observed=<value>`',
+    'Run the relevant checks',
+    'Record a checkpoint: `checkpoint create --label=<value> --file <path>`',
+  ];
+  let previous = -1;
+  for (const item of order) {
+    const position = step8.indexOf(item);
+    assert.ok(position > previous, `step 8 must give '${item}' in order`);
+    previous = position;
+  }
+  assert.match(step8, /a push, a repository creation, a deploy/);
+  assert.match(step8, /explicit authorization for that one operation/);
+  assert.match(step8, /Quote it in `--authorization=<value>`/);
+  assert.match(step8, /the commit and its checks come before the checkpoint/);
+  assert.match(step8, /A repository without Git and an uncommitted tree are supported when the checkpoint records them faithfully/);
+  assert.match(step8, /An interruption never authorizes repeating a concluded or uncertain effect/);
+  assert.match(step8, /A checkpoint is never replaced by a new baseline to hide changes/);
+  assert.match(step8, /Children never run an operation with effects/);
+  assert.match(step8, /lists the effects it needs in its report, and you run them/);
+  assert.match(step8, /refuses an application file reached through a symlinked ancestor directory/);
+  assert.match(step8, /a path named twice across `--file` and `--files-from`/);
+  assert.match(step8, /Name each application file once, by its real path/);
+});
+
+test('step 10 (SC15): clean-state checks, five distinct result values, the results file, then complete and the closing note', () => {
+  const raw = sectionOf(readSkill(), '### Step 10 — Final verification and conclusion');
+  const step10 = flat(raw);
+  assert.match(step10, /from a clean state/);
+  assert.match(step10, /install, build, test, start, the representative path, and the preserved behaviors/);
+  assert.match(step10, /environment, exact command or procedure, expected result, observed result, and limits/);
+  const values = [...raw.matchAll(/^- `([a-z-]+)`: /gm)].map((match) => match[1]);
+  assert.deepEqual(values, RESULT_VALUES, 'the five result values, each its own list item, in order');
+  assert.equal(new Set(values).size, 5, 'the five result values are distinct tokens');
+  assert.match(step10, /exactly one of five result values/);
+  assert.match(step10, /resolved versions[^.]*match the approved combination/);
+  assert.match(step10, /`\.apex\/inception\/verification\/results\.md`/);
+  assert.match(step10, /`## Checks`/);
+  assert.match(step10, /`## Coverage`/);
+  assert.ok(raw.includes(`\n${CHECKS_HEADER}\n`), 'the checks table header, byte for byte');
+  assert.ok(raw.includes(`\n${COVERAGE_HEADER}\n`), 'the coverage table header, byte for byte');
+  assert.match(step10, /one row for each decision-register ID and each component/);
+  assert.match(step10, /Status is `verified`, `unverified`, or `future`/);
+  assert.match(step10, /Never edit the approved documents to record the results/);
+  assert.match(step10, /after the last authorized commits/);
+  const finale = [
+    '`checkpoint create --label=<value> --file <path>`',
+    '`transition --to complete --checkpoint <path> --verification .apex/inception/verification/results.md --reason=<value>`',
+    '`resume-note --next=<value> --need .apex/inception/verification/results.md`',
+  ];
+  let previous = step10.indexOf('after the last authorized commits');
+  for (const item of finale) {
+    const position = step10.indexOf(item);
+    assert.ok(position > previous, `step 10 must give ${item} in order`);
+    previous = position;
+  }
+  assert.match(step10, /output's `checkpoint` field is the path to pass/);
+  assert.match(step10, /does not verify clean, or while any effect is `uncertain`/);
+  assert.ok(step10.includes(`\`<value>\` is exactly \`${CLOSING_NEXT}\``), 'the closing note carries the helper next step');
+  assert.match(step10, /the `init` skill, then the `discovery` skill with the inception source/);
+  assert.match(step10, /The run ends at `complete`\. It does not run the `init` skill/);
+});
+
+test('sessions (SC15): three sessions with two planned pauses, after approval and after bootstrap', () => {
+  const raw = sectionOf(readSkill(), '## Sessions and context');
+  const sessions = flat(raw);
+  assert.match(sessions, /three sessions with two planned pauses: after approval \(Step 6\) and after bootstrap \(Step 9\)/);
+  const rows = tableRows(raw);
+  assert.deepEqual(rows[0], ['Session', 'Phases', 'Ends at']);
+  assert.deepEqual(
+    rows.filter((cells) => /^\d+$/.test(cells[0])).map((cells) => cells.slice(0, 2)),
+    [
+      ['1', 'reconnaissance, architecture, research, approval'],
+      ['2', 'bootstrap'],
+      ['3', 'verification and conclusion'],
+    ]
+  );
+  assert.match(sessions, /starts from the descriptor and the latest resume note \(Step 1\), not from the earlier conversation/);
+  assert.match(sessions, /Earlier context is paid on every turn/);
+});
+
+test('children (SC15): exact inputs, one output, one child at a time, abstract tiers, recorded models and degradations', () => {
+  const raw = sectionOf(readSkill(), '## Children and dispatch policy');
+  const children = flat(raw);
+  assert.match(children, /receives exact input paths and one exact output path/);
+  assert.match(children, /writes its detail to its own report and returns a short answer/);
+  assert.match(children, /`status`, `artifact`, `changed-paths`, `signals`/);
+  assert.match(children, /Read a full child report only for a concrete missing fact/);
+  assert.match(children, /Children never inherit the coordinator's read capability/);
+  assert.match(children, /Only one child runs at a time/);
+  assert.match(children, /Research may continue in the background while you keep the dialogue going/);
+  assert.match(children, /`standard` for research and experiments, `most-capable` for bootstrap parts/);
+  assert.match(children, /Never write a concrete model ID/);
+  assert.match(children, /Record the concrete model each child ran on, and any degradation, in the next resume note/);
+  assert.match(children, /Without subagents, run the work inline yourself, and write the explicit degradation/);
+  const templates = new Map(
+    tableRows(raw)
+      .map((cells) => [cells[0].match(/^`([a-z-]+\.md)`$/)?.[1], cells])
+      .filter(([file]) => file)
+  );
+  assert.deepEqual([...templates.keys()], ['research-prompt.md', 'bootstrap-part-prompt.md']);
+  assert.equal(templates.get('research-prompt.md')[2], '`standard`');
+  assert.equal(templates.get('bootstrap-part-prompt.md')[2], '`most-capable`');
+  for (const file of templates.keys()) {
+    assert.ok(existsSync(join(root, 'skills', 'inception', file)), `skills/inception/${file} must exist`);
+  }
+});
+
+test('harness degradations (SC15): inline without subagents, prose questions, the Step 4 network rule, no headless mode', () => {
+  const harness = flat(sectionOf(readSkill(), '## Harness capabilities and degradations'));
+  assert.match(harness, /No subagents → run each child's work inline, with a declared degradation/);
+  assert.match(harness, /No question tool → ask in plain prose: one question, numbered options, and a recommendation/);
+  assert.match(harness, /No network → the Step 4 rule/);
+  assert.match(harness, /no headless or autopilot mode on any harness/);
+  assert.match(harness, /Record each exercised degradation in the reconnaissance record/);
+  assert.match(harness, /A degradation first met after approval goes in the next resume note \(`--note=<value>`\)/);
+});
+
+// ---------------------------------------------------------------------------
+// The two child prompt templates (SC15)
+// ---------------------------------------------------------------------------
+
+const RETURN_FIELDS =
+  '    status: <DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED>\n' +
+  '    artifact: [OUTPUT_FILE]\n' +
+  '    changed-paths: <paths or none>\n' +
+  '    signals: <short IDs or none>\n' +
+  '```\n';
+
+const PROMPTS = [
+  {
+    file: 'research-prompt.md',
+    role: 'researcher',
+    tier: 'standard',
+    placeholders: ['[INPUT_PATHS]', '[OUTPUT_FILE]', '[QUESTION]'],
+    absent: ['[PART]', '[ALLOWED_PATHS]'],
+  },
+  {
+    file: 'bootstrap-part-prompt.md',
+    role: 'bootstrap part',
+    tier: 'most-capable',
+    placeholders: ['[INPUT_PATHS]', '[OUTPUT_FILE]', '[PART]', '[ALLOWED_PATHS]'],
+    absent: ['[QUESTION]'],
+  },
+];
+
+function readPrompt(file) {
+  return readFileSync(join(root, 'skills', 'inception', file), 'utf8');
+}
+
+test('prompt templates (SC15): one fenced Subagent block with an abstract tier, the placeholders, and the four-field return', () => {
+  for (const { file, role, tier, placeholders, absent } of PROMPTS) {
+    const text = readPrompt(file);
+    const fences = text.match(/^```/gm) ?? [];
+    assert.equal(fences.length, 2, `${file}: exactly one fenced block`);
+    assert.ok(text.includes(`\n\`\`\`\nSubagent (${role}):\n`), `${file}: the block opens with Subagent (${role}):`);
+    assert.match(text, new RegExp(`\\n  model: ${tier}  # [^\\n]*dispatcher translates the tier to a concrete model\\n`), `${file}: model: ${tier}`);
+    for (const placeholder of placeholders) assert.ok(text.includes(placeholder), `${file}: ${placeholder}`);
+    for (const placeholder of absent) assert.ok(!text.includes(placeholder), `${file}: no ${placeholder}`);
+    assert.ok(text.endsWith(RETURN_FIELDS), `${file}: the block ends with the four-field return`);
+    const body = flat(text);
+    assert.match(body, /Read exactly the files in \[INPUT_PATHS\]/);
+    assert.match(body, /Never list or read anything else under `\.apex\/inception\/`/);
+    assert.match(body, /Write the full report to \[OUTPUT_FILE\]; it is your only report write/);
+    assert.match(body, /return ONLY these four unbulleted fields, in order/);
+    assert.match(body, /harness provides a task\/subagent tool/);
+    assert.match(body, /Otherwise[^.]*yourself[^.]*inline degradation/);
+  }
+});
+
+test('prompt templates (SC15): portable — no concrete model ID, run-state helper, slash command, CLAUDE_, or home path', () => {
+  for (const { file } of PROMPTS) {
+    const text = readPrompt(file);
+    assert.doesNotMatch(text, /\b(?:haiku|sonnet|opus|fable)\b|\bgpt-\d|\bgemini-\d|\bdeepseek-[a-z0-9]/i, `${file}: no concrete model ID`);
+    assert.doesNotMatch(text, /inception-state/, `${file}: a child never touches the run state`);
+    assert.doesNotMatch(text, /\/steepy(?:-apex)?:/);
+    assert.doesNotMatch(text, /general-purpose/);
+    assert.doesNotMatch(text, /CLAUDE_/);
+    assert.doesNotMatch(text, /\/Users\/|\/home\/|~\//);
+  }
+});
+
+test('research prompt (SC15): official sources with version, date, and support status; experiments isolated outside the repository', () => {
+  const research = flat(readPrompt('research-prompt.md'));
+  assert.match(research, /Use official sources only/);
+  assert.match(research, /its version, its date[^.]*and its support status/);
+  assert.match(research, /A version you remember is not a verified version/);
+  assert.match(research, /Run an experiment only in an isolated directory outside the repository/);
+  assert.match(research, /Never install, generate, or migrate inside the repository/);
+  assert.match(research, /never deploy, commit, push, or create an external resource/);
+  assert.match(research, /An experiment never becomes the bootstrap/);
+});
+
+test('bootstrap part prompt (SC15): only the allowed paths, no operation with effects, local build and test checks allowed', () => {
+  const part = flat(readPrompt('bootstrap-part-prompt.md'));
+  assert.match(part, /\[ALLOWED_PATHS\] are the only application paths you may modify/);
+  assert.match(part, /Run no installs, generators, migrations, deploys, commits, or remote operations/);
+  assert.match(part, /list it in the report as an effect the coordinator must run/);
+  assert.match(part, /You may run local build and test checks/);
+  assert.match(part, /Never build every prototype screen/);
+  assert.match(part, /outside \[ALLOWED_PATHS\] or outside the approved project, stop and report it/);
 });
