@@ -81,10 +81,17 @@ only the current conductor ledger schema and identify unsupported records as inv
 - Hard links: every path under the area is excluded whatever its link count; a stable file
   that shares an inode with an area file stays stable content; the helper refuses area
   files with more than one link.
-- Discovery's inception source: a `complete` run only, read at the exact bound paths. Three
-  promotion rules decide what moves into stable docs, each to its named destination. The
-  write-back never names the area. Every decision in the register is accepted or rejected
-  with a reason.
+- Discovery's inception source: a `complete` run only, read at the exact bound paths. Every
+  decision is approved. Three promotion rules:
+  - Approved and verified (`verified`) → may be written as an existing component or rule.
+  - Approved but unverified (`unverified`) → written as a design choice, not an existing
+    component.
+  - A future flow (`future`) → written as context in `conventions.md`, never an implemented
+    component, a spec, or a started task.
+
+  Destinations are only `conventions.md`, the routed surface standards, and `glossary.md`:
+  no new hub document and no `_INDEX.md` change. The write-back never names the area. Every
+  decision in the register is accepted or rejected with a reason.
 
 ## Decision model (conditional ceremony)
 

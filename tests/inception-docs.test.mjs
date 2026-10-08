@@ -60,7 +60,7 @@ test('conventions "Inception (pre-hub)" states the substance rules', () => {
   assert.match(section, /inception → `init`[\s\S]*→ `discovery`[\s\S]*→ gears/);
   assert.match(section, /single human approval[\s\S]*digests[\s\S]*verbatim[\s\S]*never self-approved[\s\S]*proves bytes/i);
   assert.match(section, /intent before[\s\S]*outcome after[\s\S]*uncertain[\s\S]*never repeated[\s\S]*immutable/i);
-  assert.match(section, /`complete` run only[\s\S]*exact bound paths[\s\S]*three promotion rules[\s\S]*write-back never names the area[\s\S]*accepted or rejected with a reason/i);
+  assert.match(section, /`complete` run only[\s\S]*exact bound paths[\s\S]*`verified`[\s\S]*existing component or rule[\s\S]*`unverified`[\s\S]*design choice, not an existing component[\s\S]*`future`[\s\S]*context in `conventions\.md`[\s\S]*never an implemented component, a spec, or a started task[\s\S]*only `conventions\.md`, the routed surface standards, and `glossary\.md`[\s\S]*no new hub document[\s\S]*write-back never names the area[\s\S]*accepted or rejected with a reason/i);
   assert.match(section, /hard link/i);
 });
 
