@@ -8,7 +8,7 @@
   `skills/loop-engineer/loop-final-review-prompt.md`. The five chain skills
   short-circuit Gear 2 through brainstorm → implement, run Gear 3 through brainstorm → plan →
   implement → review, and assign Gear 4 to `loop-engineer`; standalone hub-aware skills are `init`,
-  `new-surface`, `check`, and additive/re-runnable `discovery`. Chain skills carry gear-0, a checklist,
+  `new-surface`, `check`, and additive/re-runnable `discovery`; `inception` is pre-hub (conventions.md → "Inception (pre-hub)"). Chain skills carry gear-0, a checklist,
   and the locked Model Selection block; `discovery` has its own prose dispatch policy; the rest do not dispatch.
 - Does NOT own: the engine scripts they call (→ `scripts`) or the markdown templates they copy
   (→ `templates`).

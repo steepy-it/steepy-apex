@@ -19,7 +19,7 @@ the checklist's reference links explicit. Historical observations do not certify
 
 ## Native evidence boundary
 
-Hermetic fake-harness cases may prove parser, redaction, identity, and false-PASS rejection behavior. They cannot prove a loaded plugin, a skill invocation, generated bootstrap use, or native specialist behavior. Structural locks must keep the nine-skill, five-harness inventory current and keep Pi/DSH out of invented Steepy headless support; release evidence records those capabilities only after the reproducible native protocol.
+Hermetic fake-harness cases may prove parser, redaction, identity, and false-PASS rejection behavior. They cannot prove a loaded plugin, a skill invocation, generated bootstrap use, or native specialist behavior. Structural locks must keep the ten-skill, five-harness inventory current and keep Pi/DSH out of invented Steepy headless support; release evidence records those capabilities only after the reproducible native protocol.
 
 ## Conventions
 - `node --test` with the built-in runner; no third-party framework.
