@@ -183,3 +183,22 @@ test('RELEASE.md confirms ten commands including inception', () => {
   assert.match(release, /Confirm all ten commands:/);
   assert.match(release, /```text\n\/steepy-apex:inception\n\/steepy-apex:init\n/);
 });
+
+test('acceptance protocol covers both scenarios, evidence matrix, and setup rule', () => {
+  const doc = norm(read('docs', 'inception-acceptance.md'));
+  assert.match(doc, /release gate after review/i);
+  assert.match(doc, /not a review criterion/i);
+  assert.match(doc, /Scenario A[\s\S]*empty repository[\s\S]*`init`[\s\S]*`discovery`[\s\S]*inception source/i);
+  assert.match(doc, /Scenario B[\s\S]*starter[\s\S]*(design system|prototype)[\s\S]*`init`[\s\S]*`discovery`[\s\S]*inception source/i);
+  assert.match(doc, /`git clone`[\s\S]*validate-hub\.mjs \.`[\s\S]*OK[\s\S]*without `\.apex\/inception\/` and `\.apex\/work\/`/i);
+  assert.match(doc, /interruption[\s\S]*between an effect's intent and its outcome[\s\S]*new session/i);
+  assert.ok(doc.includes('| Run | Harness version | Plugin commit | Capabilities | Observed outcome | Observed human approver |'));
+  for (const row of ['Claude Code A (with interruption)', 'Claude Code B', 'Codex A', 'Codex B']) {
+    assert.match(doc, new RegExp(`\\| ${row.replace(/[()]/g, '\\$&')} \\|[^\\n]*PENDING`), `${row} row is PENDING`);
+  }
+  assert.match(doc, /hand-written command sequence[\s\S]*not a proof/i);
+  assert.match(doc, /model's approval is never recorded as a human approver/i);
+  assert.match(doc, /packaged plugin[\s\S]*installed steepy-apex release[\s\S]*disabled[\s\S]*`missing _INDEX\.md`/i);
+  assert.match(doc, /Scenario C is deferred out of v1/i);
+  assert.match(norm(guideDoc()), /\[native acceptance protocol\]\(inception-acceptance\.md\)/);
+});

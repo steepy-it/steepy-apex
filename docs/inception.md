@@ -146,3 +146,4 @@ Without network access the run asks you for official sources or blocks; it never
 - One run per repository.
 - A mature application is not an inception case: the skill proposes `init`, then `discovery`, instead.
 - Scenario C is deferred to a later version.
+- Real-harness runs follow the [native acceptance protocol](inception-acceptance.md).
