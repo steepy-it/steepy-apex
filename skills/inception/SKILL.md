@@ -312,9 +312,11 @@ Session 1 ends here (see Sessions and context). Before you pause:
    `transition --to bootstrap --reason=<value>`; check that its output says phase `bootstrap`. Do
    not run it again.
 2. Wait for every active child to return.
-3. Write the resume note: `resume-note --next=<value> --need <path>`, with one `--need` for every
-   exact path the next session needs, such as each project document. Each `--need` is an existing
-   file under `.apex/inception/`. The helper writes the descriptor path and the phase into the note.
+3. Write the resume note: `resume-note --next=<value> --need <path> --note=<value>`, with one
+   `--need` for every exact path the next session needs, such as each project document. Each
+   `--need` is an existing file under `.apex/inception/`. `--note=<value>` carries, on one line, the
+   concrete model of each child dispatched in this session. Leave `--note` out when there is nothing
+   to record. The helper writes the descriptor path and the phase into the note.
 
 The pause is not a block: the run stays `active`.
 
@@ -407,10 +409,12 @@ Session 2 ends here. Before you pause:
 
 1. Publish the next phase in the descriptor: `transition --to verification --reason=<value>`.
 2. Wait for every active child to return.
-3. Write the resume note: `resume-note --next=<value> --need <path>`, with one `--need` for every
-   exact path the next session needs, such as each bootstrap part report. Each `--need` is an
-   existing file under `.apex/inception/`. The helper writes the descriptor path and the phase into
-   the note.
+3. Write the resume note: `resume-note --next=<value> --need <path> --note=<value>`, with one
+   `--need` for every exact path the next session needs, such as each bootstrap part report. Each
+   `--need` is an existing file under `.apex/inception/`. `--note=<value>` carries, on one line, the
+   concrete model of each child dispatched in this session and any degradation first met since
+   approval. Leave `--note` out when there is nothing to record. The helper writes the descriptor
+   path and the phase into the note.
 
 The pause is not a block: the run stays `active`.
 
@@ -463,6 +467,7 @@ Conclude the run after the last authorized commits:
    `uncertain`.
 3. Write the closing note: `resume-note --next=<value> --need .apex/inception/verification/results.md`,
    where `<value>` is exactly `run the init skill, then the discovery skill with the inception source`.
+   Add `--note=<value>` to the closing note when a degradation was first met in this session.
 4. Give the closing report: what is verified, unverified, and future, and the next steps: the `init`
    skill, then the `discovery` skill with the inception source.
 
