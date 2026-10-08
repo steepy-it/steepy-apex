@@ -24,9 +24,9 @@ import { dirname, join } from 'node:path';
 const HERE = dirname(fileURLToPath(import.meta.url)); // <root>/adapters/pi
 const PACKAGE_ROOT = dirname(dirname(HERE)); // <root>
 
-// The nine canonical skills, invocation order per the routing chain.
+// The ten canonical skills, invocation order per the routing chain.
 const SKILL_NAMES = [
-  'init', 'check', 'new-surface', 'discovery', 'brainstorm',
+  'inception', 'init', 'check', 'new-surface', 'discovery', 'brainstorm',
   'plan', 'implement', 'review', 'loop-engineer',
 ];
 
@@ -48,7 +48,7 @@ function getBootstrapBlock() {
     'If that bootstrap is unavailable, fall back to `.apex/_INDEX.md`, execute the relevant',
     'owning standard inline, and declare the inline-standard degradation.',
     '',
-    'Skills: invoke any of the nine steepy-apex skills with `/skill:<name>` (or let the',
+    'Skills: invoke any of the ten steepy-apex skills with `/skill:<name>` (or let the',
     'model load a model-invocable skill), or via the registered `/steepy-<skill>`',
     `wrapper commands (${SKILL_NAMES.join(', ')}), passing arguments through.`,
     '',
