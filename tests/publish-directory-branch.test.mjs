@@ -541,3 +541,26 @@ test('a relative TMPDIR still gives Git an absolute temporary index path', () =>
     assert.equal(existsSync(join(fx.work, 'tmprel')), false, 'nothing is created relative to the top level');
   });
 });
+
+test('directoryPaths keeps every inception helper, reached engine module, and skill file unchanged', () => {
+  const repoRoot = join(here, '..');
+  const reached = new Set();
+  const queue = ['scripts/inception-state.mjs'];
+  while (queue.length > 0) {
+    const current = queue.pop();
+    if (reached.has(current)) continue;
+    reached.add(current);
+    const source = readFileSync(join(repoRoot, current), 'utf8');
+    for (const match of source.matchAll(/from\s+'(\.[^']+\.mjs)'/g)) {
+      queue.push(join(dirname(current), match[1]).split('\\').join('/'));
+    }
+  }
+  const list = [
+    ...[...reached].sort(),
+    'skills/inception/SKILL.md',
+    'skills/inception/research-prompt.md',
+    'skills/inception/bootstrap-part-prompt.md',
+    'skills/discovery/explore-inception-prompt.md',
+  ];
+  assert.deepEqual(directoryPaths(list), list);
+});
