@@ -53,6 +53,9 @@ test('conventions "Inception (pre-hub)" states the substance rules', () => {
   assert.match(section, /`\.apex\/inception\/`/);
   assert.match(section, /own `\.gitignore`[\s\S]*`\*`[\s\S]*root\s+`\.gitignore`[\s\S]*never edited/i);
   assert.match(section, /anti-orphan/i);
+  assert.match(section, /never edited for the area; an approved bootstrap tool may change it as an application file, recorded as an effect/i);
+  assert.match(section, /discovery's explorer reads/i);
+  assert.doesNotMatch(section, /generic child reads/i);
   assert.match(section, /`\.apex\/inception\/run\.json`[\s\S]*`scripts\/inception-state\.mjs`/);
   assert.match(section, /`\.apex\/inception\/abandoned\/<run-id>\/`[\s\S]*deletes nothing/i);
   assert.match(section, /no `_INDEX\.md`[\s\S]*exits 0[\s\S]*Stop hook[\s\S]*silent[\s\S]*unparseable/i);

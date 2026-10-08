@@ -65,9 +65,11 @@ only the current conductor ledger schema and identify unsupported records as inv
   glossary, or agent. Order: inception → `init` (ordinary interview, unchanged) →
   `discovery` (inception source) → gears.
 - Local area `.apex/inception/` has its own `.gitignore` (`*`), written first. The root
-  `.gitignore` is never edited. The area is excluded from anti-orphan, stable reads, and
-  generic child reads, like `.apex/work/`. Stable links into it are errors. It stays
-  after `complete` until the user deletes it after discovery.
+  `.gitignore` is never edited for the area; an approved bootstrap tool may change it as
+  an application file, recorded as an effect. The area is excluded from anti-orphan
+  checks, stable reads, and discovery's explorer reads, like `.apex/work/`; inception
+  material reaches the hub only through discovery's inception source. Stable links into
+  it are errors. It stays after `complete` until the user deletes it after discovery.
 - One run per repository, at `.apex/inception/run.json`, changed only by
   `scripts/inception-state.mjs`. Abandon moves the run to
   `.apex/inception/abandoned/<run-id>/` and deletes nothing.

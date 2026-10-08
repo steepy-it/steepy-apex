@@ -130,7 +130,9 @@
   `new-surface`, `check`, `discovery`). `inception` is a pre-hub skill outside both
   families.
 - **Inception run** — one pre-hub, resumable run of the `inception` skill that turns a
-  greenfield idea into approved project documents before any hub exists. Not a gear,
+  greenfield idea into a minimal, verified, runnable application (approved project
+  documents, a bootstrapped representative path, and verification results) before any
+  hub exists. Not a gear,
   not in the chain. "Handoff" stays reserved for the workflow envelope; an inception run
   never uses it. See [Conventions](conventions.md) → "Inception (pre-hub)".
 - **Run descriptor** — `.apex/inception/run.json`: the state of the one inception run
@@ -144,8 +146,9 @@
 - **Checkpoint** — an immutable record of an inception run: file digests plus the Git
   state at that moment. Distinct from the autopilot "non-blocking checkpoint" wording
   for a collapsed gate.
-- **Resume note** — a numbered note an inception run writes when it pauses or blocks:
-  next step and the exact paths the next session needs.
+- **Resume note** — a numbered note an inception run writes when it pauses or blocks,
+  and as the closing note at `complete`: next step and the exact paths the next session
+  needs.
 - **Inception source** — discovery reading the exact bound documents of a `complete`
   inception run as its seed, instead of exploring from nothing.
 - **Loop Engineer** — the gear-4 mode (an autonomous bounded loop over a
