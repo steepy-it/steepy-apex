@@ -127,7 +127,27 @@
 - **Chain skill / Standalone skill** — the two skill families: the chain — five
   (brainstorm → plan → implement → review, plus `loop-engineer` for gear 4) —
   gear-aware, checklist-carrying, vs the standalone hub-aware skills (`init`,
-  `new-surface`, `check`, `discovery`).
+  `new-surface`, `check`, `discovery`). `inception` is a pre-hub skill outside both
+  families.
+- **Inception run** — one pre-hub, resumable run of the `inception` skill that turns a
+  greenfield idea into approved project documents before any hub exists. Not a gear,
+  not in the chain. "Handoff" stays reserved for the workflow envelope; an inception run
+  never uses it. See [Conventions](conventions.md) → "Inception (pre-hub)".
+- **Run descriptor** — `.apex/inception/run.json`: the state of the one inception run
+  (phase, status, records). Changed only through `scripts/inception-state.mjs`.
+- **Representative path** — the one real, user-visible path through the product that
+  inception builds and verifies end to end, to prove the chosen architecture works.
+- **Decision register** — the `DR-n` table in the inception project documents; each row
+  is one decision with its reason. Discovery walks it row by row.
+- **Effect log** — the append-only record of an inception run's outside effects: an
+  intent line before, an outcome line after. Distinct from the Gear-4 workflow event log.
+- **Checkpoint** — an immutable record of an inception run: file digests plus the Git
+  state at that moment. Distinct from the autopilot "non-blocking checkpoint" wording
+  for a collapsed gate.
+- **Resume note** — a numbered note an inception run writes when it pauses or blocks:
+  next step and the exact paths the next session needs.
+- **Inception source** — discovery reading the exact bound documents of a `complete`
+  inception run as its seed, instead of exploring from nothing.
 - **Loop Engineer** — the gear-4 mode (an autonomous bounded loop over a
   machine-verifiable goal) and the human role that exercises it: designs the
   goal/verifier/budget up front instead of gating per turn; executed by

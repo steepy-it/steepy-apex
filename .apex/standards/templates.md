@@ -52,6 +52,7 @@
 - The Codex adapter omits the `model` field so the spawned session inherits its model; no sentinel
   string represents inheritance. Claude keeps consuming the shared native `{{model}}` value.
 - Rendering is idempotent and the generated Markdown lints green.
+- Inception renders no template and nothing renders into `.apex/inception/`; the hub and its bootstrap come only from `init` (conventions.md → "Inception (pre-hub)").
 
 ### Generated-bootstrap work boundary
 
