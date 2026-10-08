@@ -1,9 +1,25 @@
 {
   "name": "steepy-apex",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "Context engineering and governed workflows for AI coding agents. Keep project knowledge coherent, route work to specialists, and scale from small fixes to bounded autonomous loops.",
   "author": {
     "name": "steepy-it",
     "email": "info@steepy.it"
-  }
+  },
+  "homepage": "https://github.com/steepy-it/steepy-apex",
+  "repository": "https://github.com/steepy-it/steepy-apex",
+  "license": "Apache-2.0",
+  "keywords": [
+    "context-engineering",
+    "workflows",
+    "skills",
+    "spec-driven-development",
+    "code-review",
+    "subagents",
+    "autonomous-loops",
+    "project-knowledge",
+    "documentation-drift",
+    "agents-md",
+    "model-selection"
+  ]
 }

@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.4 (2026-10-07)
+
+- `package.json`, both plugin manifests and the Claude marketplace entry carry the same
+  eleven search keywords: `context-engineering`, `workflows`, `skills`,
+  `spec-driven-development`, `code-review`, `subagents`, `autonomous-loops`,
+  `project-knowledge`, `documentation-drift`, `agents-md` and `model-selection`.
+- The Claude marketplace entry declares category `development`.
+- Both plugin manifests declare `homepage`, `repository` and `license`.
+- A release-metadata test keeps the four keyword lists identical.
+
 ## v1.1.3 (2026-10-07)
 
 - The plugin description now reads "Context engineering and governed workflows for AI
