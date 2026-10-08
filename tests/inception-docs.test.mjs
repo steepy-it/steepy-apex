@@ -96,3 +96,90 @@ test('no stable .apex doc links into .apex/inception/', () => {
     assert.doesNotMatch(readFileSync(path, 'utf8'), /\]\([^)]*\.apex\/inception\//, `${path} links into the inception area`);
   }
 });
+
+const readme = read('README.md');
+const guideDoc = () => read('docs', 'inception.md');
+const norm = (text) => text.replace(/\s+/g, ' ');
+
+test('README lists inception first and links its guide', () => {
+  const skillsTable = readme.slice(readme.indexOf('## Skills'), readme.indexOf('## Data and external services'));
+  const rows = skillsTable.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| Skill') && !line.startsWith('|---'));
+  assert.equal(
+    rows[0],
+    '| [`/steepy-apex:inception`](docs/inception.md) | Turn an idea and its materials into a verified first version before the hub exists. |',
+  );
+  const getStarted = readme.slice(readme.indexOf('## Get started'), readme.indexOf('## Skills'));
+  assert.match(norm(getStarted), /starting from an idea or a prototype\? run `\/steepy-apex:inception` first\. it ends by pointing to `\/steepy-apex:init` and `\/steepy-apex:discovery`/i);
+});
+
+test('README external-services table names inception reach and authorization', () => {
+  const section = readme.slice(readme.indexOf('## Data and external services'), readme.indexOf('## Documentation'));
+  const row = section.split('\n').find((line) => line.startsWith('| `/steepy-apex:inception`'));
+  assert.ok(row, 'inception row missing');
+  assert.match(row, /official project documentation and package registries/i);
+  assert.match(row, /Git hosting only after your authorization/i);
+  assert.match(row, /research queries and installs/i);
+  assert.match(row, /only after you authorize each one/i);
+});
+
+test('workflow doc places inception before the hub and outside the gears', () => {
+  const workflow = read('docs', 'workflow.md');
+  const start = workflow.indexOf('## Before the hub: inception');
+  assert.ok(start >= 0);
+  assert.ok(start < workflow.indexOf('## Every task gets classified'));
+  const section = norm(workflow.slice(start, workflow.indexOf('## Every task gets classified')));
+  assert.match(section, /before a hub exists/i);
+  assert.match(section, /not a gear/i);
+  assert.match(section, /not part of the Gear-3 chain/i);
+  assert.match(section, /different artifacts/i);
+  assert.match(section, /\[inception guide\]\(inception\.md\)/);
+});
+
+test('architecture doc counts ten skills, lists the helper, and has the effects row', () => {
+  const architecture = read('docs', 'architecture.md');
+  assert.match(architecture, /the 10 skills/);
+  assert.doesNotMatch(architecture, /\bnine\b/i);
+  assert.match(architecture, /registers ten `steepy-apex-<skill>` commands/);
+  assert.match(architecture, /ten `steepy-<skill>` commands/);
+  assert.match(architecture, /\| `inception-state\.mjs` \|/);
+  assert.match(architecture, /\| Inception \| Writes `\.apex\/inception\/` and the application's files; runs the approved tools \(installs, generators, builds, tests\); may reach official sources and package registries; remote operations only after explicit authorization\. \|/);
+  assert.doesNotMatch(read('docs', 'installation.md'), /\bnine\b/i);
+});
+
+test('inception guide covers the flow, helper, harnesses, and limits', () => {
+  const guide = norm(guideDoc());
+  for (const harness of ['Claude Code', 'Codex', 'OpenCode', 'Pi', 'DeepSeek Harness']) {
+    assert.ok(guide.includes(harness), `guide names ${harness}`);
+  }
+  assert.match(guide, /no headless or autopilot mode on any harness/i);
+  assert.match(guide, /three sessions[\s\S]*two pauses/i);
+  assert.match(guide, /`\.apex\/inception\/run\.json`/);
+  assert.match(guide, /`\.apex\/inception\/project\/decision-register\.md`/);
+  assert.match(guide, /`configured`[\s\S]*`executed`[\s\S]*`succeeded`[\s\S]*`not-executed`[\s\S]*`failed`/);
+  assert.match(guide, /`verified`[\s\S]*`unverified`[\s\S]*`future`/);
+  assert.match(guide, /`--option=<value>`/);
+  assert.match(guide, /symlinked ancestor directory[\s\S]*named twice/i);
+  assert.match(guide, /effect log is malformed at line <n>/);
+  assert.match(guide, /compact[\s\S]*key order[\s\S]*no spaces/i);
+  assert.match(guide, /missing `_INDEX\.md`/);
+  assert.match(guide, /no preset (application )?stack/i);
+  assert.match(guide, /deferred/i);
+  assert.match(guide, /delete[\s\S]*after (the )?discovery/i);
+  for (const cmd of ['classify', 'start', 'transition', 'resume-note', 'approve', 'verify-approval',
+    'effect intent', 'effect outcome', 'effect status', 'checkpoint create', 'checkpoint verify', 'abandon']) {
+    assert.ok(guide.includes(`inception-state.mjs ${cmd}`), `guide lists ${cmd}`);
+  }
+});
+
+test('community and security copy count ten skills with inception first', () => {
+  const community = read('COMMUNITY_SUBMISSION.md');
+  assert.match(community, /- Ten canonical skills: `\/steepy-apex:inception`, `\/steepy-apex:init`/);
+  assert.match(community, /\*\*Command-family effects matrix:\*\*[^\n]*inception runs/);
+  assert.match(read('SECURITY.md'), /inception runs[^\n]*\n?[^\n]*native\s+installation\/canaries|native\s+installation\/canaries[^\n]*inception runs|inception runs/);
+});
+
+test('RELEASE.md confirms ten commands including inception', () => {
+  const release = read('RELEASE.md');
+  assert.match(release, /Confirm all ten commands:/);
+  assert.match(release, /```text\n\/steepy-apex:inception\n\/steepy-apex:init\n/);
+});

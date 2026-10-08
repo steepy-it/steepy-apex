@@ -16,7 +16,7 @@ steepy-apex uses Node.js built-ins with zero third-party runtime dependencies. E
 command-specific rather than globally local, offline, or repository-only. See the
 [Command-family effects matrix](docs/architecture.md#command-family-effects-matrix): filesystem reads–writes–subprocesses–temporary
 state–providers/network differ between local validation/scaffolding, session-store and
-observability reporting, version transactions, review/controllers, release evidence,
+observability reporting, version transactions, review/controllers, inception runs, release evidence,
 model-mapping verification, and native installation/canaries. Reports that matter most:
 
 - a plugin script writing or deleting files **outside** the target repo

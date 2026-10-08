@@ -68,7 +68,7 @@ The entry module resolves `skills/` and its shared adapter modules relative to t
 
 **From npm** — future release; the package is not published yet.
 
-The adapter registers the canonical `skills/` tree and nine `steepy-apex-<skill>` commands; skills are also invoked by the agent through the native skill tool. Skills read templates from the checkout, which OpenCode treats as an external directory: interactive sessions get a one-time permission prompt, while non-interactive `opencode run` needs it pre-granted in `opencode.json` (`"permission": { "external_directory": { "/path/to/steepy-apex/**": "allow" } }`).
+The adapter registers the canonical `skills/` tree and ten `steepy-apex-<skill>` commands; skills are also invoked by the agent through the native skill tool. Skills read templates from the checkout, which OpenCode treats as an external directory: interactive sessions get a one-time permission prompt, while non-interactive `opencode run` needs it pre-granted in `opencode.json` (`"permission": { "external_directory": { "/path/to/steepy-apex/**": "allow" } }`).
 
 ### Pi
 
@@ -104,7 +104,7 @@ dsh plugin --profile <name> add git+https://github.com/steepy-it/steepy-apex.git
 
 **From npm** — future release; the package is not published yet.
 
-The adapter registers nine `steepy-<skill>` commands, a model-invocable `steepy_skill` tool, and a marker-guarded bootstrap section in the system prompt. A command's output is rendered to the human and never enters model history, so it can only name the tool call to make — ask the model to call `steepy_skill` directly, or run a `steepy-<skill>` command to see the exact call.
+The adapter registers ten `steepy-<skill>` commands, a model-invocable `steepy_skill` tool, and a marker-guarded bootstrap section in the system prompt. A command's output is rendered to the human and never enters model history, so it can only name the tool call to make — ask the model to call `steepy_skill` directly, or run a `steepy-<skill>` command to see the exact call.
 
 ### Requirements
 

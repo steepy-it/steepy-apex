@@ -52,9 +52,10 @@ Use a fresh checkout and install the local marketplace:
 ```
 
 For direct development loading, use `claude --plugin-dir .` and `/reload-plugins`.
-Confirm all nine commands:
+Confirm all ten commands:
 
 ```text
+/steepy-apex:inception
 /steepy-apex:init
 /steepy-apex:new-surface
 /steepy-apex:check
