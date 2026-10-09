@@ -129,8 +129,11 @@ function redactText(text) {
     /\b((?:proxy[-_]?authorization|authorization|set[-_]?cookie|cookie)\s*:\s*)[^\r\n]*/gi,
     `$1${REDACTED}`,
   );
+  // Keep this linear: the quoted-value alternatives must never match the same character two ways,
+  // and the key length is bounded, or a long unterminated or separator-free line backtracks for
+  // minutes and freezes the conductor's event loop.
   value = value.replace(
-    /((?:"|')?([A-Za-z][A-Za-z0-9_-]*)(?:"|')?\s*[:=]\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s,;|}]+)/g,
+    /((?:"|')?([A-Za-z][A-Za-z0-9_-]{0,63})(?:"|')?\s*[:=]\s*)(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,;|}]+)/g,
     (match, prefix, key) => sensitiveKey(key) ? `${prefix}${REDACTED}` : match,
   );
   value = value.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, `$1 ${REDACTED}`);
