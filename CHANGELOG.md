@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.1.5 (2026-10-09)
+
+- The autopilot conductor's safe-mode secret redaction runs in linear time. A quoted value
+  that never closes and is full of double-escaped newlines, like a truncated
+  `<persisted-output>` preview, used to backtrack exponentially and freeze the conductor's
+  event loop: 20 such newlines took about 16 seconds. It now takes under a millisecond.
+- A long run of letters, digits, `-` and `_` with no `:` or `=` no longer costs quadratic
+  time: 400 KB took over 30 seconds, and a 1 MiB line now takes about 120 ms. The key
+  before `:` or `=` is matched up to 64 characters; every sensitive key is far shorter.
+- Regression tests cover both shapes, plus whole quoted values with escaped quotes and
+  `--token=`-style flags.
+
 ## v1.1.4 (2026-10-07)
 
 - `package.json`, both plugin manifests and the Claude marketplace entry carry the same
