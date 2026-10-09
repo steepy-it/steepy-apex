@@ -8,6 +8,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const skillsDir = join(here, '..', 'skills');
 const root = join(here, '..');
 const workflowCommands = [
+  'inception',
   'init',
   'new-surface',
   'check',

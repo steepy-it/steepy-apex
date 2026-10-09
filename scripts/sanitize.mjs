@@ -36,13 +36,16 @@ export function bindProjectMount(root, artifactPath) {
     throw new Error(`symlink mount ${name} has wrong target type`);
   }
   if (name !== '.apex') {
-    let work;
-    try { work = realpathSync.native(join(root, '.apex', 'work')); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
-    if (work) {
-      const rel = relative(work, physical);
-      if (rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) {
-        throw new Error(`symlink mount ${name} enters excluded .apex/work`);
+    // Provider/instruction mounts may not physically enter a local gitignored area.
+    for (const area of ['work', 'inception']) {
+      let excluded;
+      try { excluded = realpathSync.native(join(root, '.apex', area)); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (excluded) {
+        const rel = relative(excluded, physical);
+        if (rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) {
+          throw new Error(`symlink mount ${name} enters excluded .apex/${area}`);
+        }
       }
     }
   }

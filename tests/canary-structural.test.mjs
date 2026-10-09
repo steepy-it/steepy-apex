@@ -5,7 +5,7 @@
 // and runnable anywhere: engine scripts resolve through the literal skill-relative
 // path a harness would compute (`skills/<name>/../../scripts/<x>.mjs`, unnormalized),
 // nothing depends on `CLAUDE_*` env or `~/.claude`/`$HOME` (criterion 9's scripted
-// half), and all nine SKILL.md are open-subset discoverable with the canonical
+// half), and all ten SKILL.md are open-subset discoverable with the canonical
 // Engine-root block. The live halves (real harness install, discovery listing, chain
 // drive) land in RELEASE.md's evidence matrix (T11), human-executed.
 //
@@ -40,8 +40,9 @@ const root = join(here, '..');
 const skillsDir = join(root, 'skills');
 const goodHubDir = join(root, 'tests', 'fixtures', 'good-hub');
 
-// The nine skills a harness discovers and chains (brief's enumeration order).
+// The ten skills a harness discovers and chains (brief's enumeration order).
 const SKILL_NAMES = [
+  'inception',
   'init',
   'check',
   'new-surface',
@@ -54,7 +55,7 @@ const SKILL_NAMES = [
 ];
 
 // The canonical Engine-root block sentence, pinned verbatim from skills/check/SKILL.md
-// (identical, single-line, across all nine — verified below by test, not assumed here).
+// (identical, single-line, across all ten — verified below by test, not assumed here).
 const ENGINE_ROOT_CANONICAL = 'scripts live two levels up, at `<engine-root>/scripts/`.';
 
 // Builds the literal `skills/<name>/../../scripts/<file>` string a harness would
@@ -181,9 +182,9 @@ test('new-surface scaffolds into the fixture through the literal skill-relative 
   }
 });
 
-// --- Case 2: nine-skill open-subset discovery parse -------------------------------
+// --- Case 2: ten-skill open-subset discovery parse -------------------------------
 
-test('all nine skills/<name>/SKILL.md declare open-subset name + description frontmatter and carry the canonical Engine-root block', () => {
+test('all ten skills/<name>/SKILL.md declare open-subset name + description frontmatter and carry the canonical Engine-root block', () => {
   assert.deepEqual(
     [...SKILL_NAMES].sort(),
     readdirSync(skillsDir, { withFileTypes: true })
@@ -221,9 +222,9 @@ test('all nine skills/<name>/SKILL.md declare open-subset name + description fro
   );
 });
 
-// --- Case 3: engine-root resolution invariant for all nine skills -----------------
+// --- Case 3: engine-root resolution invariant for all ten skills -----------------
 
-test('engine-root resolution invariant: skills/<name>/../../scripts/validate-hub.mjs resolves to an existing file for all nine skills', () => {
+test('engine-root resolution invariant: skills/<name>/../../scripts/validate-hub.mjs resolves to an existing file for all ten skills', () => {
   const offenders = [];
   for (const name of SKILL_NAMES) {
     const resolved = join(skillsDir, name, '..', '..', 'scripts', 'validate-hub.mjs');

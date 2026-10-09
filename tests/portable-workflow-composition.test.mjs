@@ -1288,3 +1288,51 @@ test('portable-v1 returns stable non-file violations for every canonical artifac
     assert.deepEqual(collectViolations(hubRoot).filter(({ level }) => level === 'error'), []);
   });
 });
+
+// Inception area mirrors of the work-mount refusals above: a provider or
+// instruction mount may not physically enter .apex/inception, and provider
+// discovery through a mount skips the physical inception directory.
+import { bindProjectMount } from '../scripts/sanitize.mjs';
+
+test('instruction and provider mounts into the inception area are planner symlink conflicts and linter errors', () => {
+  const cases = [
+    { name: 'AGENTS.md', destination: '.apex/inception/private.md' },
+    { name: '.opencode', destination: '.apex/inception' },
+  ];
+  for (const { name, destination } of cases) {
+    const model = baseModel();
+    const hubRoot = seedHub(model);
+    try {
+      const target = join(hubRoot, name);
+      rmSync(target, { recursive: true, force: true });
+      mkdirSync(join(hubRoot, '.apex/inception'), { recursive: true });
+      put(hubRoot, '.apex/inception/private.md', '# Inception must stay excluded\n');
+      symlinkSync(destination, target);
+
+      assert.throws(() => bindProjectMount(hubRoot, name), {
+        message: `symlink mount ${name} enters excluded .apex/inception`,
+      });
+      const plan = planProjectScaffold({ hubRoot, model, templatesDir });
+      assert.ok(plan.conflicts.some(({ path, reason }) => (
+        (path === name || path.startsWith(`${name}/`)) && reason === 'symlink'
+      )), `${name}: ${JSON.stringify(plan.conflicts)}`);
+      assert.ok(collectViolations(hubRoot).some(({ level, msg }) => level === 'error'
+        && msg.includes(name) && msg.includes('symlink')), name);
+      assert.equal(readlinkSync(target), destination);
+    } finally { rmSync(hubRoot, { recursive: true, force: true }); }
+  }
+});
+
+test('provider mount discovery excludes the physical inception area inside its target', () => {
+  const model = baseModel();
+  const hubRoot = seedHub(model);
+  try {
+    put(hubRoot, '.apex/inception/decoy.md', '<!-- steepy:generated:inception-sentinel:v1 -->\n');
+    rmSync(join(hubRoot, '.claude'), { recursive: true });
+    symlinkSync('.apex', join(hubRoot, '.claude'));
+    const plan = planProjectScaffold({ hubRoot, model, templatesDir });
+    assert.deepEqual(plan.conflicts, []);
+    assert.ok(plan.operations.some(({ path }) => path === '.claude/agents/web-agent.md'));
+    assert.ok(!collectViolations(hubRoot).some(({ msg }) => msg.includes('inception-sentinel')));
+  } finally { rmSync(hubRoot, { recursive: true, force: true }); }
+});

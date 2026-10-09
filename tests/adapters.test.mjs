@@ -166,7 +166,7 @@ describe('opencode adapter (adapters/opencode/steepy-apex.js)', () => {
   const bootstrapMarker = 'steepy-apex:bootstrap';
   const transformHook = 'experimental.chat.messages.transform';
   const skillNames = [
-    'init', 'check', 'new-surface', 'discovery', 'brainstorm',
+    'inception', 'init', 'check', 'new-surface', 'discovery', 'brainstorm',
     'plan', 'implement', 'review', 'loop-engineer',
   ];
 
@@ -209,7 +209,7 @@ describe('opencode adapter (adapters/opencode/steepy-apex.js)', () => {
     assert.equal(hits.length, 1);
   });
 
-  it('config hook registers nine steepy-apex-<skill> commands with $ARGUMENTS when the host exposes a command map', async () => {
+  it('config hook registers ten steepy-apex-<skill> commands with $ARGUMENTS when the host exposes a command map', async () => {
     const hooks = await mod.SteepyApex({});
     const config = { command: {} };
     await hooks.config(config);
@@ -221,7 +221,7 @@ describe('opencode adapter (adapters/opencode/steepy-apex.js)', () => {
       assert.match(config.command[key].template, /\$ARGUMENTS/, `${key} template must pass $ARGUMENTS through`);
       assert.match(config.command[key].template, new RegExp(name.replace(/[-]/g, '\\-')), `${key} template must name the ${name} skill`);
     }
-    assert.equal(Object.keys(config.command).length, skillNames.length, 'exactly nine commands');
+    assert.equal(Object.keys(config.command).length, skillNames.length, 'exactly ten commands');
   });
 
   it('config hook does not overwrite an existing same-named command', async () => {
@@ -1134,7 +1134,7 @@ describe('pi adapter (adapters/pi/steepy-apex.js)', () => {
   const skillsDir = join(root, 'skills');
   const bootstrapMarker = 'steepy-apex:bootstrap';
   const skillNames = [
-    'init', 'check', 'new-surface', 'discovery', 'brainstorm',
+    'inception', 'init', 'check', 'new-surface', 'discovery', 'brainstorm',
     'plan', 'implement', 'review', 'loop-engineer',
   ];
 
@@ -1183,7 +1183,7 @@ describe('pi adapter (adapters/pi/steepy-apex.js)', () => {
     assert.doesNotThrow(() => mod.default(Object.freeze({})));
   });
 
-  it('registers nine /steepy-<skill> wrapper commands when registerCommand is present', () => {
+  it('registers ten /steepy-<skill> wrapper commands when registerCommand is present', () => {
     const { pi, state } = makePi();
     mod.default(pi);
     for (const name of skillNames) {
@@ -1192,7 +1192,7 @@ describe('pi adapter (adapters/pi/steepy-apex.js)', () => {
       assert.equal(typeof state.commands[key].handler, 'function', `${key} must carry a handler`);
       assert.ok(state.commands[key].description, `${key} must carry a description`);
     }
-    assert.equal(Object.keys(state.commands).length, skillNames.length, 'exactly nine wrapper commands');
+    assert.equal(Object.keys(state.commands).length, skillNames.length, 'exactly ten wrapper commands');
   });
 
   it('a /steepy-<skill> wrapper invokes the named skill via /skill:<name> with argument passthrough', async () => {
@@ -1372,7 +1372,7 @@ describe('dsh adapter (adapters/dsh/steepy-apex.js)', () => {
   const modulePath = join(root, 'adapters', 'dsh', 'steepy-apex.js');
   const bootstrapMarker = 'steepy-apex:bootstrap';
   const skillNames = [
-    'init', 'check', 'new-surface', 'discovery', 'brainstorm',
+    'inception', 'init', 'check', 'new-surface', 'discovery', 'brainstorm',
     'plan', 'implement', 'review', 'loop-engineer',
   ];
   const serviceNames = ['tools', 'commands', 'systemPrompt'];
@@ -1539,7 +1539,7 @@ describe('dsh adapter (adapters/dsh/steepy-apex.js)', () => {
     assert.equal(new Set(gated).size, gated.length, 'no capability is gated twice');
   });
 
-  it('registers exactly nine steepy-<skill> commands, each with a description and a handler', () => {
+  it('registers exactly ten steepy-<skill> commands, each with a description and a handler', () => {
     const { ctx, state } = makeDsh();
     mod.apply(ctx);
     for (const skill of skillNames) {
@@ -1550,7 +1550,7 @@ describe('dsh adapter (adapters/dsh/steepy-apex.js)', () => {
       assert.ok(definition.description, `${key} must carry a description`);
       assert.equal(typeof definition.handler, 'function', `${key} must carry a handler`);
     }
-    assert.equal(state.commandRegistrations.length, skillNames.length, 'exactly nine command registrations');
+    assert.equal(state.commandRegistrations.length, skillNames.length, 'exactly ten command registrations');
   });
 
   it('a command handler passes arguments through and names the exact steepy_skill invocation', async () => {
@@ -1591,10 +1591,10 @@ describe('dsh adapter (adapters/dsh/steepy-apex.js)', () => {
     assert.deepEqual(state.commandRegistrations, [], 'no command is registered without the service');
   });
 
-  it('one rejected command registration never aborts the other eight', () => {
+  it('one rejected command registration never aborts the other nine', () => {
     const { ctx, state } = makeDsh({ rejectCommand: 'steepy-plan' });
     assert.doesNotThrow(() => mod.apply(ctx));
-    assert.equal(state.commandRegistrations.length, skillNames.length - 1, 'the other eight still register');
+    assert.equal(state.commandRegistrations.length, skillNames.length - 1, 'the other nine still register');
     assert.ok(!state.commands['steepy-plan'], 'the rejected one is simply absent');
     assert.ok(state.commands['steepy-review'], 'a registration after the rejected one still happens');
   });
@@ -1636,13 +1636,13 @@ describe('dsh adapter (adapters/dsh/steepy-apex.js)', () => {
     mod.apply(ctx);
     mod.apply(ctx);
     assert.equal(state.sections.length, 1, 'a duplicate section name would be rejected by the host');
-    assert.equal(state.commandRegistrations.length, skillNames.length, 'and the nine commands register once');
+    assert.equal(state.commandRegistrations.length, skillNames.length, 'and the ten commands register once');
   });
 
   it('a host reload re-wires the adapter (the once-guard is scoped to the wiring, not to the context forever)', () => {
     const { ctx, state } = makeDsh();
     mod.apply(ctx);
-    assert.equal(state.commandRegistrations.length, skillNames.length, 'boot registers the nine commands');
+    assert.equal(state.commandRegistrations.length, skillNames.length, 'boot registers the ten commands');
     assert.equal(state.sections.length, 1, 'boot registers the bootstrap section');
 
     // A cordis reload disposes the fiber's effects first — the registrations
@@ -1671,7 +1671,7 @@ describe('dsh adapter (adapters/dsh/steepy-apex.js)', () => {
     assert.doesNotThrow(() => mod.apply(ctx));
     assert.doesNotThrow(() => mod.apply(ctx));
     assert.equal(state.sections.length, 1, 'the host rejects a duplicate section name and the adapter swallows it');
-    assert.equal(Object.keys(state.commands).length, skillNames.length, 'the nine commands are present');
+    assert.equal(Object.keys(state.commands).length, skillNames.length, 'the ten commands are present');
   });
 
   it('a second, distinct host context wires independently (the once-guard is per context, not a module singleton)', () => {
@@ -1684,7 +1684,7 @@ describe('dsh adapter (adapters/dsh/steepy-apex.js)', () => {
     assert.equal(second.state.commandRegistrations.length, skillNames.length);
   });
 
-  it('the systemPrompt service missing → no section, no throw, and the nine commands still register', () => {
+  it('the systemPrompt service missing → no section, no throw, and the ten commands still register', () => {
     const { ctx, state } = makeDsh({ systemPrompt: false });
     assert.doesNotThrow(() => mod.apply(ctx));
     assert.deepEqual(state.sections, [], 'the gated callback never runs');
@@ -1759,7 +1759,7 @@ describe('dsh adapter (adapters/dsh/steepy-apex.js)', () => {
     }
   });
 
-  it('rejects a non-string, empty string, and unknown skill name before any filesystem access, naming all nine valid values', async () => {
+  it('rejects a non-string, empty string, and unknown skill name before any filesystem access, naming all ten valid values', async () => {
     const { ctx, state } = makeDsh();
     mod.apply(ctx);
     const tool = state.tools[0];
@@ -2210,5 +2210,27 @@ describe('session-store adapter (adapters/session-store.mjs)', () => {
     assert.doesNotMatch(source, /\/Users\//);
     assert.doesNotMatch(source, /\/home\//);
     assert.doesNotMatch(source, /~\//);
+  });
+});
+
+describe('inception adapter surface (SC16)', () => {
+  const adapterSources = ['opencode', 'pi', 'dsh'].map((name) => [
+    name,
+    readFileSync(join(root, 'adapters', name, 'steepy-apex.js'), 'utf8'),
+  ]);
+
+  it('no adapter source declares a headless or autopilot mode for inception', () => {
+    for (const [name, source] of adapterSources) {
+      assert.doesNotMatch(source, /inception[^\n]*(headless|autopilot)/i, `${name} adapter`);
+    }
+  });
+
+  it('the headless command map does not mention inception', () => {
+    assert.doesNotMatch(readFileSync(join(root, 'adapters', 'headless.mjs'), 'utf8'), /inception/i);
+  });
+
+  it('Codex discovers the inception skill through the default skills directory', () => {
+    assert.equal(readJson('.codex-plugin/plugin.json').skills, './skills/');
+    assert.ok(existsSync(join(root, 'skills', 'inception', 'SKILL.md')));
   });
 });

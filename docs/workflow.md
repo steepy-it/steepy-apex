@@ -2,6 +2,12 @@
 
 How steepy-apex decides how much process a task deserves — and what each gear runs. This is the workflow reference linked from the [README](../README.md).
 
+## Before the hub: inception
+
+`/steepy-apex:inception` runs before a hub exists. It is not a gear and it is not part of the Gear-3 chain: it has no coverage verdict, no gear, and no autopilot. It turns an idea and its materials into a verified first version, then points to `init` and `discovery`. After that, every task is classified as below.
+
+The inception project and a `brainstorm` spec are different artifacts. The project is the one set of documents you approve before the first build; a spec is the work artifact of one task. Read the [inception guide](inception.md).
+
 ## Every task gets classified
 
 You have a task. The gear-aware workflow entry checks whether the hub already decides it:

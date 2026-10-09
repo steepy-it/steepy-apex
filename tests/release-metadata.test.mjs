@@ -12,6 +12,7 @@ import { main as bumpVersionMain } from '../scripts/bump-version.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const workflowCommands = [
+  'inception',
   'init',
   'new-surface',
   'check',
@@ -124,7 +125,7 @@ test('public safety copy uses a command-family effects matrix and current native
     assert.match(text, /Command-family effects matrix/i);
     assert.match(text, /filesystem\s+reads[–-]writes[–-]subprocesses[–-]temporary\s+state[–-]providers\/network/i);
   }
-  assert.match(community, /nine canonical skills/i);
+  assert.match(community, /ten canonical skills/i);
   assert.match(community, /loop-engineer/i);
   assert.match(community, /five native harnesses/i);
   assert.doesNotMatch(community, /Codex adapters are separate future work/i);

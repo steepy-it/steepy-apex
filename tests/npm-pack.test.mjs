@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -85,8 +85,9 @@ test('npm tarball includes the dsh cordis bundle patch manifest', () => {
   assertPacked(['cordis.patch.yml']);
 });
 
-test('npm tarball includes all nine SKILL.md files', () => {
+test('npm tarball includes all ten SKILL.md files', () => {
   const skillNames = [
+    'inception',
     'init',
     'check',
     'new-surface',
@@ -97,7 +98,7 @@ test('npm tarball includes all nine SKILL.md files', () => {
     'review',
     'loop-engineer',
   ];
-  assertPacked(skillNames.map((name) => `skills/${name}/SKILL.md`), 'nine SKILL.md files');
+  assertPacked(skillNames.map((name) => `skills/${name}/SKILL.md`), 'ten SKILL.md files');
 });
 
 test('npm tarball includes the six subagent prompt templates', () => {
@@ -165,4 +166,32 @@ test('npm pack dry-run leaves no repository tarball behind', () => {
 
 test('npm tarball includes both harness hook manifests', () => {
   assertPacked(['hooks/hooks.json', 'hooks/hooks-codex.json']);
+});
+
+function reachedEngineModules(entry) {
+  const reached = new Set();
+  const queue = [entry];
+  while (queue.length > 0) {
+    const current = queue.pop();
+    if (reached.has(current)) continue;
+    reached.add(current);
+    const source = readFileSync(join(root, current), 'utf8');
+    for (const match of source.matchAll(/from\s+'(\.[^']+\.mjs)'/g)) {
+      queue.push(join(dirname(current), match[1]).split('\\').join('/'));
+    }
+  }
+  return [...reached].sort();
+}
+
+test('npm tarball includes the inception helper, its reached engine modules, and its prompts', () => {
+  const modules = reachedEngineModules('scripts/inception-state.mjs');
+  assert.ok(modules.includes('scripts/inception-state.mjs'));
+  assert.ok(modules.includes('scripts/write-all.mjs') && modules.includes('scripts/sanitize.mjs'));
+  assertPacked(modules, 'inception helper imports');
+  assertPacked([
+    'skills/inception/SKILL.md',
+    'skills/inception/research-prompt.md',
+    'skills/inception/bootstrap-part-prompt.md',
+    'skills/discovery/explore-inception-prompt.md',
+  ], 'inception skill files');
 });

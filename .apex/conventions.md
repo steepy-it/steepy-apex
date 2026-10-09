@@ -59,6 +59,42 @@ only the current conductor ledger schema and identify unsupported records as inv
   insufficient facts need human clarification, not unauthorized upstream reads. Content-contract
   tests document these model-based decisions; they do not prove deterministic manual enforcement.
 
+## Inception (pre-hub)
+- `inception` is a pre-hub skill, not a gear. It sits outside the chain and has no
+  headless or autopilot mode. It never creates hub artifacts: no `_INDEX.md`, standard,
+  glossary, or agent. Order: inception → `init` (ordinary interview, unchanged) →
+  `discovery` (inception source) → gears.
+- Local area `.apex/inception/` has its own `.gitignore` (`*`), written first. The root
+  `.gitignore` is never edited for the area; an approved bootstrap tool may change it as
+  an application file, recorded as an effect. The area is excluded from anti-orphan
+  checks, stable reads, and discovery's explorer reads, like `.apex/work/`; inception
+  material reaches the hub only through discovery's inception source. Stable links into
+  it are errors. It stays after `complete` until the user deletes it after discovery.
+- One run per repository, at `.apex/inception/run.json`, changed only by
+  `scripts/inception-state.mjs`. Abandon moves the run to
+  `.apex/inception/abandoned/<run-id>/` and deletes nothing.
+- Pre-hub rule: no `_INDEX.md` plus a descriptor → `validate-hub` exits 0 naming the phase
+  and next step, and the Stop hook stays silent. An unparseable descriptor is an error
+  naming it.
+- Single human approval, with file digests and the user's statement kept verbatim. It is
+  never self-approved by the model; a digest proves bytes, not a human.
+- Effects and checkpoints: an effect records its intent before and its outcome after. An
+  uncertain effect is never repeated. Records are immutable.
+- Hard links: every path under the area is excluded whatever its link count; a stable file
+  that shares an inode with an area file stays stable content; the helper refuses area
+  files with more than one link.
+- Discovery's inception source: a `complete` run only, read at the exact bound paths. Every
+  decision is approved. Three promotion rules:
+  - Approved and verified (`verified`) → may be written as an existing component or rule.
+  - Approved but unverified (`unverified`) → written as a design choice, not an existing
+    component.
+  - A future flow (`future`) → written as context in `conventions.md`, never an implemented
+    component, a spec, or a started task.
+
+  Destinations are only `conventions.md`, the routed surface standards, and `glossary.md`:
+  no new hub document and no `_INDEX.md` change. The write-back never names the area. Every
+  decision in the register is accepted or rejected with a reason.
+
 ## Decision model (conditional ceremony)
 
 Every task entering a gear-aware workflow is classified by that workflow entry on two axes → a ceremony **gear**.
@@ -306,7 +342,7 @@ would add a read, not save tokens — do not DRY them.
 ## Multi-harness distribution
 
 Steepy Apex ships as one **shared canonical core + native adapters** for Claude Code,
-Codex, OpenCode, Pi, and DeepSeek Harness: the nine skills in `skills/` are the single source of behavior,
+Codex, OpenCode, Pi, and DeepSeek Harness: the ten skills in `skills/` are the single source of behavior,
 served verbatim to every harness; per-harness manifests and thin runtime adapters
 (`adapters/**`) do the wiring. Core-portability rules:
 

@@ -362,3 +362,239 @@ function assertNamedHeadingReference({ sourcePath, targetPath, targetLabel, head
   });
   assert.ok(headingLine, `${targetPath} must contain heading "${heading}"`);
 }
+
+// Inception source (inception v1): SC11 and SC12. Appended blocks; the blocks above stay unchanged.
+const inceptionPromptPath = join(skillsDir, 'discovery', 'explore-inception-prompt.md');
+const STEP_2A = '### Step 2a — Inception source (complete run only)';
+
+// Flatten hard-wrapped prose so a lock pins the wording, not the wrap points.
+function flat(text) {
+  return text.replace(/\s+/g, ' ');
+}
+
+test('discovery inception source (SC11): Step 1 offers the source only for a complete run and reads only the descriptor', () => {
+  const text = readFileSync(skillPath, 'utf8');
+  const step1 = flat(sectionBetween(text, '### Step 1', '### Step 2'));
+  assert.match(
+    step1,
+    /If `\.apex\/inception\/run\.json` exists and its `status` is `complete`, also offer the \*\*inception source\*\*/,
+    'Step 1 must offer the inception source only for a complete run',
+  );
+  assert.match(
+    step1,
+    /Read only that one file to check this, and never list `\.apex\/inception\/`\./,
+    'Step 1 must read only the descriptor and never list the area',
+  );
+  assert.match(
+    step1,
+    /Otherwise do not mention the inception source, and run exactly as below\./,
+    'Step 1 must stay silent about the source when no complete run exists',
+  );
+  assert.doesNotMatch(step1, /explore-surface-prompt\.md/, 'Step 1 must not mention the surface explorer prompt');
+});
+
+test('discovery inception source (SC11): Step 2a sits between Step 2 and Step 3 and runs only on the user\'s choice', () => {
+  const text = readFileSync(skillPath, 'utf8');
+  const step2 = text.indexOf('### Step 2 — Per-surface iterative loop');
+  const step2a = text.indexOf(STEP_2A);
+  const step3 = text.indexOf('### Step 3 — Coherence gate');
+  assert.ok(step2 !== -1 && step2a > step2 && step3 > step2a, 'Step 2a must sit between Step 2 and Step 3');
+  const section = flat(sectionBetween(text, STEP_2A, '### Step 3'));
+  assert.match(section, /Run this step only when the user chose the inception source in Step 1\./);
+  assert.match(section, /never list `\.apex\/inception\/`/, 'Step 2a must never list the area');
+  assert.match(section, /A stop in this step ends only the inception source/);
+});
+
+test('discovery inception source (SC11): Step 2a reads only the descriptor and its bound paths, then runs verify-approval', () => {
+  const text = readFileSync(skillPath, 'utf8');
+  const section = flat(sectionBetween(text, STEP_2A, '### Step 3'));
+  assert.match(section, /Read the descriptor, `\.apex\/inception\/run\.json`, then only the paths it binds/);
+  assert.match(
+    section,
+    /the last element of the descriptor's `approvals` array, by binding order, never by file recency/,
+    'the approval record is chosen by binding order, never by file recency',
+  );
+  assert.match(section, /that record's `documents\[\]\.path`, and the descriptor's `verification\.path`/);
+  assert.match(section, /node <engine-root>\/scripts\/inception-state\.mjs verify-approval --repo-root \./);
+  assert.match(
+    section,
+    /On any divergence[^.]*stop the inception source[^.]*: drifted documents are not promoted\./,
+    'a divergence stops the inception source and nothing drifted is promoted',
+  );
+  assert.match(section, /`\.apex\/inception\/project\/decision-register\.md` is not among the approved documents/);
+});
+
+test('discovery inception source (SC11): Step 2a passes exactly the bound paths as [INPUT_PATHS] with an explicit model:', () => {
+  const text = readFileSync(skillPath, 'utf8');
+  const raw = sectionBetween(text, STEP_2A, '### Step 3');
+  const section = flat(raw);
+  assert.match(section, /`\[REPORT_FILE\] = \.apex\/work\/discovery\/YYYY-MM-DD-inception\.md`/);
+  assert.match(
+    section,
+    /If your harness provides a task\/subagent tool, dispatch a fresh subagent using `skills\/discovery\/explore-inception-prompt\.md`/,
+  );
+  const idx = raw.indexOf('explore-inception-prompt.md');
+  assert.ok(idx !== -1, 'Step 2a must dispatch skills/discovery/explore-inception-prompt.md');
+  assert.match(raw.slice(idx, idx + 300), /model: standard/, 'must set model: standard explicitly near the dispatch');
+  assert.match(
+    section,
+    /Pass `\[INPUT_PATHS\]` = exactly the descriptor, the approval record, every approved document, and the verification results — no other path\./,
+  );
+  assert.match(section, /`\[GLOSSARY_PATH\]`[^]*`\[CONVENTIONS_PATH\]`[^]*`\[STANDARD_PATHS\]`/);
+  assert.match(
+    section,
+    /Otherwise run the same prompt inline over the same inputs, and state the inline degradation in the run's report/,
+  );
+  assert.match(section, /`skills\/discovery\/explore-inception-prompt\.md` → "Output Format"/);
+});
+
+test('discovery inception source (SC11): the surface flow text is otherwise unchanged', () => {
+  const text = readFileSync(skillPath, 'utf8');
+  const step0 = sectionBetween(text, '### Step 0', '### Step 1');
+  assert.match(
+    flat(step0),
+    /If `\.apex\/_INDEX\.md` is \*\*absent\*\*, tell the user the hub does not exist yet: run the `init` skill \(invoke it the way your harness invokes skills\) first, then \*\*stop\*\* — `discovery` populates an existing hub, it does not create one\./,
+    'Step 0 must keep its absent-hub stop',
+  );
+  assert.doesNotMatch(step0, /inception/i, 'Step 0 must not change for the inception source');
+  const surfaceLoop = sectionBetween(text, '### Step 2 — Per-surface iterative loop', '### Step 2a');
+  assert.doesNotMatch(surfaceLoop, /inception/i, 'the per-surface loop must not change for the inception source');
+  assert.match(
+    flat(surfaceLoop),
+    /If your harness provides a task\/subagent tool, dispatch a fresh subagent per surface using `skills\/discovery\/explore-surface-prompt\.md`; otherwise perform the exploration inline in a dedicated pass over the same inputs, and state the inline degradation in the run's report \(Step 4\)\. When you dispatch, always set `model: standard` explicitly/,
+    'Step 2 must keep its explorer dispatch',
+  );
+  const firstSurfacePrompt = text.indexOf('explore-surface-prompt.md');
+  assert.ok(
+    firstSurfacePrompt > text.indexOf('### Step 2 — Per-surface iterative loop') && firstSurfacePrompt < text.indexOf(STEP_2A),
+    'the first mention of explore-surface-prompt.md must stay in Step 2.2',
+  );
+});
+
+test('discovery inception source (SC12): Step 2a walks the decision register, one card per DR-n, under the Step 2.4 interview', () => {
+  const text = readFileSync(skillPath, 'utf8');
+  const section = flat(sectionBetween(text, STEP_2A, '### Step 3'));
+  assert.match(section, /one item card per `DR-n`/);
+  assert.match(section, /Proposed doc text/);
+  assert.match(section, /Evidence \(the local file and line; it is for the interview only\)/);
+  assert.match(section, /Verification status \(from the verification results' `## Coverage` rows\)/);
+  assert.match(section, /Promotion class/);
+  assert.match(section, /write-back preview: the destination and the exact text that would be written/);
+  assert.match(section, /accept \/ correct \/ skip interview as Step 2\.4/);
+  assert.match(section, /Never use bare IDs \(DR-1, DR-2, …\) as option labels/, 'the bare-ID ban must cover DR-n');
+  assert.match(section, /A skip is a rejection: ask the user for its reason\./);
+});
+
+test('discovery inception source (SC12): Step 2a states the three promotion rules', () => {
+  const text = readFileSync(skillPath, 'utf8');
+  const section = flat(sectionBetween(text, STEP_2A, '### Step 3'));
+  assert.match(section, /Approved and verified \(`verified`\) → may be written as an existing component or rule\./);
+  assert.match(
+    section,
+    /Approved but unverified \(`unverified`\) → written as a design choice, not as an existing component\./,
+  );
+  assert.match(
+    section,
+    /A future flow \(`future`\) → written as context in `conventions\.md`, never as an implemented component, a spec, or a started task\./,
+  );
+});
+
+test('discovery inception source (SC12): write-back goes only to conventions.md, routed standards, and glossary.md and never names the area', () => {
+  const text = readFileSync(skillPath, 'utf8');
+  const section = flat(sectionBetween(text, STEP_2A, '### Step 3'));
+  assert.match(
+    section,
+    /Destinations are only `conventions\.md`, the routed surface standards, and `glossary\.md`: no new hub document and no `_INDEX\.md` change\./,
+  );
+  assert.match(section, /Write-back text never names, cites, or links `\.apex\/inception\/`/);
+});
+
+test('discovery inception source (SC12): every decision ends accepted or rejected with a reason under ## Decision outcomes', () => {
+  const text = readFileSync(skillPath, 'utf8');
+  const section = flat(sectionBetween(text, STEP_2A, '### Step 3'));
+  assert.match(section, /Every register decision ends accepted \(written\) or rejected with a reason\./);
+  assert.match(
+    section,
+    /Record the outcomes in `\[REPORT_FILE\]` under `## Decision outcomes`, one line per decision: `DR-n — accepted` or `DR-n — rejected: <reason>`\./,
+  );
+  assert.match(section, /Re-runs follow the new-or-drifted rule of Step 2\.4/);
+  const step4 = flat(sectionBetween(text, '### Step 4', '## Model Selection'));
+  assert.match(step4, /inception source[^]*`## Decision outcomes`/, 'Step 4 must report the inception decision outcomes');
+});
+
+test('discovery inception source (SC12): Model Selection covers the inception explorer', () => {
+  const text = readFileSync(skillPath, 'utf8');
+  const model = flat(sectionBetween(text, '## Model Selection'));
+  assert.match(
+    model,
+    /Always set `model:` explicitly when dispatching the Explore subagent in Step 2\.2 and the inception explorer in Step 2a\.2/,
+  );
+  assert.match(model, /Never hardcode a concrete model id in `explore-surface-prompt\.md` or `explore-inception-prompt\.md`\./);
+  assert.match(model, /no reviewer subagent/i);
+});
+
+test('discovery inception source (SC12): explore-inception-prompt.md is an explorer at the standard tier with its placeholders', () => {
+  assert.ok(existsSync(inceptionPromptPath), 'skills/discovery/explore-inception-prompt.md should exist');
+  const text = readFileSync(inceptionPromptPath, 'utf8');
+  assert.match(text, /```\nSubagent \(explorer\):\n {2}model: standard\b/, 'must be a fenced explorer with model: standard');
+  for (const placeholder of ['[INPUT_PATHS]', '[REPORT_FILE]', '[GLOSSARY_PATH]', '[CONVENTIONS_PATH]', '[STANDARD_PATHS]']) {
+    assert.ok(text.includes(placeholder), `must name the ${placeholder} placeholder`);
+  }
+  assert.doesNotMatch(text, /\b(haiku|sonnet|opus)\b/, 'must not hardcode a concrete model id');
+  assert.doesNotMatch(text, /general-purpose|\/steepy-apex:|CLAUDE_/);
+  assert.doesNotMatch(text, /[^\s`]+\.md:\d+/, 'must not carry numeric Markdown anchors');
+  const body = flat(text);
+  assert.match(body, /If your harness provides a task\/subagent tool, dispatch a fresh explorer subagent/);
+  assert.match(
+    body,
+    /Otherwise perform the exploration yourself in a dedicated pass over the same inputs, and state the inline degradation in the run's report\./,
+  );
+});
+
+test('discovery inception source (SC12): explore-inception-prompt.md reads exactly its inputs and never lists the area or writes hub or code', () => {
+  assert.ok(existsSync(inceptionPromptPath), 'skills/discovery/explore-inception-prompt.md should exist');
+  const body = flat(readFileSync(inceptionPromptPath, 'utf8'));
+  assert.match(body, /Read exactly the files in \[INPUT_PATHS\], \[GLOSSARY_PATH\], \[CONVENTIONS_PATH\], and \[STANDARD_PATHS\]\./);
+  assert.match(
+    body,
+    /Never list `\.apex\/inception\/` or read anything else under it, never read under `\.apex\/work\/`, and never write to the hub or the codebase\./,
+  );
+});
+
+test('discovery inception source (SC12): explore-inception-prompt.md writes one card per DR-n with file:line evidence and invents nothing', () => {
+  assert.ok(existsSync(inceptionPromptPath), 'skills/discovery/explore-inception-prompt.md should exist');
+  const text = readFileSync(inceptionPromptPath, 'utf8');
+  const body = flat(text);
+  assert.match(body, /One item card per `DR-n` row of the decision register, in register order/);
+  for (const field of ['Proposed doc text', 'Evidence', 'Verification status', 'Promotion class', 'Destination']) {
+    assert.match(text, new RegExp(`\\*\\*${field}:\\*\\*`), `each card must carry the ${field} field`);
+  }
+  assert.match(text, /`file:line`/, 'must require file:line evidence');
+  assert.match(text, /## Invent Nothing/);
+  assert.match(body, /`verified` → `existing component or rule`/);
+  assert.match(body, /`unverified` → `design choice`/);
+  assert.match(body, /`future` → `future context`/);
+  assert.match(body, /The Proposed doc text never names, cites, or links `\.apex\/inception\/`/);
+  assert.match(body, /the interviewer records `## Decision outcomes`/);
+});
+
+test('discovery inception source (SC12): explore-inception-prompt.md returns only the four-field status', () => {
+  assert.ok(existsSync(inceptionPromptPath), 'skills/discovery/explore-inception-prompt.md should exist');
+  const text = readFileSync(inceptionPromptPath, 'utf8');
+  assert.match(text, /status: <DONE\|BLOCKED>\n\s+artifact: \[REPORT_FILE\]\n\s+changed-paths: none\n\s+signals: <short IDs or none>/);
+  assert.match(text, /≤\s*15/, 'must impose a terse ≤15-line return');
+  assertNamedHeadingReference({
+    sourcePath: skillPath,
+    targetPath: inceptionPromptPath,
+    targetLabel: 'skills/discovery/explore-inception-prompt.md',
+    heading: 'Output Format',
+  });
+});
+
+test('discovery inception source (SC12): explore-surface-prompt.md gains the inception read boundary in its read paragraph', () => {
+  const text = readFileSync(promptPath, 'utf8');
+  assert.match(
+    text,
+    /beyond what is needed to confirm a finding\.\n {4}Never read under `\.apex\/work\/` or `\.apex\/inception\/`: inception material reaches discovery only\s+through its inception source\./,
+  );
+});
