@@ -158,6 +158,39 @@ describe('privacy and serialization', () => {
     }
   });
 
+  it('redacts a whole quoted sensitive value, escaped quotes included, and flag-style keys', () => {
+    const line = `password="hunter\\"2 tail" secret='it\\'s private' --token=flag-secret`;
+    const output = serializeRawLine({
+      line, sourceStream: 'stderr', timestamp: bridgeContext().receivedAt, mode: 'safe',
+    });
+    assert.doesNotMatch(output, /hunter|tail|private|flag-secret/);
+    assert.equal(output.match(/\[REDACTED\]/g).length, 3);
+  });
+
+  it('redacts an unterminated quoted value full of escaped escapes in linear time', () => {
+    // Shape of the 2026-09-22 conductor freeze: a <persisted-output> preview cut mid-line opens a
+    // JSON string it never closes, and every newline in it is double-escaped (`\\n`).
+    const notice = `<persisted-output>\nPreview (first 2KB):\n{"line":"${'\\\\n'.repeat(20)}`;
+    const started = performance.now();
+    const output = serializeRawLine({
+      line: JSON.stringify({ type: 'user', content: notice }), sourceStream: 'stdout',
+      timestamp: bridgeContext().receivedAt, mode: 'safe',
+    });
+    const elapsed = performance.now() - started;
+    assert.ok(elapsed < 1000, `redaction took ${elapsed.toFixed(0)} ms`);
+    assert.ok(JSON.parse(output).line.includes('persisted-output'));
+  });
+
+  it('scans a long separator-free token in linear time and still redacts what follows it', () => {
+    const blob = 'A'.repeat(200_000);
+    const started = performance.now();
+    const output = redactSensitive(`payload ${blob} token=after-blob`);
+    const elapsed = performance.now() - started;
+    assert.ok(elapsed < 1000, `redaction took ${elapsed.toFixed(0)} ms`);
+    assert.ok(output.includes(blob));
+    assert.match(output, /token=\[REDACTED\]$/);
+  });
+
   it('preserves exact source text inside JSON escaping only in exact raw mode', () => {
     const original = '  {"message":"🫣\\n\\u001b[31m","token":"sk-exact-123456"}  ';
     const serialized = serializeRawLine({

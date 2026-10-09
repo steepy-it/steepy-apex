@@ -1,6 +1,6 @@
 {
   "name": "steepy-apex",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Context engineering and governed workflows for AI coding agents. Keep project knowledge coherent, route work to specialists, and scale from small fixes to bounded autonomous loops.",
   "author": {
     "name": "steepy-it",
