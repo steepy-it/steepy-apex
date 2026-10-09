@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.2.0 (2026-10-09)
+
+- New skill `/steepy-apex:inception`: turns an idea and its materials into a minimal, verified,
+  runnable first version before the hub exists. It runs reconnaissance, architecture decisions
+  with a decision register, versions verified from official sources, one human approval,
+  bootstrap of one representative path, and final verification, then points to `init` and
+  `discovery`. It is not a gear and has no headless or autopilot mode.
+- New helper `scripts/inception-state.mjs` records and verifies the run under `.apex/inception/`:
+  classify, start, transition, resume notes, approval records with document digests, the
+  append-only effect log, checkpoints with Git state, and abandon. It never deletes a run.
+- `validate-hub` excludes `.apex/inception/` like `.apex/work/` and rejects stable links into it.
+  Before a hub exists, a valid run descriptor makes it exit 0 with the run's phase and next step,
+  and the Stop hook stays silent.
+- `discovery` offers an inception source for a complete run. It walks the decision register and
+  writes accepted decisions only to `conventions.md`, the routed standards, and `glossary.md`.
+- The dsh, OpenCode, and Pi adapters, the packaging, and the docs list ten skills. `init` is
+  unchanged.
+- `docs/inception.md` is the user guide; `docs/inception-acceptance.md` defines the native
+  acceptance runs, still pending.
+
 ## v1.1.5 (2026-10-09)
 
 - The autopilot conductor's safe-mode secret redaction runs in linear time. A quoted value
