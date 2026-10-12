@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.1.6 (2026-10-12)
+
+- `.claude-plugin/plugin.json` declares the four Claude directory listing links:
+  `documentationUrl` (`docs/`), `supportUrl` (GitHub issues), `privacyPolicyUrl`
+  (`PRIVACY.md`) and `termsOfServiceUrl` (`LICENSE`).
+- `PRIVACY.md` is the plugin's privacy policy: no server, no telemetry, no personal data,
+  and the same external-services table as the README section "Data and external services",
+  which now links to it.
+- A release-metadata test checks that each listing link points at a file on `main` and that
+  the two external-services tables stay identical.
+- `RELEASE.md` notes that the directory reads the listing's links and keywords once, from
+  the version the submission was created at.
+
 ## v1.1.5 (2026-10-09)
 
 - The autopilot conductor's safe-mode secret redaction runs in linear time. A quoted value

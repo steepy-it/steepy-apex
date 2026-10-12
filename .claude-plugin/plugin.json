@@ -1,6 +1,6 @@
 {
   "name": "steepy-apex",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "Context engineering and governed workflows for AI coding agents. Keep project knowledge coherent, route work to specialists, and scale from small fixes to bounded autonomous loops.",
   "author": {
     "name": "steepy-it",
@@ -9,6 +9,10 @@
   "homepage": "https://github.com/steepy-it/steepy-apex",
   "repository": "https://github.com/steepy-it/steepy-apex",
   "license": "Apache-2.0",
+  "documentationUrl": "https://github.com/steepy-it/steepy-apex/tree/main/docs",
+  "supportUrl": "https://github.com/steepy-it/steepy-apex/issues",
+  "privacyPolicyUrl": "https://github.com/steepy-it/steepy-apex/blob/main/PRIVACY.md",
+  "termsOfServiceUrl": "https://github.com/steepy-it/steepy-apex/blob/main/LICENSE",
   "keywords": [
     "context-engineering",
     "workflows",

@@ -192,6 +192,11 @@ Submit through the developer portal:
 The listing icon is fixed at the first save or submit. Later versions reach the directory
 through **Check for new commits** or the push webhook.
 
+The Listing tab is read once, from the version the submission was created at. Later versions
+update only the display name and short description. Links (`homepage`, `documentationUrl`,
+`supportUrl`, `privacyPolicyUrl`, `termsOfServiceUrl`) and `keywords` must already be in
+`.claude-plugin/plugin.json` when you create the submission.
+
 ## Public distribution checklist
 
 Channel guidance checked on 2026-09-16. Recheck the linked provider instructions before

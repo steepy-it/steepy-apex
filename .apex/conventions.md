@@ -364,7 +364,8 @@ served verbatim to every harness; per-harness manifests and thin runtime adapter
   referencing images or credential-shaped names into reviewer holds. The payload removes
   those dev-file causes, but the scanner is heuristic and can still raise reviewer holds:
   submit with 0 Blocking and record each remaining hold with its reason. Repository and
-  folder are fixed at submission, so this is hard to reverse.
+  folder are fixed at submission, so this is hard to reverse. The listing's links and
+  keywords are also read only once, from the version the submission was created at.
 - **Scoping:** this policy governs THIS repo's own automation. The shipped `review`
   skill's bump step self-disables in target repos that lack `scripts/bump-version.mjs`
   + `.github/workflows/version-gate.yml`.
