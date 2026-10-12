@@ -138,6 +138,7 @@ redacted by default (`log-mode: safe`). These skills reach services outside your
 
 `/steepy-apex:loop-engineer` runs its attempts on the harness you are already using. Per-command
 effects are in the [Command-family effects matrix](docs/architecture.md#command-family-effects-matrix).
+The full [privacy policy](PRIVACY.md) repeats this table.
 
 ## Documentation
 

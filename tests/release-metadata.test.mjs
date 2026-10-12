@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync,
+  mkdtempSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, rmSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -90,6 +90,36 @@ test('search keywords stay identical across npm, both plugin manifests and the C
   assert.deepEqual(codexPlugin.keywords, plugin.keywords, '.codex-plugin/plugin.json keywords must match .claude-plugin/plugin.json');
   assert.deepEqual(marketplace.plugins[0].keywords, plugin.keywords, 'marketplace entry keywords must match .claude-plugin/plugin.json');
   assert.equal(marketplace.plugins[0].category, 'development');
+});
+
+test('Claude plugin manifest links the directory listing to files that exist on main', () => {
+  const plugin = readJson('.claude-plugin/plugin.json');
+  const repoUrl = 'https://github.com/steepy-it/steepy-apex';
+
+  assert.equal(plugin.homepage, repoUrl);
+  assert.equal(plugin.repository, repoUrl);
+  assert.equal(plugin.supportUrl, `${repoUrl}/issues`);
+  for (const key of ['documentationUrl', 'privacyPolicyUrl', 'termsOfServiceUrl']) {
+    const match = /^https:\/\/github\.com\/steepy-it\/steepy-apex\/(?:blob|tree)\/main\/(.+)$/.exec(plugin[key] ?? '');
+    assert.ok(match, `${key} must point into steepy-it/steepy-apex on main`);
+    assert.doesNotThrow(() => statSync(join(root, match[1])), `${key} target ${match[1]} must exist`);
+  }
+});
+
+test('the privacy policy repeats the README external-services table', () => {
+  const serviceRows = (relativePath, heading) => {
+    const text = readFileSync(join(root, relativePath), 'utf8');
+    const start = text.indexOf(`\n${heading}\n`);
+    assert.ok(start >= 0, `${relativePath} must have a "${heading}" section`);
+    const end = text.indexOf('\n## ', start + heading.length + 2);
+    return text.slice(start, end < 0 ? undefined : end)
+      .split('\n')
+      .filter((line) => line.startsWith('| `/steepy-apex:'));
+  };
+  const readmeRows = serviceRows('README.md', '## Data and external services');
+
+  assert.ok(readmeRows.length > 0, 'README must list the skills that reach external services');
+  assert.deepEqual(serviceRows('PRIVACY.md', '## External services'), readmeRows);
 });
 
 test('CI covers the supported Node 24 floor without older runtimes', () => {
