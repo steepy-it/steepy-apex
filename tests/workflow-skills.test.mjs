@@ -919,6 +919,17 @@ test('brainstorm: finalized specs carry one allowed Feature complexity and the h
   assert.doesNotMatch(step7, /resource[- ]profile|resource profile/i, 'budget removal must not add a replacement resource-profile question');
 });
 
+test('brainstorm: gear-2 specs carry the same machine contract as gear-3 specs', () => {
+  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const step5 = sectionBetween(text, '### Step 5', '### Step 5.5');
+  assert.doesNotMatch(step5, /every new gear-3 spec/i, 'Step 5 must not scope the machine contract to gear 3: direct Gear-2 implement consumes it');
+  assert.match(step5, /every new gear-2 and gear-3 spec/i, 'Step 5 must apply the machine contract to gear-2 specs');
+  const contract = step5.slice(step5.indexOf('every new gear-2 and gear-3 spec'), step5.indexOf('Do not place cross-cutting'));
+  assert.match(contract, /`- \*\*Feature complexity:\*\*/, 'Feature complexity must sit in the machine-contract list, not after it');
+  const ceremony = sectionBetween(text, '### Ceremony by gear', '### Step 1 ');
+  assert.match(ceremony, /light spec that still carries the\s+Step 5 machine contract/i, 'the gear-2 light spec must still carry the Step 5 machine contract');
+});
+
 test('plan: gear-3 plan gate is a human review, not a subagent', () => {
   const dir = join(skillsDir, 'plan');
   assert.ok(!existsSync(join(dir, 'plan-reviewer-prompt.md')),

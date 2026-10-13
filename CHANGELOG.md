@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.1.7 (2026-10-13)
+
+- `brainstorm` Step 5 applies the spec machine contract to gear-2 specs too: `Owning surface`,
+  `Cross-cutting surfaces`, `Feature complexity`, one `## Success criteria` heading and
+  `SC1`…`SCn` IDs. It used to name only gear-3 specs, while the Step 5.5 self-review checked
+  these fields at gear 2 and direct Gear-2 `implement` copies them into its task brief. A gear-2
+  run wrote the spec without them, then the self-review added them back.
+- `Feature complexity` now sits in the machine-contract field list instead of a sentence after it,
+  and the gear-2 ceremony says its light spec still carries that contract.
+- A workflow-skills test keeps the contract unscoped from gear 3.
+
 ## v1.1.6 (2026-10-12)
 
 - `.claude-plugin/plugin.json` declares the four Claude directory listing links:

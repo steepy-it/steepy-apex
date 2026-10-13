@@ -176,8 +176,9 @@ here is already enforced by that mechanism, not by this prose.
 
 - **Gear 1** (COVERED + low-value): produce NO spec — state the task is COVERED + low-value, cite
   the governing rule, hand straight to the specialist agent, and stop.
-- **Gear 2** (COVERED + high-value, or GAP + low-value): write a light spec, self-review it
-  (Step 5.5), run `validate-hub`, **skip Step 7**, and hand the READY spec directly to
+- **Gear 2** (COVERED + high-value, or GAP + low-value): write a light spec that still carries the
+  Step 5 machine contract, self-review it (Step 5.5), run `validate-hub`, **skip Step 7**, and hand
+  the READY spec directly to
   `implement`. A light plan remains an explicit opt-in when the user already requested one or the
   spec cannot become one independently testable implementation task.
 - **Gear 3**: run the full procedure, including the Step 5.5 self-review and the Step 7 human gate.
@@ -271,14 +272,15 @@ The gate: no finalization, no handoff, no hub mutation until the user approves e
 
 Incorporate the requested changes from the Step 4 review into the draft file. Leave the workflow header at `status: DRAFT` until the applicable approval gate completes. Make sure the owning surface, the success criteria, and the Out of Scope and Testing Decisions sections are stated explicitly (the canonical sections per Step 4's gear gradient).
 
-For every new gear-3 spec, use this canonical machine-readable metadata and criteria grammar:
+For every new gear-2 and gear-3 spec, use this canonical machine-readable metadata and criteria grammar. Direct Gear-2 `implement` copies these fields into its task brief, so a light spec has less prose, never fewer fields:
 
 - `- **Owning surface:** \`<one registered surface>\``
 - `- **Cross-cutting surfaces:** \`<surface>\`, ...` or `- **Cross-cutting surfaces:** none`
+- `- **Feature complexity:** \`<one allowed value>\``
 - exactly one literal `## Success criteria` heading;
 - stable sequential criterion IDs under that heading: `- **SC1:** <criterion>`, `- **SC2:** <criterion>`, and so on.
 
-Do not place cross-cutting surfaces inside the owning-surface value. The finalized spec also records exactly one `Feature complexity: mechanical | integration | design` field, rendered as `- **Feature complexity:** \`<one allowed value>\`` and selecting the one value that describes the feature as a whole.
+Do not place cross-cutting surfaces inside the owning-surface value. The finalized spec records exactly one `Feature complexity: mechanical | integration | design` field, selecting the one value that describes the feature as a whole.
 
 If the Step 2 grilling surfaced a **speculative hub-delta** (a term or rule worth promoting once the work proves it), record it in the spec as a deferred proposal — not a canonised hub edit; downstream review/check promotes it if it holds.
 
