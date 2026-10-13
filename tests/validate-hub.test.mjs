@@ -3222,12 +3222,9 @@ const PRE_HUB_COMPLETE = {
 };
 
 function preHubDescriptor(changes = {}) {
-  const initial = createRunDescriptor({
-    runId: PRE_HUB_RUN_ID,
-    harnessName: 'claude-code',
-    capabilities: ['shell', 'subagents'],
-    git: { present: false, branch: null, commits: 'none' },
-  });
+  // Dedicated raw legacy descriptor, independent of public v2 creation.
+  const initial = { schema: 'steepy-inception-run/v1', runId: PRE_HUB_RUN_ID, phase: 'reconnaissance', status: 'active', harness: { name: 'claude-code', capabilities: { shell: true, network: false, browser: false, subagents: true, 'question-tool': false, headless: false } }, git: { present: false, branch: null, commits: 'none' }, nextRecord: 1, approvalEntry: null, approvals: [], checkpoints: [], resumeNotes: [], finalCheckpoint: null, verification: null, history: [] };
+
   return serializeRunDescriptor({ ...initial, ...changes });
 }
 
@@ -3279,7 +3276,7 @@ test('pre-hub: an area-only .apex with a valid descriptor exits 0 with the run p
     assert.equal(cli.stdout, preHubLine(
       'reconnaissance',
       'active',
-      'resume with the inception skill (phase reconnaissance)',
+      'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
     ));
     assert.equal(cli.stderr, '');
     const quiet = runQuietValidator(repo);
@@ -3291,7 +3288,7 @@ test('pre-hub: an area-only .apex with a valid descriptor exits 0 with the run p
   }
 });
 
-test('pre-hub: a complete run names init, then discovery, as the next step', () => {
+test('pre-hub: a legacy complete run names inspect or abandon without importing its source', () => {
   const repo = preHubRoot('complete', validPreHubDescriptor(PRE_HUB_COMPLETE));
   try {
     assert.deepEqual(collectViolations(repo), []);
@@ -3300,7 +3297,7 @@ test('pre-hub: a complete run names init, then discovery, as the next step', () 
     assert.equal(cli.stdout, preHubLine(
       'complete',
       'complete',
-      'run the init skill, then the discovery skill with the inception source',
+      'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
     ));
     assert.equal(cli.stderr, '');
   } finally {
@@ -3308,7 +3305,7 @@ test('pre-hub: a complete run names init, then discovery, as the next step', () 
   }
 });
 
-test('pre-hub: a blocked run names the blocked next step', () => {
+test('pre-hub: a legacy blocked run names only legacy recovery', () => {
   const repo = preHubRoot('blocked', validPreHubDescriptor({ phase: 'research', status: 'blocked' }));
   try {
     assert.deepEqual(collectViolations(repo), []);
@@ -3317,7 +3314,7 @@ test('pre-hub: a blocked run names the blocked next step', () => {
     assert.equal(cli.stdout, preHubLine(
       'research',
       'blocked',
-      'resolve the block recorded in the latest resume note, then resume with the inception skill',
+      'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
     ));
     assert.equal(cli.stderr, '');
   } finally {
@@ -3475,7 +3472,7 @@ test('pre-hub: other inception area files are never read, whether the descriptor
     assert.equal(green.stdout, preHubLine(
       'reconnaissance',
       'active',
-      'resume with the inception skill (phase reconnaissance)',
+      'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
     ));
     assert.equal(green.stderr, '');
 
@@ -3537,19 +3534,19 @@ test('pre-hub: preHubInceptionStatus reports a valid run and is null outside the
       runId: PRE_HUB_RUN_ID,
       phase: 'reconnaissance',
       status: 'active',
-      nextStep: 'resume with the inception skill (phase reconnaissance)',
+      nextStep: 'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
     });
     assert.deepEqual(preHubInceptionStatus(blocked), {
       runId: PRE_HUB_RUN_ID,
       phase: 'approval',
       status: 'blocked',
-      nextStep: 'resolve the block recorded in the latest resume note, then resume with the inception skill',
+      nextStep: 'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
     });
     assert.deepEqual(preHubInceptionStatus(complete), {
       runId: PRE_HUB_RUN_ID,
       phase: 'complete',
       status: 'complete',
-      nextStep: 'run the init skill, then the discovery skill with the inception source',
+      nextStep: 'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
     });
     for (const repo of [noApex, noDescriptor, withIndex, invalid, linked, join(noApex, 'absent')]) {
       assert.equal(preHubInceptionStatus(repo), null, repo);
@@ -3558,5 +3555,35 @@ test('pre-hub: preHubInceptionStatus reports a valid run and is null outside the
     for (const repo of [active, blocked, complete, noApex, noDescriptor, withIndex, invalid, linked]) {
       rmSync(repo, { recursive: true, force: true });
     }
+  }
+});
+
+test('C7 pre-hub admission recovers descriptor-last abandon and refuses foreign or corrupt archives', () => {
+  const repo = preHubRoot('abandon-intent', validPreHubDescriptor());
+  const helper = new URL('../scripts/inception-state.mjs', import.meta.url).href;
+  try {
+    const crash = spawnSync(process.execPath, ['--input-type=module', '-e', `import {abandonRun} from ${JSON.stringify(helper)}; abandonRun(process.argv[1], {reason:'Stop', fault(p,d) {if(p === 'after-move' && d.name === 'run.json') process.exit(73);}});`, repo], { encoding: 'utf8' });
+    assert.equal(crash.status, 73, crash.stderr);
+    assert.deepEqual(collectViolations(repo), []);
+    assert.match(runValidator(repo).stdout, /abandon.*resume|resume.*abandon/);
+    const archive = join(repo, '.apex/inception/abandoned', PRE_HUB_RUN_ID);
+    writeFileSync(join(archive, 'foreign.md'), '# Do not consume');
+    assert.match(collectViolations(repo).map(v => v.msg).join('\n'), /foreign|unexpected/);
+    rmSync(join(archive, 'foreign.md'));
+    const done = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/inception-state.mjs', import.meta.url)), 'abandon', '--repo-root', repo, '--resume'], { encoding: 'utf8' });
+    assert.equal(done.status, 0, done.stdout + done.stderr);
+    assert.match(collectViolations(repo)[0].msg, /missing _INDEX/);
+    writeFileSync(join(archive, 'receipt.json'), '{}\n');
+    assert.match(collectViolations(repo).map(v => v.msg).join('\n'), /abandon|receipt/);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('pre-hub v2 next-step policy comes from the public helper without reading run evidence', () => {
+  const initial = createRunDescriptor({ runId: PRE_HUB_RUN_ID, harnessName: 'codex', git: { present: false, branch: null, commits: 'none' } });
+  assert.equal(initial.schema, 'steepy-inception-run/v2');
+  for (const changes of [{}, { status: 'blocked', blocks: [{ id: 'decision', reason: 'Need human choice', evidence: [] }] }]) {
+    const d = { ...initial, ...changes }; const repo = preHubRoot('v2-policy', serializeRunDescriptor(d));
+    try { assert.deepEqual(collectViolations(repo), []); const result = runValidator(repo); assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, d.status === 'blocked' ? /block resolve/ : /phase reconnaissance/); }
+    finally { rmSync(repo, { recursive: true, force: true }); }
   }
 });

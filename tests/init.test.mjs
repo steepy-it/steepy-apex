@@ -212,3 +212,52 @@ test('repair adds a missing surface without clobbering the existing _INDEX.md or
   assert.match(spec, /Auth spec/, 'local work spec preserved');
   assert.match(plan, /Auth plan/, 'local work plan preserved');
 });
+
+
+// C6: init adds a certificate around the existing interview/planner procedure.
+test('init prepares exact rendered governance after zero-conflict preview and before apply, then finishes before gates', () => {
+  const text = skill();
+  const prepare = 'node <engine-root>/scripts/inception-governance.mjs prepare --repo-root <repo-root> --input <governance-input-json>';
+  const apply = 'node <engine-root>/scripts/project-scaffold.mjs --hub <repo-root> --model <planner-model-json> --apply';
+  const finish = 'node <engine-root>/scripts/inception-governance.mjs finish --repo-root <repo-root>';
+  assert.ok(text.includes(prepare), 'document the actual prepare CLI');
+  assert.ok(text.indexOf('Continue until `conflicts` is empty') < text.indexOf(prepare));
+  assert.ok(text.indexOf(prepare) < text.indexOf(apply), 'prepare precedes any planner writes');
+  assert.ok(text.indexOf(apply) < text.indexOf(finish));
+  assert.ok(text.indexOf(finish) < text.lastIndexOf('validate-hub.mjs'));
+  const input = jsonBlockAfter(text, '#### Governance input shape');
+  assert.deepEqual(Object.keys(input), ['schema', 'runId', 'completion', 'projectModel', 'documents']);
+  assert.equal(input.schema, 'steepy-inception-governance-input/v1');
+  assert.deepEqual(Object.keys(input.projectModel), ['projectName', 'description', 'devCommands', 'surfaces', 'resolutions']);
+  assert.deepEqual(input.documents.map(d => d.path).sort(), ['.apex/_INDEX.md', '.apex/conventions.md', '.apex/glossary.md', '.apex/testing-and-checklist.md', '.apex/standards/web.md'].sort());
+  const flat = text.replace(/\s+/g, ' ');
+  assert.match(flat, /render.*before.*Step 3.*Step 4.*writes/i);
+  assert.match(flat, /exact retained.*bytes/i);
+  assert.match(flat, /\.apex\/work\/init\/.*governance-input\.json/);
+  assert.match(flat, /never.*inside.*completed run/i);
+});
+
+test('init gives canonical receipt recovery precedence and keeps ordinary repair available', () => {
+  const flat = skill().replace(/\s+/g, ' ');
+  assert.match(flat, /steepy-inception-run\/v2.*complete/);
+  assert.match(flat, /init-provenance\.pending\.json.*init-provenance\.json/);
+  assert.match(flat, /before.*verify-complete.*pending/i);
+  assert.match(flat, /same.*retained.*input.*prepare/i);
+  assert.match(flat, /existing hub documents.*create-only/i);
+  assert.match(flat, /ordinary.*repair.*not.*certified/i);
+  assert.match(flat, /Never exclude.*provider/i);
+  assert.match(flat, /verify-complete --repo-root <repo-root>/);
+});
+
+
+test('T11-R1 pending branch skips fresh work and applies a validated retained operation plan', () => {
+  const text = skill(); const flat = text.replace(/\s+/g, ' ');
+  assert.match(flat, /pending.*jump directly.*Pending certification recovery/i);
+  assert.match(flat, /Skip Steps 1.*2.*fresh.*preview/i);
+  assert.match(flat, /scaffold-plan\.json/);
+  assert.match(flat, /original zero-conflict plan.*before.*prepare/i);
+  assert.match(flat, /validateProjectScaffoldPlan/);
+  assert.match(flat, /applyProjectScaffold/);
+  assert.match(flat, /Do not.*project-scaffold\.mjs.*--model.*--apply.*recovery/i);
+  assert.doesNotMatch(flat, /Preview must precede apply on every run/);
+});

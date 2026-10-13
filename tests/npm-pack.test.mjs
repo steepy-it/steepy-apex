@@ -189,9 +189,18 @@ test('npm tarball includes the inception helper, its reached engine modules, and
   assert.ok(modules.includes('scripts/write-all.mjs') && modules.includes('scripts/sanitize.mjs'));
   assertPacked(modules, 'inception helper imports');
   assertPacked([
+    'scripts/inception-protocol.mjs',
+    'scripts/inception-snapshot.mjs',
+    'scripts/capture-inception-evidence.mjs',
+    'scripts/inception-governance.mjs',
     'skills/inception/SKILL.md',
     'skills/inception/research-prompt.md',
     'skills/inception/bootstrap-part-prompt.md',
     'skills/discovery/explore-inception-prompt.md',
+    'skills/discovery/SKILL.md',
+    'skills/init/SKILL.md',
+    'docs/inception.md',
+    'docs/inception-acceptance.md',
+    'docs/architecture.md',
   ], 'inception skill files');
 });

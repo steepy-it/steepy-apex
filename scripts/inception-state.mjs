@@ -1,7 +1,7 @@
 // Records and verifies inception run state under `.apex/inception/`. The helper never asks
 // questions, chooses a phase, approves, or runs project commands: the inception skill decides,
-// and this module only validates and records. It reads fixed paths only and never lists a
-// directory, so a stray file in the area can never change what it reports.
+// and this module only validates and records. Run evidence is read by exact references;
+// the separate snapshot module inventories application roots without listing local work areas.
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -13,6 +13,7 @@ import {
   mkdirSync,
   openSync,
   readSync,
+  readdirSync,
   realpathSync,
   renameSync,
   statSync,
@@ -25,6 +26,11 @@ import { parseArgs } from 'node:util';
 
 import { assertSafeLine, assertSafeRelPath } from './sanitize.mjs';
 import { writeAllSync } from './write-all.mjs';
+import { RUN_CHILDREN_V2, ABANDON_INTENT_SCHEMA_V2, ABANDON_SCHEMA_V2, ABANDON_RECEIPT_SCHEMA_V2, parseAbandonRecordV2, serializeAbandonRecordV2, RUN_SCHEMA_V2, createRunDescriptorV2, parseRunDescriptorV2, serializeRunDescriptorV2, validateId, validatePath, validateRef, preparePublication, publicationRef, publicationStagingDirectory, readPublicationFile, stagePublicationTargets, verifyPublicationTargets, parseStrictJson as parseV2Json, parseInceptionRecord, serializeInceptionRecord, parseVerificationContract, validateText, validateEnvironment, validateManualInput, CAPTURE_SCHEMA_V2, parseCaptureReceipt, serializeCaptureReceipt, publicationFileRef, renderVerificationReport } from './inception-protocol.mjs';
+import { observeApplication, applicationIdentity, applicationChanges, withApplicationSnapshotLease } from './inception-snapshot.mjs';
+import { withProjectScaffoldLock } from './project-scaffold.mjs';
+import { verifyGovernance as verifyCanonicalGovernance } from './inception-governance.mjs';
+export { RUN_SCHEMA_V2, createRunDescriptorV2 } from './inception-protocol.mjs';
 
 export const INCEPTION_AREA = '.apex/inception';
 export const INCEPTION_GITIGNORE = `${INCEPTION_AREA}/.gitignore`;
@@ -35,10 +41,7 @@ export const RESUME_NOTES_DIR = `${INCEPTION_AREA}/resume-notes`;
 export const ABANDONED_DIR = `${INCEPTION_AREA}/abandoned`;
 
 // Abandon order: `run.json` moves last, so a present descriptor always means an unfinished run.
-export const RUN_CHILDREN = Object.freeze([
-  'approvals', 'checkpoints', 'resume-notes', 'project', 'research', 'bootstrap', 'verification',
-  'effects.jsonl', 'run.json',
-]);
+export const RUN_CHILDREN = RUN_CHILDREN_V2;
 
 export const PHASES = Object.freeze([
   'reconnaissance', 'architecture', 'research', 'approval', 'bootstrap', 'verification', 'complete',
@@ -47,7 +50,9 @@ export const STATUSES = Object.freeze(['active', 'blocked', 'complete']);
 export const CAPABILITIES = Object.freeze(['shell', 'network', 'browser', 'subagents', 'question-tool', 'headless']);
 export const GIT_COMMIT_POLICIES = Object.freeze(['allowed', 'forbidden', 'none']);
 
-export const RUN_SCHEMA = 'steepy-inception-run/v1';
+export const RUN_SCHEMA_V1 = 'steepy-inception-run/v1';
+// Public creation is v2; v1 remains a read/archive format.
+export const RUN_SCHEMA = RUN_SCHEMA_V2;
 
 const RUN_ID_PATTERN = /^inc-\d{8}T\d{6}Z-[0-9a-f]{8}$/u;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/u;
@@ -215,7 +220,7 @@ function validateState(state, where) {
 
 function validateRunDescriptor(d) {
   expectKeys(d, RUN_KEYS, 'run descriptor');
-  if (d.schema !== RUN_SCHEMA) fail(`schema must be ${RUN_SCHEMA}`);
+  if (d.schema !== RUN_SCHEMA_V1) fail(`schema must be ${RUN_SCHEMA_V1}`);
   if (typeof d.runId !== 'string' || !RUN_ID_PATTERN.test(d.runId)) fail('runId is malformed');
   expectOneOf(d.phase, PHASES, 'phase');
   expectOneOf(d.status, STATUSES, 'status');
@@ -272,48 +277,28 @@ function validateRunDescriptor(d) {
 export function parseRunDescriptor(text) {
   if (typeof text !== 'string') fail('run descriptor must be text');
   const value = parseStrictJson(text, 'run descriptor');
+  if (value?.schema === RUN_SCHEMA_V2) return parseRunDescriptorV2(text);
+  if (value?.schema !== RUN_SCHEMA_V1) fail('run descriptor schema is unsupported');
   validateRunDescriptor(value);
   return deepFreeze(value);
 }
 
 export function serializeRunDescriptor(descriptor) {
+  if (descriptor?.schema === RUN_SCHEMA_V2) return serializeRunDescriptorV2(descriptor);
   return `${JSON.stringify(descriptor, null, 2)}\n`;
 }
 
 // `capabilities` lists the enabled capability names; every other capability is recorded false.
-export function createRunDescriptor({ runId, harnessName, capabilities = [], git }) {
-  const enabled = new Set(capabilities);
-  for (const name of enabled) {
-    if (!CAPABILITIES.includes(name)) fail(`unknown capability: ${JSON.stringify(name)}`);
-  }
-  return parseRunDescriptor(serializeRunDescriptor({
-    schema: RUN_SCHEMA,
-    runId,
-    phase: 'reconnaissance',
-    status: 'active',
-    harness: {
-      name: harnessName,
-      capabilities: Object.fromEntries(CAPABILITIES.map((name) => [name, enabled.has(name)])),
-    },
-    git: { present: git?.present, branch: git?.branch, commits: git?.commits },
-    nextRecord: 1,
-    approvalEntry: null,
-    approvals: [],
-    checkpoints: [],
-    resumeNotes: [],
-    finalCheckpoint: null,
-    verification: null,
-    history: [],
-  }));
+export function createRunDescriptor(options) {
+  return createRunDescriptorV2(options);
 }
 
 export function nextStepFor(descriptor) {
-  if (descriptor.status === 'complete') {
-    return 'run the init skill, then the discovery skill with the inception source';
-  }
-  if (descriptor.status === 'blocked') {
-    return 'resolve the block recorded in the latest resume note, then resume with the inception skill';
-  }
+  if (descriptor.schema === RUN_SCHEMA_V1) return 'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available';
+  if (descriptor.pending) return `publish resume --reservation ${descriptor.pending.id}; do not rerun the application operation`;
+  if (descriptor.status === 'complete') return 'verify-complete before running the init skill, then the discovery skill with the inception source';
+  if (descriptor.activeUnit !== null) return `observe unit ${descriptor.activeUnit}; unit finish, reconcile, or close-incomplete only after writer stop`;
+  if (descriptor.status === 'blocked' || descriptor.blocks.length) return 'resolve each named human block with block resolve and observe uncertain effects; transition --to active only when all blocks and effects are resolved';
   return `resume with the inception skill (phase ${descriptor.phase})`;
 }
 
@@ -521,11 +506,38 @@ export function classifyState({ hub, run, maturity }) {
 
 function classifyCommand(root, values) {
   const observed = observeState(root);
+  if (observed.run !== 'invalid' && observed.hub !== 'invalid') {
+    const abandoned = inspectAbandon(root);
+    if (abandoned?.intent.status === 'prepared') return { ok: true, fields: { row: 'resume-abandon', hub: observed.hub, run: 'abandoning', nextStep: 'resume abandon with --resume' } };
+  }
   const row = classifyState({ hub: observed.hub, run: observed.run, maturity: values.maturity });
   const fields = { row, hub: observed.hub, run: observed.run };
   if (observed.descriptor !== null && row !== 'invalid-state') fields.nextStep = nextStepFor(observed.descriptor);
   if (row === 'invalid-state') return { ok: false, fields, error: observed.error };
   return { ok: true, fields };
+}
+
+// Version inspection reads the descriptor only; it neither discovers nor opens its refs.
+const LEGACY_ACTIONS = Object.freeze(['classify', 'inspect', 'verify-approval', 'checkpoint verify', 'effect status', 'abandon']);
+// Inspect exposes the same legacy read/archive policy used by command admission.
+function inspectCommand(root) {
+  const descriptor = loadDescriptor(root, { allowV2: true });
+  const legacy = descriptor.schema === RUN_SCHEMA_V1;
+  const inputPaths = new Set([RUN_DESCRIPTOR_PATH]);
+  const collect = value => {
+    if (value === null || typeof value !== 'object') return;
+    if (typeof value.path === 'string' && Object.hasOwn(value, 'bytes') && Object.hasOwn(value, 'sha256')) inputPaths.add(value.path);
+    for (const child of Object.values(value)) collect(child);
+  };
+  if (legacy) {
+    for (const key of ['approvals', 'checkpoints', 'resumeNotes']) for (const path of descriptor[key]) inputPaths.add(path);
+  }
+  collect(descriptor);
+  return { ok: true, fields: {
+    format: descriptor.schema, legacy, runId: descriptor.runId, phase: descriptor.phase, status: descriptor.status,
+    allowedActions: legacy ? [...LEGACY_ACTIONS] : ['classify', 'inspect', 'resume-check', 'verify-approval', 'checkpoint verify', 'effect status', 'verify-complete', ...(descriptor.pending ? ['publish resume'] : descriptor.status === 'complete' ? ['resume-note', 'abandon'] : descriptor.activeUnit ? ['unit finish', 'unit reconcile', 'unit close-incomplete', 'effect intent', 'effect outcome', 'effect reconcile', 'block resolve'] : ['unit begin', 'block resolve', 'transition', 'approve', 'checkpoint create', 'verification begin', 'verification resume', 'verification status', 'verification attest', 'verification summarize', 'resume-note', 'abandon'])],
+    inputPaths: [...inputPaths], nextStep: nextStepFor(descriptor),
+  } };
 }
 
 // ---------------------------------------------------------------------------
@@ -602,10 +614,14 @@ function writeDescriptor(root, descriptor, replaceFile) {
   replaceFile(join(root, RUN_DESCRIPTOR_PATH), bytes);
 }
 
-function loadDescriptor(root) {
+function loadDescriptor(root, { allowV2 = false } = {}) {
   const observed = observeRun(root);
   if (observed.run === 'none') throw refuse(`no inception run: ${RUN_DESCRIPTOR_PATH} does not exist`);
   if (observed.run === 'invalid') throw refuse(observed.error);
+  // Legacy readers must not mistake v2 Ref objects for v1 path strings.
+  if (!allowV2 && observed.descriptor.schema === RUN_SCHEMA_V2) {
+    throw refuse('v2 operation is not yet supported by this legacy command');
+  }
   return observed.descriptor;
 }
 
@@ -646,7 +662,11 @@ function runIdFor(now, randomHex) {
 
 // The start command body. Every precondition is checked before the first write; the area
 // `.gitignore` is written before the descriptor so no run file is ever visible to Git.
-export function startRun(repoRoot, {
+export function startRun(repoRoot, options = {}) {
+  return withInceptionLease(repoRoot, options, startRunUnlocked);
+}
+
+function startRunUnlocked(repoRoot, {
   harnessName,
   capabilities = [],
   gitCommits,
@@ -654,7 +674,7 @@ export function startRun(repoRoot, {
   randomHex = randomBytes(4).toString('hex'),
   replaceFile = replaceFileAtomic,
   env = process.env,
-} = {}) {
+} = {}, preflight = false) {
   const root = resolveRepoRoot(repoRoot);
   if (typeof harnessName !== 'string' || !SLUG_PATTERN.test(harnessName)) {
     throw refuse('--harness must be a safe slug (lowercase letters, digits, dashes; at most 40 characters)');
@@ -671,6 +691,8 @@ export function startRun(repoRoot, {
   const areaExists = apexExists && realDirectory(root, INCEPTION_AREA);
   let gitignoreExists = false;
   if (areaExists) {
+    const abandoned = inspectAbandon(root);
+    if (abandoned?.intent.status === 'prepared') throw refuse('pending abandon intent: resume abandon before starting a new run');
     if (lstatOrNull(join(root, RUN_DESCRIPTOR_PATH)) !== null) {
       throw refuse(`${RUN_DESCRIPTOR_PATH} exists: an inception run descriptor is already present`);
     }
@@ -693,6 +715,7 @@ export function startRun(repoRoot, {
     throw refuse(`cannot create the run descriptor: ${message(error)}`);
   }
 
+  if (preflight) return;
   if (!apexExists) createDirectory(root, '.apex');
   if (!areaExists) createDirectory(root, INCEPTION_AREA);
   if (!gitignoreExists) {
@@ -782,26 +805,13 @@ function applyTransition(descriptor, { to, reason, gitCommits, checkpoint, verif
   };
 }
 
-function transitionRun(repoRoot, {
-  to,
-  reason,
-  gitCommits,
-  checkpoint,
-  verification,
-  now = new Date(),
-  replaceFile = replaceFileAtomic,
+export function transitionRun(repoRoot, {
+  to, reason, gitCommits, checkpoint, verification, cycle, now = new Date(), reservation, expectedRevision, fault,
 } = {}) {
-  const root = resolveRepoRoot(repoRoot);
+  const root = resolveRepoRoot(repoRoot); v2Descriptor(root);
   if (!TRANSITION_TARGETS.includes(to)) throw usage(`--to must be one of ${TRANSITION_TARGETS.join(' | ')}`);
   assertText(reason, '--reason');
-  const descriptor = loadDescriptor(root);
-  const gates = {
-    approval: () => assertApprovalGate(root, descriptor),
-    complete: (bindings) => completeGate(root, descriptor, bindings, process.env),
-  };
-  const next = applyTransition(descriptor, { to, reason, gitCommits, checkpoint, verification, now }, gates);
-  writeDescriptor(root, next, replaceFile);
-  return { phase: next.phase, status: next.status };
+  return transitionV2(root, { to, reason, gitCommits, checkpoint, verification, cycle, now, reservation, expectedRevision, fault });
 }
 
 function transitionCommand(root, values) {
@@ -811,6 +821,7 @@ function transitionCommand(root, values) {
     gitCommits: values['git-commits'],
     checkpoint: values.checkpoint,
     verification: values.verification,
+    cycle: values.cycle,
   });
   return { ok: true, fields: result };
 }
@@ -857,40 +868,17 @@ function renderResumeNote({ number, descriptor, next, needs, note }) {
   ].join('\n');
 }
 
-// Writes one numbered record of `kind` (approvals, checkpoints, resume notes) and binds it (HC4):
 // reserve the number first, create the record exclusively, then bind it. A crash leaves only a gap
 // or an unbound record, and no record is ever opened for writing again. Every refusal happens
 // before the first write.
-function writeRecord(root, descriptor, kind, render, replaceFile) {
-  const number = descriptor.nextRecord;
-  const path = recordPath(kind, number);
-  const directory = RECORD_KINDS[kind].directory.slice(0, -1);
-  const directoryExists = realDirectory(root, directory);
-  if (directoryExists && lstatOrNull(join(root, path)) !== null) throw refuse(`${path} already exists`);
-  const bytes = render(number);
 
-  const reserved = { ...descriptor, nextRecord: number + 1 };
-  writeDescriptor(root, reserved, replaceFile);
-  if (!directoryExists) createDirectory(root, directory);
-  createFileExclusive(join(root, path), bytes);
-  fsyncDirectory(join(root, directory));
-  writeDescriptor(root, { ...reserved, [kind]: [...descriptor[kind], path] }, replaceFile);
-  return path;
-}
 
-function writeResumeNote(repoRoot, { next, needs = [], note, replaceFile = replaceFileAtomic } = {}) {
-  const root = resolveRepoRoot(repoRoot);
+export function writeResumeNote(repoRoot, { next, needs = [], note, reservation, expectedRevision, unitId, fault } = {}) {
+  const root = resolveRepoRoot(repoRoot); v2Descriptor(root);
   assertText(next, '--next');
   if (note !== undefined) assertText(note, '--note');
   for (const need of needs) assertAreaPath(need, '--need');
-  const descriptor = loadDescriptor(root);
-  for (const need of needs) assertAreaFile(root, need);
-  const notePath = writeRecord(
-    root, descriptor, 'resumeNotes',
-    (number) => renderResumeNote({ number, descriptor, next, needs, note }),
-    replaceFile,
-  );
-  return { note: notePath };
+  return resumeNoteV2(root, { next, needs, note, reservation, expectedRevision, unitId, fault });
 }
 
 function resumeNoteCommand(root, values) {
@@ -984,38 +972,18 @@ function describeDivergences(divergences) {
 }
 
 // The helper stores the statement it is given; a record is not proof that a human approved.
-function approveRun(repoRoot, { statement, documents = [], now = new Date(), replaceFile = replaceFileAtomic } = {}) {
-  const root = resolveRepoRoot(repoRoot);
-  if (!isStatement(statement)) {
-    throw refuse(`--statement must be 1..${MAX_STATEMENT_CHARACTERS} characters with no control character other than newline and tab`);
-  }
-  for (const path of documents) assertAreaPath(path, '--document', PROJECT_PREFIX);
-  const paths = [...documents].sort();
-  paths.forEach((path, index) => {
-    if (index > 0 && paths[index - 1] === path) throw refuse(`--document names ${path} more than once`);
-  });
-  if (!paths.includes(DECISION_REGISTER_PATH)) throw refuse(`--document must include ${DECISION_REGISTER_PATH}`);
-  const descriptor = loadDescriptor(root);
-  if (descriptor.phase !== 'approval' || descriptor.status !== 'active') {
-    throw refuse(`approve needs phase approval with status active; the run is in phase ${descriptor.phase} with status ${descriptor.status}`);
-  }
-  const digests = paths.map((path) => digestFile(root, path, { singleLink: true }));
-  const approval = writeRecord(root, descriptor, 'approvals', (record) => `${JSON.stringify({
-    schema: APPROVAL_SCHEMA,
-    runId: descriptor.runId,
-    record,
-    at: now.toISOString(),
-    statement,
-    documents: digests,
-  }, null, 2)}\n`, replaceFile);
-  return { approval, documents: digests };
+export function approveRun(repoRoot, { statement, documents = [], contract, reservation, expectedRevision, fault } = {}) {
+  const root = resolveRepoRoot(repoRoot); v2Descriptor(root);
+  return approveRunV2(root, { statement, documents, contract, reservation, expectedRevision, fault });
 }
 
 function approveCommand(root, values) {
-  return { ok: true, fields: approveRun(root, { statement: values.statement, documents: values.document }) };
+  if (loadDescriptor(root, { allowV2: true }).schema === RUN_SCHEMA_V2 && values.contract === undefined) throw usage('--contract is required for v2 approval');
+  return { ok: true, fields: approveRun(root, { statement: values.statement, documents: values.document, contract: values.contract }) };
 }
 
 function verifyApprovalCommand(root, values) {
+  if (loadDescriptor(root, { allowV2: true }).schema === RUN_SCHEMA_V2) return { ok: true, fields: verifyApprovalV2(root, { approval: values.approval }) };
   const descriptor = loadDescriptor(root);
   const approval = selectBoundRecord(descriptor, 'approvals', values.approval, '--approval');
   const { record, divergences } = verifyApprovalRecord(root, descriptor, approval);
@@ -1026,16 +994,7 @@ function verifyApprovalCommand(root, values) {
 }
 
 // HC9 gate for approval -> bootstrap: a new approval since entering approval, and it is clean.
-function assertApprovalGate(root, descriptor) {
-  if (descriptor.approvalEntry === null || descriptor.approvals.length <= descriptor.approvalEntry) {
-    throw refuse('approval -> bootstrap needs a new approval recorded since the run entered approval');
-  }
-  const latest = descriptor.approvals.at(-1);
-  const { divergences } = verifyApprovalRecord(root, descriptor, latest);
-  if (divergences.length > 0) {
-    throw refuse(`approval -> bootstrap refused: the latest approval ${latest} diverges: ${describeDivergences(divergences)}`);
-  }
-}
+
 
 // ---------------------------------------------------------------------------
 // effect intent, outcome, status (HC13)
@@ -1116,27 +1075,7 @@ function readEffectLog(root) {
 
 // Appends one line to the log that was just parsed: an absent log is created exclusively, an
 // existing one is opened append-only, never through a symlink, and must still be the parsed file.
-function appendEffect(root, log, entry) {
-  const line = `${JSON.stringify(entry)}\n`;
-  parseEffectLine(line.slice(0, -1));
-  const create = log.exists ? 0 : constants.O_CREAT | constants.O_EXCL;
-  let fd;
-  try {
-    fd = openSync(join(root, EFFECT_LOG_PATH), constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | create, 0o644);
-  } catch (error) {
-    if (['ELOOP', 'EEXIST', 'ENOENT'].includes(error.code)) throw refuse(`${EFFECT_LOG_PATH} changed before the append`);
-    throw error;
-  }
-  try {
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.nlink !== 1 || stat.size !== log.size) throw refuse(`${EFFECT_LOG_PATH} changed before the append`);
-    writeAllSync(fd, line);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  if (!log.exists) fsyncDirectory(join(root, INCEPTION_AREA));
-}
+
 
 function effectStatus(log) {
   const effects = [...log.effects.values()].map(({ id, kind, result }) => (
@@ -1145,71 +1084,26 @@ function effectStatus(log) {
   return { effects, uncertain: effects.filter((effect) => effect.state === 'uncertain').length };
 }
 
-function assertActive(descriptor, command) {
-  if (descriptor.status !== 'active') {
-    throw refuse(`${command} needs status active; the run is ${descriptor.status}`);
-  }
-}
 
-function assertEffectId(id) {
-  if (!isEffectId(id)) throw refuse(`--id must match ${EFFECT_ID_PATTERN.source}: ${JSON.stringify(id)}`);
-}
 
-function effectIntentRun(repoRoot, { id, kind, summary, authorization, now = new Date() } = {}) {
-  const root = resolveRepoRoot(repoRoot);
-  assertEffectId(id);
-  if (!EFFECT_KINDS.includes(kind)) throw usage(`--kind must be one of ${EFFECT_KINDS.join(' | ')}`);
-  assertText(summary, '--summary');
-  if (authorization !== undefined) assertText(authorization, '--authorization');
-  if (AUTHORIZED_KINDS.includes(kind) && authorization === undefined) {
-    throw refuse(`--authorization is required for an effect of kind ${kind}`);
-  }
-  const descriptor = loadDescriptor(root);
-  assertActive(descriptor, 'effect intent');
-  const log = readEffectLog(root);
-  if (log.effects.has(id)) throw refuse(`effect ${id} is already in the effect log`);
-  const effect = {
-    schema: EFFECT_SCHEMA,
-    type: 'intent',
-    id,
-    kind,
-    summary,
-    authorization: authorization ?? null,
-    phase: descriptor.phase,
-    at: now.toISOString(),
-  };
-  appendEffect(root, log, effect);
-  return { effect };
-}
 
-function effectOutcomeRun(repoRoot, { id, result, observed, now = new Date() } = {}) {
-  const root = resolveRepoRoot(repoRoot);
-  assertEffectId(id);
-  if (!EFFECT_RESULTS.includes(result)) throw usage(`--result must be one of ${EFFECT_RESULTS.join(' | ')}`);
-  assertText(observed, '--observed');
-  const descriptor = loadDescriptor(root);
-  assertActive(descriptor, 'effect outcome');
-  const log = readEffectLog(root);
-  const known = log.effects.get(id);
-  if (known === undefined) throw refuse(`effect ${id} has no intent in the effect log`);
-  if (known.result !== null) throw refuse(`effect ${id} already has an outcome`);
-  const effect = { schema: EFFECT_SCHEMA, type: 'outcome', id, result, observed, phase: descriptor.phase, at: now.toISOString() };
-  appendEffect(root, log, effect);
-  return { effect };
-}
+
+
+
+
 
 function effectIntentCommand(root, values) {
-  return {
-    ok: true,
-    fields: effectIntentRun(root, { id: values.id, kind: values.kind, summary: values.summary, authorization: values.authorization }),
-  };
+  if (!values.input) throw refuse('v2 effect requires --input; legacy effect flags are unsupported');
+  return { ok: true, fields: recordEffectIntent(root, { id: values.id, input: v2Input(root, values.input) }) };
 }
 
 function effectOutcomeCommand(root, values) {
-  return { ok: true, fields: effectOutcomeRun(root, { id: values.id, result: values.result, observed: values.observed }) };
+  if (!values.input) throw refuse('v2 effect requires --input; legacy effect flags are unsupported');
+  return { ok: true, fields: recordEffectOutcome(root, { id: values.id, input: v2Input(root, values.input) }) };
 }
 
 function effectStatusCommand(root) {
+  if (loadDescriptor(root, { allowV2: true }).schema === RUN_SCHEMA_V2) return { ok: true, fields: effectStatusV2(root) };
   loadDescriptor(root);
   return { ok: true, fields: effectStatus(readEffectLog(root)) };
 }
@@ -1246,15 +1140,11 @@ function isApplicationPath(value) {
   return applicationPathProblem(value) === null;
 }
 
-function assertApplicationPath(value, option) {
-  const problem = applicationPathProblem(value);
-  if (problem !== null) throw refuse(`${option} ${problem}: ${JSON.stringify(value)}`);
-  return value;
-}
+
 
 // Branch, HEAD, and sorted porcelain status (HC10), or `{ present: false }` without Git.
 // `--no-optional-locks` keeps `git status` from refreshing the index, so verifying never writes.
-function observeGitState(root, env) {
+function observeGitState(root, env, lease) {
   const { present, branch } = observeGit(root, env);
   if (!present) return { present: false };
   const head = runGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD'], env);
@@ -1266,7 +1156,8 @@ function observeGitState(root, env) {
     present: true,
     branch,
     head: head.status === 0 ? head.stdout.trim() : null,
-    status: status.stdout.split('\0').filter((entry) => entry !== '').sort(),
+    status: status.stdout.split('\0').filter((entry) => entry !== ''
+      && !(ACTIVE_INCEPTION_LEASES.get(lease) === root && entry === '?? .steepy-project-scaffold.lock/owner.json')).sort(),
   };
 }
 
@@ -1302,11 +1193,7 @@ function parseCheckpointRecord(text, { runId, number }) {
 
 // The `--files-from` list: an area file, strict UTF-8, one application path per line, blank
 // lines ignored.
-function readFileList(root, relative) {
-  assertAreaFile(root, relative);
-  const lines = decodeAreaText(readAreaFile(root, relative), relative).split('\n');
-  return lines.filter((line) => line.trim() !== '').map((line) => assertApplicationPath(line, `--files-from ${relative} line`));
-}
+
 
 function sameStrings(left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
@@ -1344,48 +1231,16 @@ function verifyCheckpointRecord(root, descriptor, path, env) {
   return { record, divergences: checkpointDivergences(root, record, env) };
 }
 
-function checkpointCreateRun(repoRoot, {
-  label,
-  files = [],
-  filesFrom,
-  now = new Date(),
-  replaceFile = replaceFileAtomic,
-  env = process.env,
-} = {}) {
-  const root = resolveRepoRoot(repoRoot);
-  assertText(label, '--label');
-  for (const path of files) assertApplicationPath(path, '--file');
-  if (filesFrom !== undefined) assertAreaPath(filesFrom, '--files-from');
-  const descriptor = loadDescriptor(root);
-  assertActive(descriptor, 'checkpoint create');
-  const paths = [...files, ...(filesFrom === undefined ? [] : readFileList(root, filesFrom))].sort();
-  if (paths.length === 0) throw refuse('checkpoint create needs at least one file (--file or --files-from)');
-  paths.forEach((path, index) => {
-    if (index > 0 && paths[index - 1] === path) throw refuse(`checkpoint create names ${path} more than once`);
-  });
-  const digests = paths.map((path) => digestFile(root, path, { singleLink: false }));
-  const git = observeGitState(root, env);
-  const checkpoint = writeRecord(root, descriptor, 'checkpoints', (record) => `${JSON.stringify({
-    schema: CHECKPOINT_SCHEMA,
-    runId: descriptor.runId,
-    record,
-    at: now.toISOString(),
-    label,
-    phase: descriptor.phase,
-    files: digests,
-    git,
-  }, null, 2)}\n`, replaceFile);
-  return { checkpoint, files: digests };
-}
+
+
+
 
 function checkpointCreateCommand(root, values) {
-  return {
-    ok: true,
-    fields: checkpointCreateRun(root, { label: values.label, files: values.file, filesFrom: values['files-from'] }),
-  };
+  return { ok: true, fields: createCheckpoint(root, { label: values.label, files: values.file, filesFrom: values['files-from'] }) };
 }
 
 function checkpointVerifyCommand(root, values) {
+  if (loadDescriptor(root, { allowV2: true }).schema === RUN_SCHEMA_V2) { const result = verifyCheckpointV2(root, values.checkpoint); return { ok: result.ok, fields: result, error: result.ok ? undefined : 'checkpoint drift' }; }
   const descriptor = loadDescriptor(root);
   const checkpoint = selectBoundRecord(descriptor, 'checkpoints', values.checkpoint, '--checkpoint');
   const { divergences } = verifyCheckpointRecord(root, descriptor, checkpoint, process.env);
@@ -1398,95 +1253,1424 @@ function checkpointVerifyCommand(root, values) {
 // HC9 gate for verification -> complete. `--checkpoint` is the last recorded checkpoint and
 // verifies clean, `--verification` is an ordinary single-link file under `verification/`, and no
 // effect is uncertain. Returns the two descriptor bindings; reads only.
-function completeGate(root, descriptor, { checkpoint, verification }, env) {
-  if (checkpoint === undefined || verification === undefined) {
-    throw refuse('verification -> complete needs --checkpoint and --verification');
-  }
-  assertAreaPath(checkpoint, '--checkpoint', RECORD_KINDS.checkpoints.directory);
-  const last = descriptor.checkpoints.at(-1);
-  if (checkpoint !== last) throw refuse(`--checkpoint must be the last recorded checkpoint (${last ?? 'none is recorded'})`);
-  const { divergences } = verifyCheckpointRecord(root, descriptor, checkpoint, env);
-  if (divergences.length > 0) {
-    throw refuse(`verification -> complete refused: ${checkpoint} diverges: ${describeDivergences(divergences)}`);
-  }
-  assertAreaPath(verification, '--verification', VERIFICATION_PREFIX);
-  const bound = digestFile(root, verification, { singleLink: true });
-  const { uncertain } = effectStatus(readEffectLog(root));
-  if (uncertain > 0) throw refuse(`verification -> complete refused: ${uncertain} uncertain effect(s) in the effect log`);
-  return { finalCheckpoint: checkpoint, verification: bound };
-}
+
 
 // ---------------------------------------------------------------------------
-// abandon (HC15)
+// abandon (C7)
 // ---------------------------------------------------------------------------
 
-export const ABANDON_SCHEMA = 'steepy-inception-abandon/v1';
-const ABANDON_KEYS = Object.freeze(['schema', 'runId', 'at', 'reason', 'phase', 'status']);
+export const ABANDON_SCHEMA = ABANDON_SCHEMA_V2;
+export const ABANDON_INTENT_PATH = `${INCEPTION_AREA}/abandon-intent.json`;
 
-function parseAbandonRecord(text) {
-  const value = parseStrictJson(text, 'abandon.json');
-  expectKeys(value, ABANDON_KEYS, 'abandon.json');
-  if (value.schema !== ABANDON_SCHEMA) fail(`abandon.json schema must be ${ABANDON_SCHEMA}`);
-  if (typeof value.runId !== 'string' || !RUN_ID_PATTERN.test(value.runId)) fail('abandon.json runId is malformed');
-  if (!isTimestamp(value.at)) fail('abandon.json at must be an ISO timestamp');
-  if (!isSafeText(value.reason)) fail('abandon.json reason must be single-line text');
-  expectOneOf(value.phase, PHASES, 'abandon.json phase');
-  expectOneOf(value.status, STATUSES, 'abandon.json status');
-  return value;
+function archiveEntry(root, path) {
+  validatePath(path);
+  const parts = path.split('/');
+  for (let i = 1; i < parts.length; i++) {
+    if (!realDirectory(root, parts.slice(0, i).join('/'))) return null;
+  }
+  const stat = lstatOrNull(join(root, path));
+  if (!stat) return null;
+  if ((!stat.isFile() && !stat.isDirectory()) || (stat.isFile() && stat.nlink !== 1)) throw refuse(`${path}: must be an ordinary single-link file or real directory`);
+  if (realpathSync(join(root, path)) !== join(root, path)) throw refuse(`${path}: physical alias is forbidden`);
+  return { stat: lstatSync(join(root, path), { bigint: true }), physicalPath: join(root, path) };
+}
+const physicalIdentity = entry => ({ device: String(entry.stat.dev), inode: String(entry.stat.ino) });
+function assertArchiveIdentity(entry, child, path) {
+  if (!entry || !sameValue(physicalIdentity(entry), { device: child.device, inode: child.inode })
+    || entry.stat.isDirectory() !== (child.kind === 'directory')) throw refuse(`${path}: archive child identity differs`);
+}
+function archiveRecordBytes(intent, identity) {
+  const prepared = { ...intent, status: 'prepared' };
+  const bytes = serializeAbandonRecordV2(prepared);
+  const archive = `${INCEPTION_AREA}/${intent.archive}`;
+  return {
+    intent: bytes,
+    abandon: identity ? serializeAbandonRecordV2({ schema: ABANDON_SCHEMA_V2, id: intent.id, runId: intent.runId,
+      at: intent.at, reason: intent.reason, descriptor: intent.descriptor,
+      intent: publicationRef(`${archive}/intent.json`, bytes), archiveIdentity: identity, children: intent.children.map(c => c.name) }) : null,
+  };
+}
+function validateArchiveReceipt(bytes, intent) {
+  const receipt = parseAbandonRecordV2(bytes);
+  const expected = { schema: ABANDON_RECEIPT_SCHEMA_V2, id: intent.id, runId: intent.runId,
+    intentSha256: publicationRef('intent.json', archiveRecordBytes(intent).intent).sha256,
+    descriptor: intent.descriptor, archive: intent.archive, completedAt: receipt.completedAt };
+  if (!sameValue(receipt, expected) || receipt.completedAt < intent.at
+    || !Buffer.from(serializeAbandonRecordV2(receipt)).equals(bytes)) throw refuse('abandon receipt does not match the prepared intent');
+  return receipt;
 }
 
-// Moves every present run child into `abandoned/<runId>/`, descriptor last. Nothing is deleted
-// and the descriptor is never rewritten. An archive that already holds this run's record is an
-// interrupted abandon and resumes.
-function abandonRun(repoRoot, { reason, now = new Date() } = {}) {
+// Reads only the canonical pointer and its exact record/child paths. Directory
+// bodies are opaque: only the immediate archive names are inspected for conflicts.
+// The linter supplies its bounded, physically bound reader at this same boundary.
+export function inspectAbandon(repoRoot, { readFile, inspectEntry } = {}) {
   const root = resolveRepoRoot(repoRoot);
-  assertText(reason, '--reason');
-  const descriptor = loadDescriptor(root);
-  const archive = `${ABANDONED_DIR}/${descriptor.runId}`;
-  const abandonedExists = realDirectory(root, ABANDONED_DIR);
-  const archiveExists = abandonedExists && realDirectory(root, archive);
-  if (archiveExists) {
-    const recordPath = `${archive}/abandon.json`;
-    if (lstatOrNull(join(root, recordPath)) === null) throw refuse(`${archive} exists without abandon.json`);
-    let record;
-    try {
-      record = parseAbandonRecord(decodeAreaText(readAreaFile(root, recordPath), recordPath));
-    } catch (error) {
-      throw refuse(`${recordPath} is invalid: ${message(error)}`);
-    }
-    if (record.runId !== descriptor.runId) throw refuse(`${recordPath} belongs to runId ${record.runId}`);
+  const read = readFile ?? (path => readPublicationFile(root, path, { missing: true }));
+  const entry = inspectEntry ?? (path => archiveEntry(root, path));
+  const raw = read(ABANDON_INTENT_PATH);
+  if (raw === null) return null;
+  const intent = parseAbandonRecordV2(raw);
+  if (intent.schema !== ABANDON_INTENT_SCHEMA_V2 || !Buffer.from(serializeAbandonRecordV2(intent)).equals(raw)) throw refuse('abandon-intent.json must contain a canonical abandon intent');
+  const archive = `${INCEPTION_AREA}/${intent.archive}`;
+  const directory = entry(archive);
+  if (directory && !directory.stat.isDirectory()) throw refuse(`${archive}: not a real directory`);
+  const expected = archiveRecordBytes(intent, directory ? physicalIdentity(directory) : null);
+  const copy = read(`${archive}/intent.json`);
+  const record = read(`${archive}/abandon.json`);
+  const receipt = read(`${archive}/receipt.json`);
+  const receiptStage = `${archive}/receipt.json.${intent.id}.staging`;
+  const receiptReservation = read(`${receiptStage}/reservation.json`);
+  if (copy !== null && !copy.equals(Buffer.from(expected.intent))) throw refuse('archive intent.json differs from prepared intent');
+  if (record !== null && (copy === null || !record.equals(Buffer.from(expected.abandon)))) throw refuse('archive abandon.json identity or bytes differ');
+  if (receiptReservation !== null) {
+    if (record === null) throw refuse('receipt reservation precedes abandon.json');
+    validateArchiveReceipt(receiptReservation, intent);
   }
-  const moves = [];
-  for (const child of RUN_CHILDREN) {
-    const source = `${INCEPTION_AREA}/${child}`;
-    const target = `${archive}/${child}`;
-    if (lstatOrNull(join(root, source)) === null) continue;
-    if (archiveExists && lstatOrNull(join(root, target)) !== null) {
-      throw refuse(`ambiguous abandon: both ${source} and ${target} exist`);
+  if (receipt !== null && (receiptReservation === null || !receipt.equals(receiptReservation))) throw refuse('archive receipt.json differs from its reservation');
+  if (directory) {
+    const allowed = new Set(['intent.json', `intent.json.${intent.id}.staging`]);
+    if (copy !== null) { allowed.add('abandon.json'); allowed.add(`abandon.json.${intent.id}.staging`); }
+    if (record !== null) {
+      for (const child of intent.children) allowed.add(child.name);
+      allowed.add('receipt.json'); allowed.add(`receipt.json.${intent.id}.staging`);
     }
-    moves.push([source, target]);
+    for (const name of readdirSync(directory.physicalPath)) {
+      if (!allowed.has(name)) throw refuse(`${archive}/${name}: unexpected foreign archive content`);
+      if (name.endsWith('.staging') && !entry(`${archive}/${name}`)?.stat.isDirectory()) throw refuse(`${name}: staging must be a real directory`);
+    }
   }
+  let gap = false;
+  let allMoved = true;
+  for (const child of intent.children) {
+    const source = `${INCEPTION_AREA}/${child.name}`; const target = `${archive}/${child.name}`;
+    // A completed archive remains immutable while an explicitly started new run
+    // may legitimately own canonical active paths again.
+    const from = intent.status === 'complete' ? null : entry(source);
+    const to = entry(target);
+    if (from && to) throw refuse(`${child.name}: ambiguous abandon, both source and destination exist`);
+    if (!from && !to) throw refuse(`${child.name}: ambiguous abandon, neither source nor destination exists`);
+    if (to && (gap || record === null)) throw refuse(`${child.name}: moved children must be an ordered prefix after abandon.json`);
+    if (from) { gap = true; allMoved = false; }
+    assertArchiveIdentity(to ?? from, child, to ? target : source);
+    if (child.name === 'run.json') {
+      const bytes = read(to ? target : source);
+      if (bytes === null || !sameValue(publicationRef(intent.descriptor.path, bytes), intent.descriptor)) throw refuse('abandon descriptor digest differs');
+      const descriptor = parseRunDescriptor(decodeAreaText(bytes, target));
+      if (descriptor.runId !== intent.runId) throw refuse('abandon descriptor runId differs');
+    }
+  }
+  if (intent.status === 'prepared') {
+    for (const name of RUN_CHILDREN) if (!intent.children.some(c => c.name === name) && entry(`${INCEPTION_AREA}/${name}`)) throw refuse(`${name}: foreign active child appeared after abandon intent`);
+  }
+  if ((receiptReservation !== null || receipt !== null) && !allMoved) throw refuse('receipt precedes completed child moves');
+  if (intent.status === 'complete' && receipt === null) throw refuse('complete abandon intent has no receipt');
+  return { intent, archive, allMoved, receipt, receiptReservation };
+}
 
-  if (!archiveExists) {
-    if (!abandonedExists) createDirectory(root, ABANDONED_DIR);
-    createDirectory(root, archive);
-    createFileExclusive(join(root, archive, 'abandon.json'), `${JSON.stringify({
-      schema: ABANDON_SCHEMA,
-      runId: descriptor.runId,
-      at: now.toISOString(),
-      reason,
-      phase: descriptor.phase,
-      status: descriptor.status,
-    }, null, 2)}\n`);
+export function abandonRun(repoRoot, options = {}) {
+  if (options.resume !== undefined && typeof options.resume !== 'boolean') throw usage('--resume must be boolean');
+  if ((options.resume === true) === (options.reason !== undefined)) throw usage('abandon requires exactly one of --reason or --resume');
+  if (options.reason !== undefined) validateText(options.reason, '--reason');
+  if (options.fault !== undefined && typeof options.fault !== 'function') throw refuse('fault must be a synchronous API hook');
+  return withInceptionLease(repoRoot, options, abandonRunUnlocked);
+}
+function abandonRunUnlocked(repoRoot, { reason, resume = false, now = new Date(), fault } = {}, preflight = false) {
+  const root = resolveRepoRoot(repoRoot);
+  let observed = inspectAbandon(root);
+  let intent;
+  if (resume) {
+    if (!observed) throw refuse('no canonical abandon intent to resume');
+    intent = observed.intent;
+    if (intent.status === 'complete') return { archive: observed.archive };
+  } else {
+    if (observed?.intent.status === 'prepared') throw refuse('pending abandon intent: use --resume');
+    const descriptor = loadDescriptor(root, { allowV2: true });
+    if (descriptor.schema === RUN_SCHEMA_V2 && descriptor.activeUnit !== null) throw refuse(`activeUnit ${descriptor.activeUnit} excludes the abandon writer; close or reconcile that unit first`);
+    const archive = `${ABANDONED_DIR}/${descriptor.runId}`;
+    if (archiveEntry(root, archive)) throw refuse(`${archive} exists without this operation intent`);
+    const children = RUN_CHILDREN.flatMap(name => {
+      const found = archiveEntry(root, `${INCEPTION_AREA}/${name}`);
+      if (!found) return [];
+      const kind = name.includes('.') ? 'file' : 'directory';
+      if (found.stat.isDirectory() !== (kind === 'directory')) throw refuse(`${name}: wrong run child kind`);
+      return [{ name, kind, ...physicalIdentity(found) }];
+    });
+    intent = { schema: ABANDON_INTENT_SCHEMA_V2, id: `abandon-${randomBytes(16).toString('hex')}`, runId: descriptor.runId,
+      at: now.toISOString(), reason,
+      descriptor: publicationRef(`${archive}/run.json`, readPublicationFile(root, RUN_DESCRIPTOR_PATH)),
+      archive: `abandoned/${descriptor.runId}`, children, status: 'prepared' };
+    serializeAbandonRecordV2(intent);
   }
-  for (const [source, target] of moves) renameSync(join(root, source), join(root, target));
-  fsyncDirectory(join(root, archive));
-  fsyncDirectory(join(root, INCEPTION_AREA));
+  if (preflight) return;
+  if (!resume) {
+    fault?.('before-intent');
+    replaceFileAtomic(join(root, ABANDON_INTENT_PATH), serializeAbandonRecordV2(intent));
+    fault?.('after-intent');
+  }
+  const archive = `${INCEPTION_AREA}/${intent.archive}`;
+  const verify = () => {
+    const state = inspectAbandon(root);
+    if (!state || !sameValue(state.intent, intent)) throw refuse('abandon intent changed');
+    return state;
+  };
+  verify();
+  if (!realDirectory(root, ABANDONED_DIR)) createDirectory(root, ABANDONED_DIR);
+  if (!realDirectory(root, archive)) {
+    fault?.('before-mkdir');
+    createDirectory(root, archive);
+    fault?.('after-mkdir');
+  }
+  const bytes = archiveRecordBytes(intent, physicalIdentity(archiveEntry(root, archive)));
+  const publish = (name, content) => {
+    verify();
+    const path = `${archive}/${name}`;
+    stagePublicationTargets(root, { id: intent.id, targets: [{ ...publicationRef(path, content), contentBase64: Buffer.from(content).toString('base64') }] }, { fault, archiveIntent: intent });
+  };
+  publish('intent.json', bytes.intent);
+  publish('abandon.json', bytes.abandon);
+  for (const child of intent.children) {
+    verify();
+    const source = `${INCEPTION_AREA}/${child.name}`; const target = `${archive}/${child.name}`;
+    if (!archiveEntry(root, source)) continue;
+    fault?.('before-move', { name: child.name });
+    verify(); // Rebind identity immediately before each rename.
+    renameSync(join(root, source), join(root, target));
+    fsyncDirectory(join(root, archive)); fsyncDirectory(join(root, INCEPTION_AREA));
+    fault?.('after-move', { name: child.name });
+  }
+  observed = verify();
+  fault?.('before-receipt');
+  // completedAt is rendered once, after all moves. Its durable token-bound
+  // reservation retains exact bytes across partial staging generations/retries.
+  let receiptBytes = observed.receiptReservation;
+  if (receiptBytes === null) {
+    receiptBytes = Buffer.from(serializeAbandonRecordV2({ schema: ABANDON_RECEIPT_SCHEMA_V2, id: intent.id, runId: intent.runId,
+      intentSha256: publicationRef(`${archive}/intent.json`, bytes.intent).sha256, descriptor: intent.descriptor,
+      archive: intent.archive, completedAt: new Date().toISOString() }));
+    const stage = publicationStagingDirectory(`${archive}/receipt.json`, intent.id, intent);
+    if (!realDirectory(root, stage)) createDirectory(root, stage);
+    fault?.('before-receipt-reservation');
+    replaceFileAtomic(join(root, stage, 'reservation.json'), receiptBytes);
+    fault?.('after-receipt-reservation');
+  }
+  publish('receipt.json', receiptBytes);
+  fault?.('after-receipt');
+  verify();
+  fault?.('before-complete');
+  replaceFileAtomic(join(root, ABANDON_INTENT_PATH), serializeAbandonRecordV2({ ...intent, status: 'complete' }));
+  fault?.('after-complete');
   return { archive };
 }
-
 function abandonCommand(root, values) {
-  return { ok: true, fields: abandonRun(root, { reason: values.reason }) };
+  return { ok: true, fields: abandonRun(root, { reason: values.reason, resume: values.resume }) };
+}
+
+// ---------------------------------------------------------------------------
+// V2 registration and recovery. No caller-supplied descriptor or "passed" flag
+// enters this API. Only these operation handlers can construct nextDescriptor.
+// ---------------------------------------------------------------------------
+
+// Start and archive preflight before acquiring a lease, then repeat under lock.
+const ACTIVE_INCEPTION_LEASES = new WeakMap();
+function withInceptionLease(repoRoot, options, operation) {
+  const root = resolveRepoRoot(repoRoot);
+  operation(root, options, true);
+  return withProjectScaffoldLock({ hubRoot: root }, lease => {
+    // Exempt only this recognized live lease during its synchronous transaction,
+    // never arbitrary lock-like names or records observed by read-only callers.
+    ACTIVE_INCEPTION_LEASES.set(lease, root);
+    try { return operation(root, options, false, lease); }
+    finally { ACTIVE_INCEPTION_LEASES.delete(lease); }
+  });
+}
+
+function assertV2Options({ reservation, expectedRevision, fault }) {
+  if (reservation !== undefined) validateId(reservation, 'reservation');
+  if (expectedRevision !== undefined && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) throw refuse('expected revision must be a positive safe integer');
+  if (fault !== undefined && typeof fault !== 'function') throw refuse('fault must be a synchronous API hook');
+}
+function v2Descriptor(root) {
+  const descriptor = loadDescriptor(root, { allowV2: true });
+  if (descriptor.schema !== RUN_SCHEMA_V2) throw refuse('legacy descriptor: this operation requires v2');
+  return descriptor;
+}
+function withV2SnapshotLease(root, observed, action) {
+  const currentDescriptor = () => {
+    const descriptor = v2Descriptor(root);
+    if (descriptor.runId !== observed.runId || descriptor.revision !== observed.revision) throw refuse('incompatible descriptor revision or run identity');
+    return descriptor;
+  };
+  // The scaffold lease retains a reclaimed generation until release. Complete
+  // that retirement before observing application files, using only the public
+  // lease API; arbitrary lock-like paths remain part of the inventory.
+  withProjectScaffoldLock({ hubRoot: root }, currentDescriptor);
+  // Another cooperating writer may run between leases. Recheck the descriptor
+  // under the observation lease before any application read or publication.
+  return withApplicationSnapshotLease(root, () => action(currentDescriptor()));
+}
+function withV2Mutation(repoRoot, options, action) {
+  assertV2Options(options);
+  const root = resolveRepoRoot(repoRoot);
+  const observed = v2Descriptor(root); // Form/legacy validation precedes the lease.
+  const expectedRevision = options.expectedRevision ?? observed.revision;
+  return withV2SnapshotLease(root, observed, descriptor => {
+    if (descriptor.runId !== observed.runId || descriptor.revision !== expectedRevision) throw refuse('incompatible descriptor revision');
+    if (descriptor.pending !== null) throw refuse(`pending reservation ${descriptor.pending.id} must be resumed`);
+    if (descriptor.activeUnit !== null && descriptor.activeUnit !== options.unitId) throw refuse(`activeUnit ${descriptor.activeUnit} excludes this writer`);
+    return action(root, descriptor);
+  });
+}
+function finishPublicationLocked(root, descriptor, { fault } = {}) {
+  const pending = descriptor.pending;
+  if (pending.operation === 'complete') verifyTerminalReservation(root, descriptor);
+  else if (descriptor.status === 'complete') verifyCompletedState(root, { ...descriptor, pending: null });
+  stagePublicationTargets(root, pending, { fault });
+  fault?.('before-bind', { reservation: pending.id });
+  // Binding is the already-rendered next descriptor, never a rerun of the
+  // original writer, report parser, or application operation.
+  verifyPublicationTargets(root, pending.targets);
+  if (pending.operation === 'complete') verifyCompletedState(root, pending.nextDescriptor);
+  const current = v2Descriptor(root);
+  if (serializeRunDescriptorV2(current) !== serializeRunDescriptorV2(descriptor)) throw refuse('incompatible descriptor revision or reservation');
+  fault?.('after-bind', { reservation: pending.id });
+  fault?.('before-descriptor-replace', { reservation: pending.id });
+  writeDescriptor(root, pending.nextDescriptor, replaceFileAtomic);
+  fault?.('after-descriptor-replace', { reservation: pending.id });
+  return { reservation: pending.id, revision: pending.nextDescriptor.revision, noop: false };
+}
+function publishMutation(root, descriptor, nextDescriptor, targets, operation, options) {
+  const id = options.reservation ?? `pub-${randomBytes(16).toString('hex')}`;
+  const reserved = preparePublication(descriptor, { id, operation, targets, nextDescriptor });
+  for (const target of reserved.pending.targets) {
+    if (readPublicationFile(root, target.path, { missing: true }) !== null) throw refuse(`${target.path} already exists: foreign publication target`);
+    const stagingDirectory = publicationStagingDirectory(target.path, id);
+    if (readPublicationFile(root, stagingDirectory, { missing: true }) !== null) throw refuse(`${stagingDirectory} already exists: foreign staging namespace`);
+    const initialStage = `${target.path}.${id}.stage-0001.tmp`;
+    if (readPublicationFile(root, initialStage, { missing: true }) !== null) throw refuse(`${initialStage} already exists: foreign staging file`);
+  }
+  options.fault?.('before-reserve', { reservation: id });
+  writeDescriptor(root, reserved, replaceFileAtomic);
+  options.fault?.('after-reserve', { reservation: id });
+  return finishPublicationLocked(root, reserved, options);
+}
+export function resumePublication(repoRoot, { reservation, fault } = {}) {
+  validateId(reservation, 'reservation'); assertV2Options({ fault });
+  const root = resolveRepoRoot(repoRoot);
+  const observed = v2Descriptor(root);
+  if (observed.pending?.id === reservation && observed.pending.operation.startsWith('capture-')) {
+    const attempt = observed.units.find(u => u.id === observed.activeUnit)?.capture
+      ?? observed.pending.nextDescriptor.units.find(u => u.id === observed.pending.nextDescriptor.activeUnit)?.capture;
+    if (!attempt) throw refuse('capture publication has no registered collector');
+    assertDeadCollector(attempt);
+    if (observed.pending.operation === 'capture-finish') {
+      recoverCapture(root, { unit: observed.activeUnit, fault });
+      return { reservation, revision: observed.pending.nextDescriptor.revision, noop: false };
+    }
+  }
+  return withV2SnapshotLease(root, observed, descriptor => {
+    if (descriptor.runId !== observed.runId) throw refuse('reservation run identity changed');
+    const completed = descriptor.publications.find(p => p.id === reservation);
+    if (completed) {
+      verifyPublicationTargets(root, completed.targets);
+      return { reservation, revision: completed.revision, noop: true };
+    }
+    if (descriptor.pending?.id !== reservation) throw refuse('reservation is not the pending publication');
+    return finishPublicationLocked(root, descriptor, { fault });
+  });
+}
+function assertRegistrationInput(input) {
+  expectKeys(input, ['kind', 'inputs', 'outputs', 'allowedPaths'], 'unit input');
+  if (!['decision', 'research', 'bootstrap', 'check', 'publication', 'transition'].includes(input.kind)) throw refuse('unknown unit kind');
+  if (!Array.isArray(input.inputs) || !Array.isArray(input.outputs) || !Array.isArray(input.allowedPaths)) throw refuse('unit input lists are required');
+  input.inputs.forEach(r => validateRef(r));
+  input.allowedPaths.forEach(path => { validatePath(path); if (path.startsWith('.apex/inception') || path.startsWith('.apex/work') || path === '.git' || path.startsWith('.git/')) throw refuse('reserved application scope'); });
+  for (const output of input.outputs) {
+    expectKeys(output, ['path', 'role'], 'unit output'); validatePath(output.path);
+    // Only project/research working documents may be updated by a child. Run
+    // records, descriptor, snapshots and frozen outputs are helper-owned.
+    if (output.path.startsWith(`${INCEPTION_AREA}/`) && !['project', 'research', 'bootstrap'].some(area => output.path.startsWith(`${INCEPTION_AREA}/${area}/`))) throw refuse('helper-owned output is forbidden');
+    if (!output.path.startsWith(`${INCEPTION_AREA}/`) && !withinAllowed(output.path, input.allowedPaths)) throw refuse('application output requires declared allowedPaths scope');
+    if (!['decision', 'report', 'evidence'].includes(output.role)) throw refuse('unknown output role');
+  }
+  if (!input.outputs.some(o => o.role === 'report')) throw refuse('unit requires a declared report output');
+}
+function verifyUnitInputs(root, refs) {
+  return refs.map(ref => {
+    const bytes = readPublicationFile(root, ref.path);
+    const observed = publicationRef(ref.path, bytes);
+    if (observed.bytes !== ref.bytes || observed.sha256 !== ref.sha256) throw refuse(`${ref.path}: input digest is divergent`);
+    return bytes;
+  });
+}
+function unitInputCopyPath(id, index) {
+  return `${INCEPTION_AREA}/units/${id}/inputs/${String(index + 1).padStart(4, '0')}.bin`;
+}
+export function beginUnit(repoRoot, { id, input, previousUnit = null, expectedRevision, reservation, fault } = {}) {
+  validateId(id); assertRegistrationInput(input);
+  if (previousUnit !== null) validateId(previousUnit);
+  const options = { expectedRevision, reservation, fault };
+  return withV2Mutation(repoRoot, options, (root, descriptor) => {
+    if (descriptor.status !== 'active') throw refuse('unit begin requires an active run');
+    if (descriptor.units.some(u => u.id === id)) throw refuse('unit ID already exists; use a new ID');
+    if (previousUnit !== null && !descriptor.units.some(u => u.id === previousUnit)) throw refuse('previousUnit does not exist');
+    if (descriptor.approvals.length && descriptor.phase !== 'approval') {
+      const approval = readApprovalV2(root, descriptor, descriptor.approvals.at(-1)).record;
+      if (input.outputs.some(o => approval.body.documents.some(d => d.path === o.path))) throw refuse('approved project documents may change only in approval phase');
+    }
+    let unitInputs = input.inputs;
+    if (input.kind === 'check') {
+      const context = verificationContext(root, descriptor, descriptor.currentCycle?.path);
+      unitInputs = [...input.inputs];
+      for (const ref of [context.ref, descriptor.verificationSession]) if (!unitInputs.some(i => sameValue(i, ref))) unitInputs.push(ref);
+    }
+    const inputContents = verifyUnitInputs(root, unitInputs);
+    if (descriptor.blocks.length) throw refuse('unresolved blocks prevent new work');
+    if (readEffectsV2(root, descriptor).unresolved.length) throw refuse('unresolved effects prevent new work');
+    const snapshot = observeRunApplication(root, descriptor);
+    assertBaseline(root, descriptor, snapshot);
+    const beforeRecord = newRecordV2(descriptor, 'snapshot', snapshot, id);
+    // Keep the declared source identities and freeze their exact opening bytes
+    // before the writer starts. Ordered copy paths retain the source mapping.
+    const targets = inputContents.map((content, index) => ({ path: unitInputCopyPath(id, index), content }));
+    const openingEvidence = targets.map(target => publicationRef(target.path, target.content));
+    targets.push(beforeRecord.target);
+    const unit = { id, previousUnit, kind: input.kind, phase: descriptor.phase, inputs: unitInputs, outputs: input.outputs, allowedPaths: input.allowedPaths, before: beforeRecord.ref, state: 'started', evidence: openingEvidence, after: null, capture: null };
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 1, baseline: descriptor.baseline ?? beforeRecord.ref, units: [...descriptor.units, unit], activeUnit: id };
+    return { id, ...publishMutation(root, descriptor, next, targets, 'unit-begin', options) };
+  });
+}
+function verifyUnitReport(bytes, id) {
+  let report;
+  try { report = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { throw refuse('report must be valid UTF-8'); }
+  const header = /^<!-- steepy-inception-unit: v2; id: ([a-z0-9-]+); status: (DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT) -->\r?\n/u.exec(report);
+  const footer = `<!-- steepy-inception-unit-end: ${id} -->`;
+  if (!header || header[1] !== id || !['DONE', 'DONE_WITH_CONCERNS'].includes(header[2])
+    || !report.trimEnd().endsWith(footer) || report.slice(header[0].length, report.lastIndexOf(footer)).trim().length === 0) throw refuse('report is incomplete, unsuccessful, or has a different unit identity');
+}
+function verifyOpeningUnitInputs(root, unit) {
+  const openingInputs = unit.inputs.map((input, index) => ({ ...input, path: unitInputCopyPath(unit.id, index) }));
+  for (const opening of openingInputs) {
+    if (!unit.evidence.some(ref => ref.path === opening.path && ref.bytes === opening.bytes && ref.sha256 === opening.sha256)) throw refuse(`${opening.path}: missing bound opening input evidence`);
+  }
+  verifyUnitInputs(root, openingInputs);
+  // Only an exact declared output may change its live working copy. Every
+  // read-only input must still match, and the opening copies always match.
+  const workingOutputs = new Set(unit.outputs.map(output => output.path));
+  verifyUnitInputs(root, unit.inputs.filter(input => !workingOutputs.has(input.path)));
+}
+export function finishUnit(repoRoot, { id, evidence = [], expectedRevision, reservation, fault } = {}) {
+  validateId(id);
+  if (!Array.isArray(evidence)) throw refuse('evidence must be an array of exact paths');
+  evidence.forEach(path => validatePath(path));
+  const options = { unitId: id, expectedRevision, reservation, fault };
+  return withV2Mutation(repoRoot, options, (root, descriptor) => {
+    if (descriptor.activeUnit !== id) throw refuse('activeUnit does not identify this writer');
+    const unit = descriptor.units.find(u => u.id === id);
+    assertRegistrationInput({ kind: unit.kind, inputs: unit.inputs, outputs: unit.outputs, allowedPaths: unit.allowedPaths });
+    if (unit.capture !== null && unit.capture.state !== 'captured') throw refuse('capture is incomplete');
+    if (readEffectsV2(root, descriptor).unresolved.length) throw refuse('unresolved effects prevent unit finish');
+    verifyOpeningUnitInputs(root, unit);
+    const targets = unit.outputs.map((output, index) => {
+      const content = readPublicationFile(root, output.path);
+      if (output.role === 'report') verifyUnitReport(content, id);
+      return { path: `${INCEPTION_AREA}/units/${id}/outputs/${String(index + 1).padStart(4, '0')}.bin`, content };
+    });
+    const references = targets.map(t => publicationRef(t.path, t.content));
+    // Extra evidence is also frozen: later working-copy edits cannot rewrite history.
+    for (const [index, path] of evidence.entries()) {
+      const content = readPublicationFile(root, path);
+      const target = { path: `${INCEPTION_AREA}/units/${id}/evidence/${String(index + 1).padStart(4, '0')}.bin`, content };
+      targets.push(target); references.push(publicationRef(target.path, content));
+    }
+    const before = readRecordV2(root, descriptor, unit.before, 'snapshot').body;
+    const after = observeRunApplication(root, descriptor);
+    const changes = applicationChanges(before, after);
+    if (unit.kind === 'check' && applicationIdentity(before) !== applicationIdentity(after)) throw refuse('check application drift requires reconciliation and a new cycle');
+    if (unit.kind === 'check') verificationContext(root, descriptor, descriptor.currentCycle?.path);
+    if (changes.some(change => !withinAllowed(change.path, unit.allowedPaths))) throw refuse('unexplained application changes outside unit scope');
+    assertGitExplained(root, descriptor, before, after, id);
+    const afterRecord = newRecordV2(descriptor, 'snapshot', after, id);
+    targets.push(afterRecord.target);
+    const changed = applicationIdentity(before) !== applicationIdentity(after);
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 1, baseline: afterRecord.ref,
+      currentCycle: changed ? null : descriptor.currentCycle, verificationSession: changed ? null : descriptor.verificationSession,
+      units: descriptor.units.map(u => u.id === id ? { ...u, state: 'completed', evidence: [...u.evidence, ...references], after: afterRecord.ref } : u), activeUnit: null };
+    return { id, ...publishMutation(root, descriptor, next, targets, 'unit-finish', options) };
+  });
+}
+function resumeNoteV2(repoRoot, options) {
+  return withV2Mutation(repoRoot, options, (root, descriptor) => {
+    if (descriptor.status === 'complete') {
+      verifyCompletedState(root, descriptor);
+      if (!options.needs.includes(descriptor.completion.path)) throw refuse('complete presentation note must reference the existing completion');
+    }
+    options.needs.forEach(path => readPublicationFile(root, path));
+    const number = descriptor.nextRecord;
+    const path = recordPath('resumeNotes', number);
+    const content = renderResumeNote({ number, descriptor, ...options });
+    const next = { ...descriptor, nextRecord: number + 1, resumeNotes: [...descriptor.resumeNotes, publicationRef(path, content)] };
+    return { note: path, ...publishMutation(root, descriptor, next, [{ path, content }], 'resume-note', options) };
+  });
+}
+function transitionV2(repoRoot, options) {
+  return withV2Mutation(repoRoot, options, (root, descriptor) => {
+    if (options.to === 'complete') return completeV2(root, descriptor, options);
+    if (options.cycle !== undefined) throw refuse('--cycle is allowed only on verification -> complete');
+    if (descriptor.phase !== 'approval' && !['approval', 'blocked'].includes(options.to) && descriptor.approvals.length) readApprovalV2(root, descriptor, descriptor.approvals.at(-1));
+    if (options.to !== 'blocked') {
+      if (descriptor.blocks.length || readEffectsV2(root, descriptor).unresolved.length) throw refuse('unresolved blocks or effects prevent transition');
+      assertBaseline(root, descriptor, observeRunApplication(root, descriptor));
+    }
+    const unavailable = () => { throw refuse('transition guard is not yet supported'); };
+    const next = applyTransition(descriptor, options, { approval: () => {
+      if (descriptor.approvalEntry === null || descriptor.approvals.length <= descriptor.approvalEntry) throw refuse('approval -> bootstrap requires a new approval since entry');
+      readApprovalV2(root, descriptor, descriptor.approvals.at(-1));
+    }, complete: unavailable });
+    return { phase: next.phase, status: next.status, ...publishMutation(root, descriptor, next, [], 'transition', options) };
+  });
+}
+// V2 inventory/effect registrations all use the same reserved immutable publication.
+const withinAllowed = (path, allowed) => allowed.some(p => path === p || path.startsWith(`${p}/`));
+const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function newRecordV2(descriptor, kind, body, unitId = null, offset = 0) {
+  const record = descriptor.nextRecord + offset;
+  const family = { snapshot: 'snapshots', checkpoint: 'checkpoints', 'effect-intent': 'effects', 'effect-outcome': 'effects', reconciliation: 'reconciliations', approval: 'approvals', cycle: 'verification/cycles', 'verification-session': 'verification/sessions', manual: 'verification/manual', result: 'verification/results', summary: 'verification/summaries', completion: 'verification/completions' }[kind];
+  const path = `${INCEPTION_AREA}/${family}/${String(record).padStart(4, '0')}.json`;
+  const content = serializeInceptionRecord({ schema: 'steepy-inception-record/v2', runId: descriptor.runId, record, kind, at: new Date().toISOString(), unitId, body });
+  return { ref: publicationRef(path, content), target: { path, content } };
+}
+function readRefV2(root, ref) {
+  validateRef(ref);
+  const content = readPublicationFile(root, ref.path);
+  if (!sameValue(publicationRef(ref.path, content), ref)) throw refuse(`${ref.path}: reference digest diverges`);
+  return content;
+}
+function readRecordV2(root, descriptor, ref, kind) {
+  if (ref === null) throw refuse('required record reference is absent');
+  const record = parseInceptionRecord(readRefV2(root, ref), { runId: descriptor.runId, number: Number(basename(ref.path, '.json')) });
+  if (kind !== undefined && record.kind !== kind) throw refuse(`${ref.path}: expected ${kind}`);
+  return record;
+}
+function observeRunApplication(root, descriptor) {
+  const approvalRef = descriptor.approvals.at(-1);
+  if (approvalRef) {
+    const { record: approval, contract } = readApprovalV2(root, descriptor, approvalRef, { historical: true });
+    return observeApplication(root, { contract: approval.body.contract, roots: contract.roots, exclusions: contract.exclusions });
+  }
+  return observeApplication(root);
+}
+function assertBaseline(root, descriptor, observed) {
+  if (descriptor.baseline === null) return;
+  const baseline = readRecordV2(root, descriptor, descriptor.baseline, 'snapshot').body;
+  if (applicationIdentity(baseline) !== applicationIdentity(observed) || !sameValue(baseline.git, observed.git)) throw refuse('application or Git baseline drift requires reconciliation');
+}
+function effectBlockId(id) { return `effect-${createHash('sha256').update(id).digest('hex').slice(0, 32)}`; }
+function assertGitExplained(root, descriptor, before, after, unitId) {
+  if (sameValue(before.git, after.git)) return;
+  // Dirty status normally changes with the authorized application diff. A branch
+  // or HEAD change, or status-only drift, requires a correlated commit observation.
+  const changedPaths = new Set(applicationChanges(before, after).map(change => change.path));
+  const statusChanges = [...before.git.status.filter(entry => !after.git.status.includes(entry)), ...after.git.status.filter(entry => !before.git.status.includes(entry))];
+  const statusPath = entry => /^[ MARCUD?!]{2} /u.test(entry) ? entry.slice(3) : entry;
+  if (before.git.present === after.git.present && before.git.branch === after.git.branch && before.git.head === after.git.head
+      && statusChanges.every(entry => changedPaths.has(statusPath(entry)))) return;
+  const effects = readEffectsV2(root, descriptor);
+  if (!effects.effects.some(e => e.intent.body.unitId === unitId && e.intent.body.kind === 'commit'
+      && e.outcome?.body.result === 'succeeded'
+      && sameValue(readRecordV2(root, descriptor, e.outcome.body.after, 'snapshot').body.git, after.git))) throw refuse('Git drift requires a correlated commit observation or human reconciliation');
+}
+function verifyCorrelation(intent, outcome) {
+  if (!sameValue(intent.correlation, outcome.correlation)) throw refuse('effect correlation differs from intent');
+  if (outcome.method === 'reconciled' && outcome.correlation.length === 0) throw refuse('automatic reconciliation requires exact correlation');
+}
+function verifyEffectObservation(bytes, intent, outcome) {
+  const observation = parseV2Json(bytes);
+  expectKeys(observation, ['id', 'procedure', 'result', 'correlation', 'observed'], 'effect observation');
+  if (observation.id !== intent.id || observation.procedure !== intent.observation.procedure || observation.result !== outcome.result
+      || !sameValue(observation.correlation, intent.correlation) || observation.observed !== outcome.observed) throw refuse('structured effect observation does not match intent correlation or outcome');
+}
+function readEffectsV2(root, descriptor) {
+  const effects = new Map();
+  for (const ref of descriptor.effects) {
+    const record = readRecordV2(root, descriptor, ref);
+    const body = record.body;
+    if (record.kind === 'effect-intent') {
+      if (effects.has(body.id)) throw refuse('effect intent ID already exists');
+      readRecordV2(root, descriptor, body.before, 'snapshot');
+      effects.set(body.id, { id: body.id, ref, intent: record, outcome: null });
+    } else if (record.kind === 'effect-outcome') {
+      const effect = effects.get(body.id);
+      if (!effect || !sameValue(effect.ref, body.intent) || record.unitId !== effect.intent.unitId
+          || (effect.outcome !== null && effect.outcome.body.result !== 'partial')) throw refuse('effect outcome has invalid intent correlation or terminal replay');
+      verifyCorrelation(effect.intent.body, body);
+      if (body.evidence.length === 0) throw refuse('effect outcome requires structured evidence');
+      for (const evidence of body.evidence) verifyEffectObservation(readRefV2(root, evidence), effect.intent.body, body);
+      readRecordV2(root, descriptor, body.after, 'snapshot');
+      effect.outcome = record;
+    } else throw refuse('effects list contains a non-effect record');
+  }
+  const list = [...effects.values()];
+  return { effects: list, unresolved: list.filter(e => e.outcome === null || e.outcome.body.result === 'partial').map(e => e.id) };
+}
+export function effectStatusV2(repoRoot) {
+  const root = resolveRepoRoot(repoRoot); const descriptor = v2Descriptor(root);
+  const result = readEffectsV2(root, descriptor);
+  return { effects: result.effects.map(e => ({ id: e.id, kind: e.intent.body.kind, state: !e.outcome || e.outcome.body.result === 'partial' ? 'uncertain' : 'concluded', result: e.outcome?.body.result ?? null })), unresolved: result.unresolved, uncertain: result.unresolved.length };
+}
+export function recordEffectIntent(repoRoot, options = {}) {
+  const { id, input } = options; validateId(id);
+  expectKeys(input, ['id', 'kind', 'summary', 'command', 'procedure', 'scope', 'authorization', 'correlation', 'observation'], 'effect intent input');
+  if (input.id !== id) throw refuse('effect ID does not match input');
+  const unitId = v2Descriptor(resolveRepoRoot(repoRoot)).activeUnit;
+  return withV2Mutation(repoRoot, { ...options, unitId }, (root, descriptor) => {
+    if (descriptor.status !== 'active' || !unitId) throw refuse('effect intent requires an active unit');
+    const known = readEffectsV2(root, descriptor);
+    if (known.effects.some(e => e.id === id)) throw refuse('effect ID already exists; replay forbidden');
+    if (known.unresolved.length || descriptor.blocks.length) throw refuse('unresolved effects or blocks prevent new execution');
+    if (['remote', 'deploy', 'external-resource'].includes(input.kind) && input.authorization === null) throw refuse('remote effect requires authorization');
+    if (input.kind === 'commit' && descriptor.git.commits !== 'allowed') throw refuse('commit effect requires authorized Git policy');
+    const unit = descriptor.units.find(u => u.id === unitId);
+    const before = observeRunApplication(root, descriptor);
+    const opening = readRecordV2(root, descriptor, unit.before, 'snapshot').body;
+    if (applicationChanges(opening, before).some(c => !withinAllowed(c.path, unit.allowedPaths))) throw refuse('unexplained changes outside unit scope before effect');
+    if (input.scope.some(path => !withinAllowed(path, unit.allowedPaths))) throw refuse('effect scope exceeds unit scope');
+    assertGitExplained(root, descriptor, opening, before, unitId);
+    const snapshot = newRecordV2(descriptor, 'snapshot', before, unitId);
+    const body = { id, kind: input.kind, unitId, summary: input.summary, command: input.command, procedure: input.procedure, scope: input.scope, authorization: input.authorization, correlation: input.correlation, observation: input.observation, before: snapshot.ref };
+    const intent = newRecordV2(descriptor, 'effect-intent', body, unitId, 1);
+    const block = { id: effectBlockId(id), reason: `Effect ${id} awaits a correlated observation`, evidence: [intent.ref] };
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 2, effects: [...descriptor.effects, intent.ref], blocks: [...descriptor.blocks, block] };
+    return { id, intent: intent.ref, ...publishMutation(root, descriptor, next, [snapshot.target, intent.target], 'effect-intent', options) };
+  });
+}
+export function recordEffectOutcome(repoRoot, options = {}) {
+  const { id, input, method = 'observed' } = options; validateId(id);
+  expectKeys(input, ['result', 'observed', 'correlation', 'evidence'], 'effect outcome input');
+  if (!['observed', 'reconciled'].includes(method)) throw refuse('invalid effect observation method');
+  const root = resolveRepoRoot(repoRoot); const descriptor = v2Descriptor(root);
+  const initial = readEffectsV2(root, descriptor).effects.find(e => e.id === id);
+  if (!initial) throw refuse('effect intent does not exist');
+  const unitId = initial.intent.unitId;
+  return withV2Mutation(root, { ...options, unitId }, (root, descriptor) => {
+    const effect = readEffectsV2(root, descriptor).effects.find(e => e.id === id);
+    if (effect.outcome && effect.outcome.body.result !== 'partial') throw refuse('effect already concluded; replay forbidden');
+    verifyCorrelation(effect.intent.body, { ...input, method });
+    if (!Array.isArray(input.evidence) || input.evidence.length === 0 || !sameValue(input.evidence, effect.intent.body.observation.evidencePaths)) throw refuse('effect observation requires the exact declared evidence paths');
+    const targets = input.evidence.map((path, index) => {
+      const content = readPublicationFile(root, path);
+      verifyEffectObservation(content, effect.intent.body, input);
+      return { path: `${INCEPTION_AREA}/units/${unitId}/effect-evidence/${String(descriptor.nextRecord).padStart(4, '0')}/${String(index + 1).padStart(4, '0')}.bin`, content };
+    });
+    const after = observeRunApplication(root, descriptor);
+    const before = readRecordV2(root, descriptor, effect.intent.body.before, 'snapshot').body;
+    if (applicationChanges(before, after).some(c => !withinAllowed(c.path, effect.intent.body.scope))) throw refuse('effect observation cannot explain changes outside intent scope');
+    const snapshot = newRecordV2(descriptor, 'snapshot', after, unitId);
+    const body = { id, intent: effect.ref, result: input.result, observed: input.observed, correlation: input.correlation, evidence: targets.map(t => publicationRef(t.path, t.content)), after: snapshot.ref, method };
+    const outcome = newRecordV2(descriptor, 'effect-outcome', body, unitId, 1);
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 2, effects: [...descriptor.effects, outcome.ref], blocks: input.result === 'partial' ? descriptor.blocks : descriptor.blocks.filter(b => b.id !== effectBlockId(id)) };
+    return { id, outcome: outcome.ref, ...publishMutation(root, descriptor, next, [...targets, snapshot.target, outcome.target], 'effect-outcome', options) };
+  });
+}
+export function createCheckpoint(repoRoot, options = {}) {
+  validateText(options.label, 'checkpoint label');
+  if (options.files !== undefined || options.filesFrom !== undefined) throw refuse('v2 checkpoint requires full inventory; --file and --files-from are forbidden');
+  return withV2Mutation(repoRoot, options, (root, descriptor) => {
+    if (descriptor.status === 'complete') throw refuse('complete run cannot create checkpoints');
+    if (descriptor.blocks.length || readEffectsV2(root, descriptor).unresolved.length) throw refuse('unresolved blocks/effects prevent checkpoint');
+    const application = observeRunApplication(root, descriptor); assertBaseline(root, descriptor, application);
+    const snapshot = newRecordV2(descriptor, 'snapshot', application);
+    const checkpoint = newRecordV2(descriptor, 'checkpoint', { label: options.label, phase: descriptor.phase, snapshot: snapshot.ref, previous: descriptor.checkpoints.at(-1) ?? null, unitIds: descriptor.units.filter(u => u.state === 'completed').map(u => u.id), effectIds: readEffectsV2(root, descriptor).effects.map(e => e.id) }, null, 1);
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 2, baseline: descriptor.baseline ?? snapshot.ref, checkpoints: [...descriptor.checkpoints, checkpoint.ref] };
+    return { checkpoint: checkpoint.ref, ...publishMutation(root, descriptor, next, [snapshot.target, checkpoint.target], 'checkpoint', options) };
+  });
+}
+export function verifyCheckpointV2(repoRoot, path) {
+  const root = resolveRepoRoot(repoRoot); const descriptor = v2Descriptor(root);
+  const ref = path === undefined ? descriptor.checkpoints.at(-1) : descriptor.checkpoints.find(r => r.path === path);
+  if (!ref) throw refuse('checkpoint is not bound by descriptor');
+  const checkpoint = readRecordV2(root, descriptor, ref, 'checkpoint');
+  const snapshot = readRecordV2(root, descriptor, checkpoint.body.snapshot, 'snapshot').body;
+  const observed = observeRunApplication(root, descriptor);
+  const changes = applicationChanges(snapshot, observed);
+  const divergences = [...changes.map(c => ({ path: c.path, reason: 'application-drift' })), ...(!sameValue(snapshot.git, observed.git) ? [{ path: '.git', reason: 'git-drift' }] : [])];
+  if (applicationIdentity(snapshot) !== applicationIdentity(observed) && !changes.length) divergences.push({ path: '.', reason: 'scope-drift' });
+  return { ok: divergences.length === 0, checkpoint: ref, divergences };
+}
+export function reconcileUnit(repoRoot, options = {}) {
+  const { id, input } = options; validateId(id);
+  expectKeys(input, ['evidence', 'reason', 'statement'], 'unit reconciliation input');
+  validateText(input.reason); if (input.statement !== null) validateText(input.statement);
+  if (!Array.isArray(input.evidence) || input.evidence.length === 0) throw refuse('unit reconciliation requires evidence');
+  input.evidence.forEach(path => validatePath(path));
+  return withV2Mutation(repoRoot, { ...options, unitId: id }, (root, descriptor) => {
+    const unit = descriptor.units.find(u => u.id === id);
+    if (!unit || descriptor.status === 'complete') throw refuse('unit is unavailable for reconciliation');
+    const unfinished = descriptor.activeUnit === id && ['started', 'blocked'].includes(unit.state);
+    const closedIncomplete = unit.state === 'closed-incomplete';
+    // Historical scope is not authority for later edits. Idle reconciliation is
+    // a new human acceptance record, never a continuation of completed work.
+    if (!unfinished && input.statement === null) throw refuse('historical unit reconciliation requires an explicit human statement');
+    if (closedIncomplete) {
+      if (descriptor.activeUnit !== null) throw refuse('closed-incomplete acceptance requires no active writer');
+      verifyClosedUnitObservation(root, descriptor, unit);
+    } else if (unit.capture !== null && unit.capture.state !== 'captured') throw refuse('writer stop must be established before reconciliation');
+    if (readEffectsV2(root, descriptor).unresolved.length) throw refuse('uncertain effects require effect observation, not unit reconciliation');
+    verifyOpeningUnitInputs(root, unit);
+    const beforeRef = unfinished ? unit.before : descriptor.baseline;
+    const before = readRecordV2(root, descriptor, beforeRef, 'snapshot').body;
+    const after = observeRunApplication(root, descriptor); const changes = applicationChanges(before, after);
+    let gitExplained = true;
+    try { assertGitExplained(root, descriptor, before, after, id); } catch { gitExplained = false; }
+    const unexplained = changes.some(c => !withinAllowed(c.path, unit.allowedPaths)) || !gitExplained;
+    if (unexplained && input.statement === null) throw refuse('outside-scope or Git drift requires explicit human statement');
+    // Only a bound observed-stop closure permits missing interrupted outputs.
+    // Human acceptance retains incomplete history and never attests check success.
+    const outputs = closedIncomplete ? [] : unit.outputs;
+    const reports = outputs.filter(o => o.role === 'report');
+    for (const report of reports) verifyUnitReport(readPublicationFile(root, report.path), id);
+    const paths = [...new Set([...outputs.map(o => o.path), ...input.evidence])];
+    const targets = paths.map((path, i) => ({ path: `${INCEPTION_AREA}/units/${id}/reconciliation-evidence/${String(descriptor.nextRecord).padStart(4, '0')}/${String(i + 1).padStart(4, '0')}.bin`, content: readPublicationFile(root, path) }));
+    const snapshot = newRecordV2(descriptor, 'snapshot', after, id);
+    const evidence = targets.map(t => publicationRef(t.path, t.content));
+    const reconciliation = newRecordV2(descriptor, 'reconciliation', { unitId: id, before: beforeRef, after: snapshot.ref, changes, effects: descriptor.effects.filter(ref => readRecordV2(root, descriptor, ref).unitId === id), evidence, reason: input.reason, statement: input.statement }, id, 1);
+    const changed = applicationIdentity(before) !== applicationIdentity(after);
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 2, baseline: snapshot.ref, currentCycle: changed ? null : descriptor.currentCycle, verificationSession: changed ? null : descriptor.verificationSession,
+      units: descriptor.units.map(u => u.id === id ? { ...u, ...(unfinished ? { state: 'completed', after: snapshot.ref } : {}), evidence: [...u.evidence, reconciliation.ref] } : u), activeUnit: null };
+    return { id, reconciliation: reconciliation.ref, ...publishMutation(root, descriptor, next, [...targets, snapshot.target, reconciliation.target], 'unit-reconcile', options) };
+  });
+}
+function requireObservationEvidence(evidence) {
+  if (!Array.isArray(evidence) || evidence.length === 0) throw refuse('stopped-writer observation or human decision requires evidence');
+  evidence.forEach(path => validatePath(path));
+  if (new Set(evidence).size !== evidence.length) throw refuse('duplicate observation evidence');
+}
+function stoppedWriterStatement(content, unitId) {
+  // The coordinator records a human/cooperative-writer observation. As with
+  // manual attest, shape and identity are checked, not the human's truthfulness.
+  const observation = parseV2Json(content);
+  expectKeys(observation, ['unitId', 'writerStopped', 'statement'], 'stopped-writer observation');
+  if (observation.unitId !== unitId || observation.writerStopped !== true) throw refuse('stopped-writer observation must identify this unit and explicitly observe stop');
+  validateText(observation.statement, 'stopped-writer statement');
+  return observation.statement;
+}
+function observeStoppedWriter(root, unit, evidence, probe) {
+  if (unit.capture !== null) {
+    assertDeadCollector(unit.capture, probe);
+    return null;
+  }
+  return stoppedWriterStatement(readPublicationFile(root, evidence[0]), unit.id);
+}
+function verifyClosedUnitObservation(root, descriptor, unit) {
+  const opening = readRecordV2(root, descriptor, unit.before, 'snapshot');
+  const closing = readRecordV2(root, descriptor, unit.after, 'snapshot');
+  if (opening.unitId !== unit.id || closing.unitId !== unit.id) throw refuse('closure snapshots must identify this unit');
+  const prefix = `${INCEPTION_AREA}/units/${unit.id}/closure-evidence/${String(closing.record).padStart(4, '0')}/`;
+  for (const ref of unit.evidence) {
+    if (ref.path !== `${INCEPTION_AREA}/reconciliations/${String(closing.record + 1).padStart(4, '0')}.json`) continue;
+    const record = readRecordV2(root, descriptor, ref, 'reconciliation');
+    const body = record.body;
+    if (record.unitId !== unit.id || body.unitId !== unit.id || record.record !== closing.record + 1
+        || !sameValue(body.before, unit.before) || !sameValue(body.after, unit.after) || !sameValue(body.changes, applicationChanges(opening.body, closing.body))
+        || body.evidence.length === 0 || body.evidence.some((e, i) => e.path !== `${prefix}${String(i + 1).padStart(4, '0')}.bin`)) {
+      throw refuse('invalid unit closure observation');
+    }
+    const targets = [...body.evidence, unit.after, ref];
+    const publication = descriptor.publications.find(p => sameValue(p.targets, targets));
+    if (!publication) throw refuse('unit closure observation lacks its bound publication');
+    verifyPublicationTargets(root, publication.targets);
+    if (unit.capture === null) {
+      if (stoppedWriterStatement(readRefV2(root, body.evidence[0]), unit.id) !== body.statement) throw refuse('closure stopped-writer statement diverges');
+    } else if (!['incomplete', 'captured'].includes(unit.capture.state) || body.statement !== null) {
+      throw refuse('invalid captured writer closure observation');
+    }
+    // The closure publication already observed stop. Re-probing a historical
+    // PID could instead inspect an unrelated process after PID reuse.
+    return;
+  }
+  throw refuse('closed-incomplete unit lacks a bound stopped-writer closure observation');
+}
+export function closeIncompleteUnit(repoRoot, options = {}) {
+  const { id, reason, evidence = [], probe } = options;
+  validateId(id); validateText(reason, 'closure reason'); requireObservationEvidence(evidence);
+  if (probe !== undefined && typeof probe !== 'function') throw refuse('writer probe must be a function');
+  const root = resolveRepoRoot(repoRoot); const observed = v2Descriptor(root);
+  const opening = observed.units.find(u => u.id === id);
+  if (!opening || observed.activeUnit !== id || !['started', 'blocked'].includes(opening.state)) throw refuse('close-incomplete requires the active unfinished unit');
+  observeStoppedWriter(root, opening, evidence, probe);
+  return withV2Mutation(root, { ...options, unitId: id }, (root, descriptor) => {
+    const unit = descriptor.units.find(u => u.id === id);
+    if (descriptor.activeUnit !== id || !['started', 'blocked'].includes(unit.state)) throw refuse('unit writer identity changed');
+    const statement = observeStoppedWriter(root, unit, evidence, probe);
+    verifyOpeningUnitInputs(root, unit);
+    const before = readRecordV2(root, descriptor, unit.before, 'snapshot').body;
+    const after = observeRunApplication(root, descriptor);
+    const targets = evidence.map((path, index) => ({ path: `${INCEPTION_AREA}/units/${id}/closure-evidence/${String(descriptor.nextRecord).padStart(4, '0')}/${String(index + 1).padStart(4, '0')}.bin`, content: readPublicationFile(root, path) }));
+    const snapshot = newRecordV2(descriptor, 'snapshot', after, id);
+    const reconciliation = newRecordV2(descriptor, 'reconciliation', { unitId: id, before: unit.before, after: snapshot.ref,
+      changes: applicationChanges(before, after), effects: descriptor.effects.filter(ref => readRecordV2(root, descriptor, ref).unitId === id),
+      evidence: targets.map(t => publicationRef(t.path, t.content)), reason, statement }, id, 1);
+    const changed = applicationIdentity(before) !== applicationIdentity(after);
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 2,
+      currentCycle: changed ? null : descriptor.currentCycle, verificationSession: changed ? null : descriptor.verificationSession,
+      units: descriptor.units.map(u => u.id === id ? { ...u, state: 'closed-incomplete', after: snapshot.ref,
+        evidence: [...u.evidence, reconciliation.ref], capture: u.capture && u.capture.state !== 'captured' ? { ...u.capture, state: 'incomplete', receipt: null } : u.capture } : u), activeUnit: null };
+    // Observation does not accept application drift, resolve effects/blocks, or
+    // produce a completed unit/result. Baseline deliberately retains its value.
+    return { id, state: 'closed-incomplete', reconciliation: reconciliation.ref,
+      ...publishMutation(root, descriptor, next, [...targets, snapshot.target, reconciliation.target], 'unit-close-incomplete', options) };
+  });
+}
+export function resolveBlock(repoRoot, options = {}) {
+  const { id, statement, evidence = [] } = options;
+  validateId(id); validateText(statement, 'human block statement'); requireObservationEvidence(evidence);
+  const root = resolveRepoRoot(repoRoot); const observed = v2Descriptor(root);
+  return withV2Mutation(root, { ...options, unitId: observed.activeUnit }, (root, descriptor) => {
+    if (descriptor.status === 'complete') throw refuse('complete run cannot resolve blocks');
+    const block = descriptor.blocks.find(b => b.id === id);
+    if (!block) throw refuse('named block does not exist');
+    const number = descriptor.nextRecord;
+    const targets = [...block.evidence.map(ref => readRefV2(root, ref)), ...evidence.map(path => readPublicationFile(root, path))]
+      .map((content, index) => ({ path: `${INCEPTION_AREA}/resume-notes/${String(number).padStart(4, '0')}-evidence/${String(index + 1).padStart(4, '0')}.bin`, content }));
+    const path = recordPath('resumeNotes', number);
+    const content = renderResumeNote({ number, descriptor, next: `Human decision resolves only block ${id}`, needs: targets.map(t => t.path),
+      note: `Block: ${id}\nReason: ${block.reason}\n\nHuman statement (verbatim):\n${statement}` });
+    const next = { ...descriptor, nextRecord: number + 1, blocks: descriptor.blocks.filter(b => b.id !== id),
+      resumeNotes: [...descriptor.resumeNotes, publicationRef(path, content)] };
+    return { id, note: path, ...publishMutation(root, descriptor, next, [...targets, { path, content }], 'block-resolve', options) };
+  });
+}
+export function resumeCheck(repoRoot) {
+  const root = resolveRepoRoot(repoRoot); const descriptor = v2Descriptor(root); const divergences = [];
+  if (descriptor.status === 'complete') {
+    const result = verifyComplete(root);
+    return { ok: result.ok, runId: descriptor.runId, activeUnit: null, next: descriptor.pending ? 'publish resume' : completedNextStep(root, descriptor), divergences: result.ok ? [] : [{ kind: 'completion', reason: result.reason }] };
+  }
+  const inspect = (name, action) => { try { action(); } catch (error) { divergences.push({ kind: name, reason: message(error) }); } };
+  for (const publication of descriptor.publications) inspect('record', () => verifyPublicationTargets(root, publication.targets));
+  if (descriptor.pending) divergences.push({ kind: 'pending', reason: `Resume publication ${descriptor.pending.id}` });
+  const latestApproval = descriptor.approvals.at(-1);
+  if (latestApproval) inspect('approval', () => readApprovalV2(root, descriptor, latestApproval));
+  inspect('baseline', () => assertBaseline(root, descriptor, observeRunApplication(root, descriptor)));
+  if (descriptor.checkpoints.length) inspect('checkpoint', () => {
+    // Historical checkpoint contents remain valid after explained unit changes.
+    // The latest baseline, rather than an older checkpoint, guards current work.
+    const checkpoint = readRecordV2(root, descriptor, descriptor.checkpoints.at(-1), 'checkpoint');
+    readRecordV2(root, descriptor, checkpoint.body.snapshot, 'snapshot');
+  });
+  let unresolved = [];
+  inspect('effect', () => { unresolved = readEffectsV2(root, descriptor).unresolved; });
+  for (const id of unresolved) divergences.push({ kind: 'effect', reason: `Effect ${id} remains uncertain` });
+  for (const block of descriptor.blocks) divergences.push({ kind: 'block', id: block.id, reason: block.reason });
+  return { ok: divergences.length === 0, runId: descriptor.runId, activeUnit: descriptor.activeUnit, next: descriptor.pending ? 'publish resume' : unresolved.length ? 'effect reconcile' : descriptor.activeUnit ? 'unit finish or reconcile' : nextStepFor(descriptor), divergences };
+}
+// Approval keeps source paths as logical identities; historical reads resolve
+// the frozen copies, including the contract, rather than changing working bytes.
+const CONTRACT_PATH_V2 = `${INCEPTION_AREA}/project/verification-contract.json`;
+function readApprovalV2(root, descriptor, ref, { historical = false } = {}) {
+  if (!ref || !descriptor.approvals.some(r => sameValue(r, ref))) throw refuse('approval is not recorded');
+  const record = readRecordV2(root, descriptor, ref, 'approval');
+  const { body } = record;
+  if (!body.documents.some(d => d.path === DECISION_REGISTER_PATH)
+    || !body.documents.some(d => sameValue(d, body.contract))) throw refuse('approval must include decision register and contract');
+  let contract;
+  for (const frozen of body.frozenDocuments) {
+    const source = body.documents.find(d => d.path === frozen.sourcePath);
+    if (!source.path.startsWith(PROJECT_PREFIX)) throw refuse('approval document must be in project scope');
+    const bytes = readRefV2(root, frozen.artifact);
+    if (!historical) readRefV2(root, source);
+    if (source.path === body.contract.path) contract = parseVerificationContract(bytes);
+  }
+  return { record, contract };
+}
+export function verifyApprovalV2(repoRoot, { approval, historical = false } = {}) {
+  const root = resolveRepoRoot(repoRoot); const descriptor = v2Descriptor(root);
+  const ref = approval === undefined ? descriptor.approvals.at(-1) : descriptor.approvals.find(r => r.path === approval);
+  const { record } = readApprovalV2(root, descriptor, ref, { historical });
+  return { ok: true, approval: ref.path, documents: record.body.documents, contract: record.body.contract };
+}
+function approveRunV2(repoRoot, options) {
+  validateText(options.statement, 'statement');
+  if (options.contract !== CONTRACT_PATH_V2) throw refuse('contract must be the exact project/verification-contract.json path');
+  if (!Array.isArray(options.documents) || !options.documents.includes(DECISION_REGISTER_PATH)) throw refuse('documents must include the decision register');
+  for (const path of options.documents) { validatePath(path); if (!path.startsWith(PROJECT_PREFIX)) throw refuse('document must be in project scope'); }
+  if (new Set(options.documents).size !== options.documents.length) throw refuse('duplicate document');
+  const paths = [...new Set([...options.documents, options.contract])].sort();
+  // Reject malformed external JSON before acquiring a writer; repeat the read
+  // and validation under the lease before freezing any approved bytes.
+  parseVerificationContract(readPublicationFile(resolveRepoRoot(repoRoot), options.contract));
+  return withV2Mutation(repoRoot, options, (root, descriptor) => {
+    if (descriptor.phase !== 'approval' || descriptor.status !== 'active') throw refuse('approve requires active approval phase');
+    if (descriptor.blocks.length || readEffectsV2(root, descriptor).unresolved.length) throw refuse('unresolved blocks or effects prevent approval');
+    // Inventory admission uses the prior frozen contract, so editing its working
+    // copy in approval cannot silently replace the accepted application baseline.
+    assertBaseline(root, descriptor, observeRunApplication(root, descriptor));
+    const requiredDocuments = new Set(descriptor.approvals.length ? readApprovalV2(root, descriptor, descriptor.approvals.at(-1), { historical: true }).record.body.documents.map(d => d.path) : []);
+    for (const unit of descriptor.units) for (const output of unit.outputs) {
+      if (output.role === 'decision' && output.path.startsWith(PROJECT_PREFIX)) requiredDocuments.add(output.path);
+    }
+    if ([...requiredDocuments].some(path => !paths.includes(path))) throw refuse('approval must include all current project decision documents');
+    const targets = paths.map((path, index) => ({ path: `${INCEPTION_AREA}/approvals/${String(descriptor.nextRecord).padStart(4, '0')}-documents/${String(index + 1).padStart(4, '0')}.bin`, content: readPublicationFile(root, path) }));
+    const documents = targets.map((t, i) => publicationRef(paths[i], t.content));
+    const contractRef = documents.find(d => d.path === options.contract);
+    const contract = parseVerificationContract(targets[paths.indexOf(options.contract)].content);
+    const approval = newRecordV2(descriptor, 'approval', { statement: options.statement, documents, contract: contractRef, frozenDocuments: targets.map((t, i) => ({ sourcePath: paths[i], artifact: publicationRef(t.path, t.content) })) });
+    const snapshot = newRecordV2(descriptor, 'snapshot', observeApplication(root, { contract: contractRef, roots: contract.roots, exclusions: contract.exclusions }), null, 1);
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 2, approvals: [...descriptor.approvals, approval.ref], currentCycle: null, verificationSession: null, baseline: snapshot.ref };
+    return { approval: approval.ref.path, documents, ...publishMutation(root, descriptor, next, [...targets, approval.target, snapshot.target], 'approve', options) };
+  });
+}
+function assertVerificationEnvironment(contract, environment) {
+  validateEnvironment(environment);
+  const names = values => [...values].sort();
+  if (!sameValue(names(environment.tools.map(t => t.name)), names(contract.environment.tools))
+    || !sameValue(names(environment.resources.map(r => r.id)), names(contract.environment.resources.map(r => r.id)))) throw refuse('environment must observe exactly the approved tools and resources');
+}
+function assertVerificationReady(root, descriptor) {
+  if (descriptor.phase !== 'verification' || descriptor.status !== 'active') throw refuse('verification requires active verification phase');
+  if (descriptor.blocks.length || readEffectsV2(root, descriptor).unresolved.length) throw refuse('unresolved blocks or effects prevent verification');
+  if (descriptor.pending) throw refuse('pending publication prevents verification');
+}
+function verificationContext(root, descriptor, path) {
+  assertVerificationReady(root, descriptor);
+  const ref = descriptor.currentCycle;
+  if (!ref || ref.path !== path) throw refuse('cycle must identify the current verification cycle');
+  const cycle = readRecordV2(root, descriptor, ref, 'cycle');
+  if (!sameValue(cycle.body.approval, descriptor.approvals.at(-1))) throw refuse('cycle approval is stale');
+  const { record: approval, contract } = readApprovalV2(root, descriptor, cycle.body.approval);
+  if (!sameValue(cycle.body.contract, approval.body.contract)) throw refuse('cycle contract is stale');
+  assertVerificationEnvironment(contract, cycle.body.environment);
+  const snapshot = readRecordV2(root, descriptor, cycle.body.snapshot, 'snapshot').body;
+  const observed = observeRunApplication(root, descriptor);
+  assertBaseline(root, descriptor, observed);
+  if (applicationIdentity(snapshot) !== applicationIdentity(observed)) throw refuse('cycle snapshot drift requires a new cycle');
+  const session = readRecordV2(root, descriptor, descriptor.verificationSession, 'verification-session');
+  if (!sameValue(session.body.cycle, ref)) throw refuse('verification session belongs to another cycle');
+  return { ref, cycle, contract, snapshot, observed, session };
+}
+export function beginVerification(repoRoot, options = {}) {
+  validateEnvironment(options.environment); validateText(options.reason);
+  return withV2Mutation(repoRoot, options, (root, descriptor) => {
+    assertVerificationReady(root, descriptor);
+    const approvalRef = descriptor.approvals.at(-1);
+    const { record: approval, contract } = readApprovalV2(root, descriptor, approvalRef);
+    assertVerificationEnvironment(contract, options.environment);
+    const observed = observeRunApplication(root, descriptor); assertBaseline(root, descriptor, observed);
+    if (descriptor.currentCycle) {
+      const prior = readRecordV2(root, descriptor, descriptor.currentCycle, 'cycle');
+      const priorSnapshot = readRecordV2(root, descriptor, prior.body.snapshot, 'snapshot').body;
+      if (sameValue(prior.body.approval, approvalRef) && sameValue(prior.body.contract, approval.body.contract)
+        && sameValue(prior.body.environment, options.environment) && applicationIdentity(priorSnapshot) === applicationIdentity(observed)) {
+        verificationContext(root, descriptor, descriptor.currentCycle.path);
+        return { cycle: descriptor.currentCycle, session: descriptor.verificationSession, noop: true };
+      }
+    }
+    const snapshot = newRecordV2(descriptor, 'snapshot', observed);
+    const cycle = newRecordV2(descriptor, 'cycle', { approval: approvalRef, contract: approval.body.contract, snapshot: snapshot.ref, environment: options.environment, previous: descriptor.cycles.at(-1) ?? null, reason: options.reason }, null, 1);
+    const session = newRecordV2(descriptor, 'verification-session', { cycle: cycle.ref, previous: null }, null, 2);
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 3, cycles: [...descriptor.cycles, cycle.ref], currentCycle: cycle.ref, verificationSession: session.ref, baseline: snapshot.ref };
+    return { cycle: cycle.ref, session: session.ref, ...publishMutation(root, descriptor, next, [snapshot.target, cycle.target, session.target], 'verification-begin', options) };
+  });
+}
+export function resumeVerification(repoRoot, options = {}) {
+  validatePath(options.cycle);
+  return withV2Mutation(repoRoot, options, (root, descriptor) => {
+    const context = verificationContext(root, descriptor, options.cycle);
+    const session = newRecordV2(descriptor, 'verification-session', { cycle: context.ref, previous: descriptor.verificationSession });
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 1, verificationSession: session.ref };
+    return { cycle: context.ref, session: session.ref, ...publishMutation(root, descriptor, next, [session.target], 'verification-resume', options) };
+  });
+}
+// The collector is the only command owner. These APIs only reserve and bind
+// evidence; recovering an exact pending publication never executes its command.
+function captureUnit(descriptor, id) {
+  const unit = descriptor.units.find(u => u.id === id);
+  if (!unit || unit.kind !== 'check') throw refuse('capture requires a check unit');
+  return unit;
+}
+function captureCommandFor(context, checkId, purpose) {
+  const check = context.contract.checks.find(c => c.id === checkId);
+  const command = purpose === 'check' ? check?.automatic : check?.reuse.automatic;
+  if (!command) throw refuse('automatic command is not approved for this check and purpose');
+  return command;
+}
+function assertCaptureCwd(root, cwd) {
+  if (cwd === '.') return;
+  let path = root;
+  for (const part of cwd.split('/')) {
+    path = join(path, part); const stat = lstatSync(path);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(path) !== resolve(path)) throw refuse('command cwd must be an ordinary confined directory');
+  }
+}
+function captureOptions(options, allowed) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) throw refuse('capture options must be an object');
+  for (const key of Object.keys(options)) if (!allowed.includes(key)) throw refuse(`unknown capture option: ${key}`);
+}
+function captureArgs(options) {
+  captureOptions(options, ['unit', 'cycle', 'check', 'purpose', 'expectedRevision', 'reservation', 'fault']);
+  validateId(options.unit); validatePath(options.cycle); validateId(options.check);
+  if (options.purpose !== undefined && !['check', 'revalidate'].includes(options.purpose)) throw refuse('invalid capture purpose');
+}
+export function beginCapture(repoRoot, options = {}) {
+  captureArgs(options);
+  const root = resolveRepoRoot(repoRoot); const initial = v2Descriptor(root);
+  const existing = captureUnit(initial, options.unit).capture;
+  if (existing) {
+    if (existing.cycle.path !== options.cycle || existing.checkId !== options.check || existing.purpose !== (options.purpose ?? 'check')) throw refuse('capture identity does not match the requested observation');
+    return { recovery: recoverCapture(root, { unit: options.unit }) };
+  }
+  return withV2Mutation(root, { ...options, unitId: options.unit }, (root, descriptor) => {
+    const context = verificationContext(root, descriptor, options.cycle);
+    const unit = captureUnit(descriptor, options.unit);
+    if (descriptor.activeUnit !== unit.id || unit.state !== 'started' || unit.capture !== null) throw refuse('capture requires an unused active check unit');
+    if (!unit.inputs.some(r => sameValue(r, context.ref)) || !unit.inputs.some(r => sameValue(r, descriptor.verificationSession))) throw refuse('capture unit must bind cycle and session');
+    const before = readRecordV2(root, descriptor, unit.before, 'snapshot').body;
+    if (applicationIdentity(before) !== applicationIdentity(context.observed)) throw refuse('capture opening snapshot drift');
+    const purpose = options.purpose ?? 'check'; const command = captureCommandFor(context, options.check, purpose);
+    assertCaptureCwd(root, command.cwd);
+    const directory = `${INCEPTION_AREA}/verification/captures/${String(descriptor.nextRecord).padStart(4, '0')}`;
+    // Even an empty pre-existing directory is foreign; a reservation is always
+    // published before the collector creates its namespace and any stream.
+    if (lstatOrNull(join(root, directory)) !== null) throw refuse('foreign capture destination');
+    const capture = { token: randomBytes(32).toString('hex'), pid: process.pid, cycle: context.ref, session: descriptor.verificationSession, checkId: options.check, purpose, command, stdoutPath: `${directory}/stdout.bin`, stderrPath: `${directory}/stderr.bin`, receiptPath: `${directory}/receipt.json`, state: 'running', receipt: null };
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 1, units: descriptor.units.map(u => u.id === unit.id ? { ...u, capture } : u) };
+    publishMutation(root, descriptor, next, [], 'capture-begin', options);
+    return { capture, root };
+  });
+}
+function captureOutcome(receipt) {
+  return receipt.signal === null && receipt.command.successExitCodes.includes(receipt.exitCode) ? 'succeeded' : 'failed';
+}
+function compactCapture(receipt, path) {
+  return { path, check: receipt.checkId, exitCode: receipt.exitCode, signal: receipt.signal, outcome: captureOutcome(receipt) };
+}
+function validateBoundCapture(root, descriptor, unit, receipt, context, snapshotReader = ref => readRecordV2(root, descriptor, ref, 'snapshot').body) {
+  const attempt = unit.capture;
+  if (!attempt || receipt.runId !== descriptor.runId || receipt.unitId !== unit.id || receipt.token !== attempt.token
+    || receipt.checkId !== attempt.checkId || receipt.purpose !== attempt.purpose || !sameValue(receipt.cycle, attempt.cycle)
+    || !sameValue(receipt.session, attempt.session) || !sameValue(receipt.command, attempt.command)
+    || receipt.stdout.path !== attempt.stdoutPath || receipt.stderr.path !== attempt.stderrPath
+    || !sameValue(receipt.before, unit.before)) throw refuse('capture receipt does not match its reservation');
+  if (!sameValue(receipt.cycle, context.ref) || !sameValue(receipt.command, captureCommandFor(context, receipt.checkId, receipt.purpose))) throw refuse('capture command or cycle is not approved');
+  if (!unit.inputs.some(r => sameValue(r, receipt.cycle)) || !unit.inputs.some(r => sameValue(r, receipt.session))) throw refuse('capture unit input mismatch');
+  const session = readRecordV2(root, descriptor, receipt.session, 'verification-session');
+  if (!sameValue(session.body.cycle, receipt.cycle) || !sameValue(receipt.environment, context.cycle.body.environment)) throw refuse('capture session or environment mismatch');
+  for (const ref of [receipt.stdout, receipt.stderr]) if (!sameValue(publicationFileRef(root, ref.path), ref)) throw refuse(`${ref.path}: capture stream digest diverges`);
+  for (const ref of [receipt.before, receipt.after, ...(unit.after ? [unit.after] : [])]) {
+    if (applicationIdentity(snapshotReader(ref)) !== applicationIdentity(context.snapshot)) throw refuse('capture snapshot drift');
+  }
+}
+function captureObservation(receipt, ref, record) {
+  return { ref, automatic: true, record: { record, body: { cycle: receipt.cycle, session: receipt.session, purpose: receipt.purpose, checks: [{ id: receipt.checkId, result: captureOutcome(receipt), observed: `Command exit ${receipt.exitCode ?? 'none'}, signal ${receipt.signal ?? 'none'}` }] } } };
+}
+function automaticObservations(root, descriptor, context, includeUnit = null) {
+  const observations = [];
+  for (const unit of descriptor.units) {
+    if (unit.kind !== 'check' || (unit.state !== 'completed' && unit.id !== includeUnit) || unit.capture?.state !== 'captured') continue;
+    if (!sameValue(unit.capture.cycle, context.ref)) continue;
+    for (const evidence of unit.evidence) readRefV2(root, evidence);
+    const ref = unit.capture.receipt;
+    if (!unit.evidence.some(r => sameValue(r, ref))) throw refuse('capture receipt is not bound to unit evidence');
+    const receipt = parseCaptureReceipt(readRefV2(root, ref));
+    validateBoundCapture(root, descriptor, unit, receipt, context);
+    observations.push(captureObservation(receipt, ref, Number(basename(receipt.after.path, '.json'))));
+  }
+  return observations.sort((a, b) => a.record.record - b.record.record);
+}
+function verificationObservations(root, descriptor, context, includeUnit = null) {
+  return [...manualObservations(root, descriptor, context, includeUnit), ...automaticObservations(root, descriptor, context, includeUnit)].sort((a, b) => a.record.record - b.record.record);
+}
+function resultBody(context, observations, status, checkId) {
+  const candidates = observations.filter(o => o.record.body.checks.some(c => c.id === checkId));
+  const latest = automatic => candidates.filter(o => !!o.automatic === automatic && o.record.body.purpose === 'check').at(-1)?.ref ?? null;
+  return { cycle: context.ref, checkId, result: status.result, automatic: latest(true), manual: latest(false), revalidation: status.evidence.filter(ref => candidates.some(o => sameValue(o.ref, ref) && o.record.body.purpose === 'revalidate')), observed: status.observed, limits: status.limits };
+}
+export function finishCapture(repoRoot, options = {}) {
+  captureOptions(options, ['unit', 'token', 'startedAt', 'endedAt', 'exitCode', 'signal', 'failure', 'expectedRevision', 'reservation', 'fault']);
+  validateId(options.unit);
+  if (typeof options.token !== 'string' || !/^[a-f0-9]{64}$/u.test(options.token)) throw refuse('capture token is required');
+  if (options.failure !== undefined) validateText(options.failure, 'capture failure');
+  return withV2Mutation(repoRoot, { ...options, unitId: options.unit }, (root, descriptor) => {
+    const unit = captureUnit(descriptor, options.unit); const attempt = unit.capture;
+    if (!attempt || attempt.token !== options.token || attempt.pid !== process.pid || attempt.state !== 'running') throw refuse('capture reservation is not owned by this collector');
+    if (options.failure !== undefined) return markCaptureIncomplete(root, descriptor, unit, options);
+    const context = verificationContext(root, descriptor, attempt.cycle.path);
+    const snapshot = newRecordV2(descriptor, 'snapshot', context.observed, unit.id);
+    const receipt = { schema: CAPTURE_SCHEMA_V2, runId: descriptor.runId, cycle: attempt.cycle, session: attempt.session, checkId: attempt.checkId, unitId: unit.id, purpose: attempt.purpose, token: attempt.token, command: attempt.command, startedAt: options.startedAt, endedAt: options.endedAt, exitCode: options.exitCode, signal: options.signal, stdout: publicationFileRef(root, attempt.stdoutPath), stderr: publicationFileRef(root, attempt.stderrPath), before: unit.before, after: snapshot.ref, environment: context.cycle.body.environment };
+    const content = serializeCaptureReceipt(receipt); const ref = publicationRef(attempt.receiptPath, content);
+    validateBoundCapture(root, descriptor, unit, receipt, context, r => sameValue(r, snapshot.ref) ? context.observed : readRecordV2(root, descriptor, r, 'snapshot').body);
+    const observations = [...verificationObservations(root, descriptor, context, unit.id), captureObservation(receipt, ref, descriptor.nextRecord)].sort((a, b) => a.record.record - b.record.record);
+    const status = verificationCheckStatuses(context, observations, descriptor.verificationSession).find(s => s.id === attempt.checkId);
+    const result = newRecordV2(descriptor, 'result', resultBody(context, observations, status, attempt.checkId), unit.id, 1);
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 2, units: descriptor.units.map(u => u.id === unit.id ? { ...u, capture: { ...attempt, state: 'captured', receipt: ref }, evidence: [...u.evidence, snapshot.ref, ref, result.ref] } : u) };
+    publishMutation(root, descriptor, next, [snapshot.target, { path: ref.path, content }, result.target], 'capture-finish', options);
+    return compactCapture(receipt, ref.path);
+  });
+}
+function assertDeadCollector(attempt, probe = pid => process.kill(pid, 0)) {
+  try { probe(attempt.pid); } catch (error) { if (error.code === 'ESRCH') return; throw refuse('capture collector is unverifiable'); }
+  throw refuse('capture collector is alive');
+}
+function markCaptureIncomplete(root, descriptor, unit, options) {
+  if (unit.capture.state !== 'incomplete') {
+    const next = { ...descriptor, units: descriptor.units.map(u => u.id === unit.id ? { ...u, capture: { ...u.capture, state: 'incomplete', receipt: null } } : u) };
+    publishMutation(root, descriptor, next, [], 'capture-incomplete', options);
+  }
+  return { path: unit.capture.receiptPath, check: unit.capture.checkId, exitCode: null, signal: null, outcome: 'incomplete' };
+}
+export function recoverCapture(repoRoot, options = {}) {
+  captureOptions(options, ['unit', 'probe', 'expectedRevision', 'reservation', 'fault']);
+  validateId(options.unit); assertV2Options(options);
+  const root = resolveRepoRoot(repoRoot); const observed = v2Descriptor(root);
+  if (options.expectedRevision !== undefined && options.expectedRevision !== observed.revision) throw refuse('incompatible capture revision');
+  const initial = captureUnit(observed, options.unit);
+  if (!initial.capture) throw refuse('no registered capture attempt');
+  if (initial.capture.state !== 'captured') assertDeadCollector(initial.capture, options.probe);
+  return withV2SnapshotLease(root, observed, descriptor => {
+    const unit = captureUnit(descriptor, options.unit);
+    if (!sameValue(unit.capture, initial.capture) || descriptor.revision !== observed.revision) throw refuse('capture reservation changed');
+    if (unit.capture.state !== 'captured') assertDeadCollector(unit.capture, options.probe);
+    if (descriptor.pending) {
+      const pending = descriptor.pending;
+      if (pending.operation !== 'capture-finish' || descriptor.activeUnit !== unit.id) throw refuse('unrelated pending publication prevents capture recovery');
+      const target = pending.targets.find(t => t.path === unit.capture.receiptPath);
+      if (!target) throw refuse('pending capture has no complete receipt');
+      const receipt = parseCaptureReceipt(Buffer.from(target.contentBase64, 'base64'));
+      const context = verificationContext(root, { ...descriptor, pending: null }, unit.capture.cycle.path);
+      validateBoundCapture(root, descriptor, unit, receipt, context, ref => {
+        const staged = pending.targets.find(t => sameValue({ path: t.path, bytes: t.bytes, sha256: t.sha256 }, ref));
+        return staged ? parseInceptionRecord(Buffer.from(staged.contentBase64, 'base64'), { runId: descriptor.runId }).body : readRecordV2(root, descriptor, ref, 'snapshot').body;
+      });
+      const bound = captureUnit(pending.nextDescriptor, unit.id).capture;
+      if (bound.state !== 'captured' || !sameValue(bound.receipt, publicationRef(target.path, Buffer.from(target.contentBase64, 'base64')))) throw refuse('pending capture binding mismatch');
+      finishPublicationLocked(root, descriptor, options);
+      return compactCapture(receipt, target.path);
+    }
+    if (unit.capture.state === 'captured') {
+      const context = verificationContext(root, descriptor, unit.capture.cycle.path);
+      const receipt = parseCaptureReceipt(readRefV2(root, unit.capture.receipt));
+      validateBoundCapture(root, descriptor, unit, receipt, context);
+      return compactCapture(receipt, unit.capture.receiptPath);
+    }
+    // No command rerun, no receipt import, and no success inferred from merely
+    // present output. Partial streams remain at their reserved exact paths.
+    return markCaptureIncomplete(root, descriptor, unit, options);
+  });
+}
+
+function manualObservations(root, descriptor, context, includeUnit = null) {
+  const observations = [];
+  for (const unit of descriptor.units) {
+    if (unit.kind !== 'check' || (unit.state !== 'completed' && unit.id !== includeUnit)) continue;
+    for (const ref of unit.evidence.filter(r => r.path.startsWith(`${INCEPTION_AREA}/verification/manual/`))) {
+      const manual = readRecordV2(root, descriptor, ref, 'manual');
+      if (!sameValue(manual.body.cycle, context.ref)) continue;
+      if (manual.unitId !== unit.id || !unit.inputs.some(r => sameValue(r, manual.body.cycle)) || !unit.inputs.some(r => sameValue(r, manual.body.session))) throw refuse('manual evidence has a different unit, cycle or session');
+      for (const evidence of unit.evidence) readRefV2(root, evidence);
+      if (!sameValue(manual.body.before, unit.before)) throw refuse('manual before is not the opening unit snapshot');
+      for (const snapshotRef of [manual.body.before, manual.body.after, ...(unit.after ? [unit.after] : [])]) {
+        const snapshot = readRecordV2(root, descriptor, snapshotRef, 'snapshot').body;
+        if (applicationIdentity(snapshot) !== applicationIdentity(context.snapshot)) throw refuse('manual snapshot drift');
+      }
+      const session = readRecordV2(root, descriptor, manual.body.session, 'verification-session');
+      if (!sameValue(session.body.cycle, context.ref) || !sameValue(manual.body.environment, context.cycle.body.environment)) throw refuse('manual session or environment mismatch');
+      for (const item of manual.body.checks) {
+        const check = context.contract.checks.find(c => c.id === item.id);
+        const procedure = manual.body.purpose === 'check' ? check?.manual : check?.reuse.manual;
+        if (!procedure || item.procedure !== procedure.procedure) throw refuse('manual procedure is not approved');
+      }
+      observations.push({ ref, record: manual });
+    }
+  }
+  return observations.sort((a, b) => a.record.record - b.record.record);
+}
+function verificationCheckStatuses(context, observations, sessionRef) {
+  return context.contract.checks.map(check => {
+    const candidates = observations.filter(o => o.record.body.checks.some(c => c.id === check.id));
+    const latest = automatic => candidates.filter(o => !!o.automatic === automatic && o.record.body.purpose === 'check').at(-1);
+    const primary = [check.automatic ? latest(true) : null, check.manual ? latest(false) : null].filter(Boolean);
+    const expected = Number(check.automatic !== null) + Number(check.manual !== null);
+    const item = o => o?.record.body.checks.find(c => c.id === check.id);
+    const newest = Math.max(0, ...primary.map(o => o.record.record));
+    const revalidation = [true, false].map(automatic => candidates.filter(o => !!o.automatic === automatic && o.record.body.purpose === 'revalidate'
+      && sameValue(o.record.body.session, sessionRef) && o.record.record > newest).at(-1));
+    const freshNeeded = primary.some(o => check.reuse.policy === 'reobserve' && !sameValue(o.record.body.session, sessionRef));
+    const refreshMissing = freshNeeded && ((check.reuse.automatic !== null && item(revalidation[0])?.result !== 'succeeded')
+      || (check.reuse.manual !== null && item(revalidation[1])?.result !== 'succeeded'));
+    let result = primary.some(o => item(o).result === 'failed') ? 'failed' : primary.length === expected ? 'succeeded' : primary.length ? 'executed' : 'not-executed';
+    if (refreshMissing) result = 'not-executed';
+    if (primary.length && revalidation.some(o => item(o)?.result === 'failed')) result = 'failed';
+    const evidence = [...primary, ...revalidation.filter(Boolean)].sort((a, b) => a.record.record - b.record.record);
+    return { id: check.id, required: check.required, type: check.type, result, evidence: evidence.map(o => o.ref), observed: item(evidence.at(-1))?.observed ?? '', limits: refreshMissing ? 'Current session reobservation required' : primary.length < expected ? 'Required evidence not recorded' : '' };
+  });
+}
+export function verificationStatus(repoRoot, { cycle } = {}) {
+  const root = resolveRepoRoot(repoRoot); const descriptor = v2Descriptor(root);
+  const context = verificationContext(root, descriptor, cycle);
+  const checks = verificationCheckStatuses(context, verificationObservations(root, descriptor, context), descriptor.verificationSession);
+  return { cycle: context.ref, session: descriptor.verificationSession, checks, missing: checks.filter(c => c.required && c.result !== 'succeeded').map(c => c.id) };
+}
+export function attestVerification(repoRoot, options = {}) {
+  validatePath(options.cycle); validateManualInput(options.input);
+  const root = resolveRepoRoot(repoRoot); const initial = v2Descriptor(root);
+  const unitId = initial.activeUnit;
+  if (unitId === null) throw refuse('manual attest requires an active check unit');
+  return withV2Mutation(root, { ...options, unitId }, (root, descriptor) => {
+    const context = verificationContext(root, descriptor, options.cycle);
+    const unit = descriptor.units.find(u => u.id === unitId);
+    if (unit.kind !== 'check' || unit.state !== 'started') throw refuse('manual attest requires a started check unit');
+    if (!unit.inputs.some(r => sameValue(r, context.ref)) || !unit.inputs.some(r => sameValue(r, descriptor.verificationSession))) throw refuse('check unit must bind current cycle and session before observation');
+    if (!sameValue(options.input.environment, context.cycle.body.environment)) throw refuse('manual environment differs from cycle');
+    // Each check has one manual observation boundary per unit, regardless of
+    // purpose. Distinct IDs can share a unit; another attempt needs a new unit.
+    const alreadyObserved = new Set(unit.evidence.filter(ref => ref.path.startsWith(`${INCEPTION_AREA}/verification/manual/`))
+      .flatMap(ref => readRecordV2(root, descriptor, ref, 'manual').body.checks.map(check => check.id)));
+    if (options.input.checks.some(check => alreadyObserved.has(check.id))) throw refuse('check already observed in this unit; register a new unit for another observation');
+    for (const item of options.input.checks) {
+      const check = context.contract.checks.find(c => c.id === item.id);
+      const procedure = options.input.purpose === 'check' ? check?.manual : check?.reuse.manual;
+      if (!procedure || procedure.procedure !== item.procedure) throw refuse('manual procedure must match the approved check or revalidation procedure');
+    }
+    const before = readRecordV2(root, descriptor, unit.before, 'snapshot').body;
+    if (applicationIdentity(before) !== applicationIdentity(context.observed)) throw refuse('manual check snapshot drift');
+    assertGitExplained(root, descriptor, before, context.observed, unit.id);
+    const snapshot = newRecordV2(descriptor, 'snapshot', context.observed, unit.id);
+    const manual = newRecordV2(descriptor, 'manual', { cycle: context.ref, session: descriptor.verificationSession, purpose: options.input.purpose, checks: options.input.checks, statement: options.input.statement, environment: options.input.environment, before: unit.before, after: snapshot.ref }, unit.id, 1);
+    const observations = [...verificationObservations(root, descriptor, context, unit.id), { ref: manual.ref, record: { record: descriptor.nextRecord + 1, body: { ...options.input, cycle: context.ref, session: descriptor.verificationSession } } }];
+    const statuses = verificationCheckStatuses(context, observations, descriptor.verificationSession);
+    const results = options.input.checks.map((check, index) => {
+      const status = statuses.find(s => s.id === check.id);
+      return newRecordV2(descriptor, 'result', resultBody(context, observations, status, check.id), unit.id, index + 2);
+    });
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 2 + results.length, units: descriptor.units.map(u => u.id === unit.id ? { ...u, evidence: [...u.evidence, snapshot.ref, manual.ref, ...results.map(r => r.ref)] } : u) };
+    return { manual: manual.ref, results: results.map(r => r.ref), ...publishMutation(root, descriptor, next, [snapshot.target, manual.target, ...results.map(r => r.target)], 'verification-attest', options) };
+  });
+}
+
+function validateSummaryLimits(limits) {
+  if (!Array.isArray(limits)) throw refuse('limits must be an array of descriptive strings');
+  limits.forEach(limit => validateText(limit, 'summary limit'));
+}
+function deriveSummary(context, descriptor, observations, limits) {
+  validateSummaryLimits(limits);
+  const checks = verificationCheckStatuses(context, observations, descriptor.verificationSession).map(check => ({ ...check,
+    observed: check.observed || 'No accepted evidence recorded',
+    limits: check.limits || (check.result === 'failed' ? 'Recorded check failed' : ''),
+  }));
+  const coverage = context.contract.coverage.map(entry => ({ id: entry.id, component: entry.component,
+    status: entry.status === 'future' ? 'future' : entry.checks.length > 0 && entry.checks.every(id => checks.find(check => check.id === id)?.result === 'succeeded') ? 'verified' : 'unverified', checks: entry.checks }));
+  return { cycle: context.ref, checks, coverage, limits: [...limits] };
+}
+function summaryTargets(descriptor, body) {
+  const summary = newRecordV2(descriptor, 'summary', body);
+  const reportPath = `${INCEPTION_AREA}/verification/reports/${String(descriptor.nextRecord + 1).padStart(4, '0')}.md`;
+  const report = { path: reportPath, content: renderVerificationReport(parseInceptionRecord(summary.target.content)) };
+  return { summary, report, reportRef: publicationRef(report.path, report.content) };
+}
+export function summarizeVerification(repoRoot, options = {}) {
+  validatePath(options.cycle); validateSummaryLimits(options.limits);
+  return withV2Mutation(repoRoot, options, (root, descriptor) => {
+    const context = verificationContext(root, descriptor, options.cycle);
+    verifyEvidenceClosure(root, descriptor);
+    const body = deriveSummary(context, descriptor, verificationObservations(root, descriptor, context), options.limits);
+    const { summary, report, reportRef } = summaryTargets(descriptor, body);
+    const next = { ...descriptor, nextRecord: descriptor.nextRecord + 2 };
+    return { summary: summary.ref, report: reportRef, ...publishMutation(root, descriptor, next, [summary.target, report], 'verification-summarize', options) };
+  });
+}
+
+// Traverse only declared immutable refs. Historical project inputs resolve through
+// their approved/frozen copies, never through an overwritten working document.
+// File existence, filesystem recency and agent-authored result prose confer no authority.
+function verifyEvidenceClosure(root, descriptor) {
+  for (const publication of descriptor.publications) verifyPublicationTargets(root, publication.targets);
+  const frozen = new Map();
+  const key = ref => JSON.stringify(ref);
+  for (const ref of descriptor.approvals) {
+    const { record } = readApprovalV2(root, descriptor, ref, { historical: true });
+    for (const document of record.body.documents) frozen.set(key(document), record.body.frozenDocuments.find(f => f.sourcePath === document.path).artifact);
+  }
+  const refs = new Map();
+  const walk = value => {
+    if (value === null || typeof value !== 'object') return;
+    if (Object.hasOwn(value, 'path') && Object.hasOwn(value, 'bytes') && Object.hasOwn(value, 'sha256') && !Object.hasOwn(value, 'mode')) { visit(value); return; }
+    for (const child of Object.values(value)) walk(child);
+  };
+  const visit = original => {
+    const ref = frozen.get(key(original)) ?? original;
+    const previous = refs.get(ref.path);
+    if (previous) { if (!sameValue(previous, ref)) throw refuse('evidence has conflicting reference digests'); return; }
+    // Hash streams without buffering their potentially large content in memory.
+    if (ref.path.endsWith('/stdout.bin') || ref.path.endsWith('/stderr.bin')) {
+      if (!sameValue(publicationFileRef(root, ref.path), ref)) throw refuse(`${ref.path}: stream digest diverges`);
+      refs.set(ref.path, ref); return;
+    }
+    const bytes = readRefV2(root, ref); refs.set(ref.path, ref);
+    if (/\/(?:approvals|snapshots|checkpoints|effects|reconciliations|verification\/(?:cycles|sessions|manual|results))\/\d+\.json$/u.test(ref.path)) {
+      const record = readRecordV2(root, descriptor, ref); walk(record.body);
+    } else if (/\/verification\/captures\/\d+\/receipt\.json$/u.test(ref.path)) {
+      const receipt = parseCaptureReceipt(bytes);
+      if (receipt.runId !== descriptor.runId) throw refuse('capture belongs to a different run');
+      walk(receipt);
+    }
+  };
+  walk([descriptor.approvals, descriptor.checkpoints, descriptor.effects, descriptor.cycles, descriptor.verificationSession, descriptor.baseline]);
+  for (const unit of descriptor.units) {
+    walk([unit.before, unit.after, unit.evidence, unit.capture?.receipt ?? null]);
+    for (const [index, input] of unit.inputs.entries()) {
+      const copy = { ...input, path: unitInputCopyPath(unit.id, index) };
+      if (!unit.evidence.some(ref => sameValue(ref, copy))) throw refuse('unit is missing its frozen opening input');
+      visit(copy);
+    }
+  }
+  return [...refs.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+}
+function assertTerminalWriters(root, descriptor) {
+  if (descriptor.activeUnit !== null || descriptor.units.some(unit => ['started', 'blocked'].includes(unit.state))) throw refuse('active writer prevents completion');
+  if (descriptor.units.some(unit => unit.capture && unit.capture.state !== 'captured' && unit.state !== 'closed-incomplete')) throw refuse('incomplete capture writer prevents completion');
+  if (descriptor.blocks.length || readEffectsV2(root, descriptor).unresolved.length) throw refuse('unresolved blocks or uncertain effects prevent completion');
+  if (descriptor.pending) throw refuse('pending publication prevents completion');
+}
+function finalCheckpoint(root, descriptor, context, path, { historical = false } = {}) {
+  const ref = descriptor.checkpoints.at(-1);
+  if (!ref || ref.path !== path) throw refuse('complete requires the current final checkpoint');
+  const checkpoint = readRecordV2(root, descriptor, ref, 'checkpoint');
+  const snapshot = readRecordV2(root, descriptor, checkpoint.body.snapshot, 'snapshot').body;
+  if (checkpoint.body.phase !== 'verification' || applicationIdentity(snapshot) !== applicationIdentity(context.snapshot)
+    || !sameValue(checkpoint.body.unitIds, descriptor.units.filter(unit => unit.state === 'completed').map(unit => unit.id))
+    || !sameValue(checkpoint.body.effectIds, readEffectsV2(root, descriptor).effects.map(effect => effect.id))
+    || checkpoint.record <= context.session.record
+    || descriptor.units.some(unit => unit.after && Number(basename(unit.after.path, '.json')) >= checkpoint.record)) throw refuse('final checkpoint does not cover the current verified delivery');
+  if (!historical && !sameValue(snapshot.git, context.observed.git)) throw refuse('final checkpoint Git drift');
+  return { ref, snapshot: checkpoint.body.snapshot };
+}
+function requireSuccessfulChecks(summary) {
+  const missing = summary.checks.filter(check => check.required && check.result !== 'succeeded');
+  if (missing.length) throw refuse(`required checks lack successful evidence: ${missing.map(check => check.id).join(', ')}`);
+}
+function latestSummaryLimits(root, descriptor) {
+  for (const publication of [...descriptor.publications].reverse()) {
+    const ref = publication.targets.find(target => target.path.startsWith(`${INCEPTION_AREA}/verification/summaries/`));
+    if (!ref) continue;
+    const summary = readRecordV2(root, descriptor, ref, 'summary');
+    if (sameValue(summary.body.cycle, descriptor.currentCycle)) return summary.body.limits;
+  }
+  return [];
+}
+function completionInputs(root, descriptor, options) {
+  assertTerminalWriters(root, descriptor);
+  const context = verificationContext(root, descriptor, options.cycle);
+  const checkpoint = finalCheckpoint(root, descriptor, context, options.checkpoint);
+  const evidence = verifyEvidenceClosure(root, descriptor);
+  const summary = deriveSummary(context, descriptor, verificationObservations(root, descriptor, context), options.limits ?? latestSummaryLimits(root, descriptor));
+  requireSuccessfulChecks(summary);
+  return { context, checkpoint, evidence, summary };
+}
+function completeV2(root, descriptor, options) {
+  if (options.verification !== undefined) throw refuse('v2 complete forbids --verification; report is derived from evidence');
+  if (options.gitCommits !== undefined) throw refuse('--git-commits is allowed only on a return to approval');
+  if (!options.cycle || !options.checkpoint) throw refuse('complete requires --cycle and --checkpoint');
+  const { context, checkpoint, evidence, summary: body } = completionInputs(root, descriptor, options);
+  const { summary, report, reportRef } = summaryTargets(descriptor, body);
+  const completion = newRecordV2(descriptor, 'completion', { approval: context.cycle.body.approval, contract: context.cycle.body.contract,
+    cycle: context.ref, snapshot: checkpoint.snapshot, checkpoint: checkpoint.ref, summary: summary.ref, report: reportRef, evidence }, null, 2);
+  const next = { ...descriptor, nextRecord: descriptor.nextRecord + 3, phase: 'complete', status: 'complete', completion: completion.ref,
+    history: [...descriptor.history, { at: options.now.toISOString(), from: { phase: descriptor.phase, status: descriptor.status }, to: { phase: 'complete', status: 'complete' }, reason: options.reason }] };
+  return { phase: 'complete', status: 'complete', completion: completion.ref,
+    ...publishMutation(root, descriptor, next, [summary.target, report, { path: `${INCEPTION_AREA}/verification/results.md`, content: report.content }, completion.target], 'complete', options) };
+}
+
+function verifyTerminalReservation(root, descriptor) {
+  const pending = descriptor.pending;
+  const plannedRecord = (ref, kind) => {
+    const target = pending.targets.find(target => sameValue(({ path: target.path, bytes: target.bytes, sha256: target.sha256 }), ref));
+    if (!target) throw refuse(`terminal reservation is missing ${kind}`);
+    const record = parseInceptionRecord(Buffer.from(target.contentBase64, 'base64'), { runId: descriptor.runId, number: Number(basename(ref.path, '.json')) });
+    if (record.kind !== kind) throw refuse(`terminal reservation expected ${kind}`);
+    return record;
+  };
+  const completion = plannedRecord(pending.nextDescriptor.completion, 'completion');
+  const summary = plannedRecord(completion.body.summary, 'summary');
+  const { context, checkpoint, evidence, summary: derived } = completionInputs(root, { ...descriptor, pending: null }, {
+    cycle: completion.body.cycle.path, checkpoint: completion.body.checkpoint.path, limits: summary.body.limits,
+  });
+  const report = renderVerificationReport(summary);
+  const expected = { approval: context.cycle.body.approval, contract: context.cycle.body.contract, cycle: context.ref,
+    snapshot: checkpoint.snapshot, checkpoint: checkpoint.ref, summary: completion.body.summary,
+    report: publicationRef(completion.body.report.path, report), evidence };
+  if (!sameValue(summary.body, derived) || !sameValue(completion.body, expected)) throw refuse('terminal reservation differs from receipt-derived completion');
+  for (const path of [completion.body.report.path, `${INCEPTION_AREA}/verification/results.md`]) {
+    const target = pending.targets.find(target => target.path === path);
+    if (!target || !Buffer.from(target.contentBase64, 'base64').equals(Buffer.from(report))) throw refuse('terminal reservation report diverges');
+  }
+}
+
+function verifyCompletedState(root, descriptor, { verifyGovernance = verifyCanonicalGovernance } = {}) {
+  if (descriptor.phase !== 'complete' || descriptor.status !== 'complete' || descriptor.completion === null) throw refuse('run is not complete');
+  assertTerminalWriters(root, descriptor);
+  const completion = readRecordV2(root, descriptor, descriptor.completion, 'completion');
+  const body = completion.body;
+  if (!sameValue(body.approval, descriptor.approvals.at(-1)) || !sameValue(body.cycle, descriptor.currentCycle)) throw refuse('completion approval or cycle mismatch');
+  const { record: approval, contract } = readApprovalV2(root, descriptor, body.approval);
+  if (!sameValue(body.contract, approval.body.contract)) throw refuse('completion contract mismatch');
+  const cycle = readRecordV2(root, descriptor, body.cycle, 'cycle');
+  if (!sameValue(cycle.body.approval, body.approval) || !sameValue(cycle.body.contract, body.contract)) throw refuse('completion cycle binding mismatch');
+  assertVerificationEnvironment(contract, cycle.body.environment);
+  const snapshot = readRecordV2(root, descriptor, cycle.body.snapshot, 'snapshot').body;
+  const finalSnapshot = readRecordV2(root, descriptor, body.snapshot, 'snapshot').body;
+  const baseline = readRecordV2(root, descriptor, descriptor.baseline, 'snapshot').body;
+  if (![finalSnapshot, baseline].every(value => applicationIdentity(value) === applicationIdentity(snapshot))) throw refuse('completion snapshot mismatch');
+  const session = readRecordV2(root, descriptor, descriptor.verificationSession, 'verification-session');
+  if (!sameValue(session.body.cycle, body.cycle)) throw refuse('completion session mismatch');
+  let observed = observeApplication(root, { contract: body.contract, roots: contract.roots, exclusions: contract.exclusions });
+  // The canonical init receipt can certify an exact inverse projection.
+  // No provider directory is implicitly excluded here.
+  if (verifyGovernance !== undefined) {
+    if (typeof verifyGovernance !== 'function') throw refuse('governance verifier must be a synchronous function');
+    const projected = verifyGovernance(root, { descriptor, completion, snapshot, observed });
+    if (projected !== null && projected !== undefined) {
+      // Reuse the snapshot schema instead of accepting a boolean bypass.
+      serializeInceptionRecord({ schema: 'steepy-inception-record/v2', runId: descriptor.runId, record: 1, kind: 'snapshot', at: completion.at, unitId: null, body: projected });
+      observed = projected;
+    }
+  }
+  if (applicationIdentity(snapshot) !== applicationIdentity(observed)) throw refuse('application-drift: completed application identity changed');
+  const context = { ref: body.cycle, cycle, contract, snapshot, observed, session };
+  const checkpoint = finalCheckpoint(root, descriptor, context, body.checkpoint.path, { historical: true });
+  if (!sameValue(checkpoint.ref, body.checkpoint) || !sameValue(checkpoint.snapshot, body.snapshot)) throw refuse('completion checkpoint mismatch');
+  const evidence = verifyEvidenceClosure(root, descriptor);
+  if (!sameValue(evidence, body.evidence)) throw refuse('completion transitive evidence closure mismatch');
+  const summary = readRecordV2(root, descriptor, body.summary, 'summary');
+  const derived = deriveSummary(context, descriptor, verificationObservations(root, descriptor, context), summary.body.limits);
+  requireSuccessfulChecks(derived);
+  if (!sameValue(summary.body, derived)) throw refuse('summary differs from receipt-derived results');
+  const report = renderVerificationReport(summary);
+  if (!readRefV2(root, body.report).equals(Buffer.from(report))) throw refuse('report differs from receipt-derived summary');
+  if (!readPublicationFile(root, `${INCEPTION_AREA}/verification/results.md`).equals(Buffer.from(report))) throw refuse('final report projection diverges');
+  for (const ref of descriptor.resumeNotes) readRefV2(root, ref);
+  return { ok: true, runId: descriptor.runId, completion: descriptor.completion,
+    inputPaths: [...new Set([RUN_DESCRIPTOR_PATH, body.approval.path, ...approval.body.documents.map(ref => ref.path), body.summary.path, body.report.path])],
+    checks: derived.checks.map(({ id, required, type, result }) => ({ id, required, type, result })), coverage: derived.coverage };
+}
+export function verifyComplete(repoRoot, options = {}) {
+  try { const root = resolveRepoRoot(repoRoot); return verifyCompletedState(root, v2Descriptor(root), options); }
+  catch (error) { return { ok: false, reason: message(error) }; }
+}
+function completedNextStep(root, descriptor) {
+  const hasClosingNote = descriptor.resumeNotes.some(ref => {
+    try { return readRefV2(root, ref).toString('utf8').includes(`- \`${descriptor.completion.path}\``); } catch { return false; }
+  });
+  return hasClosingNote ? nextStepFor(descriptor) : 'resume closing presentation only; reference the published completion in a resume-note';
+}
+
+function v2Input(root, path) {
+  validatePath(path); if (!path.startsWith(`${INCEPTION_AREA}/`)) throw refuse('input must be an exact inception file');
+  return parseV2Json(readPublicationFile(root, path));
+}
+
+function unitBeginCommand(root, values) {
+  validatePath(values.input);
+  if (!values.input.startsWith(`${INCEPTION_AREA}/`)) throw refuse('unit input must be an exact inception file');
+  return { ok: true, fields: beginUnit(root, { id: values.id, input: parseV2Json(readPublicationFile(root, values.input)), previousUnit: values['previous-unit'] ?? null }) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1498,6 +2682,33 @@ const STRING_OPTION = Object.freeze({ type: 'string' });
 const GIT_COMMITS_CHOICES = Object.freeze(['allowed', 'forbidden']);
 
 const COMMANDS = Object.freeze({
+  block: { subcommands: {
+    resolve: { options: { 'repo-root': REPO_ROOT_OPTION, id: STRING_OPTION, statement: STRING_OPTION, evidence: { type: 'string', multiple: true } }, required: ['id', 'statement', 'evidence'], enums: {}, run: (root, values) => ({ ok: true, fields: resolveBlock(root, { id: values.id, statement: values.statement, evidence: values.evidence }) }) },
+  } },
+  'verify-complete': { options: { 'repo-root': REPO_ROOT_OPTION }, required: [], enums: {}, run: root => { const result = verifyComplete(root); return { ok: result.ok, fields: result, error: result.reason }; } },
+  'resume-check': { options: { 'repo-root': REPO_ROOT_OPTION }, required: [], enums: {}, run: root => { const result = resumeCheck(root); return { ok: result.ok, fields: result, error: result.ok ? undefined : 'resume has unresolved divergences' }; } },
+  verification: { subcommands: {
+    summarize: { options: { 'repo-root': REPO_ROOT_OPTION, cycle: STRING_OPTION, limits: STRING_OPTION }, required: ['cycle', 'limits'], enums: {}, run: (root, values) => ({ ok: true, fields: summarizeVerification(root, { cycle: values.cycle, limits: v2Input(root, values.limits) }) }) },
+    begin: { options: { 'repo-root': REPO_ROOT_OPTION, environment: STRING_OPTION, reason: STRING_OPTION }, required: ['environment', 'reason'], enums: {}, run: (root, values) => ({ ok: true, fields: beginVerification(root, { environment: v2Input(root, values.environment), reason: values.reason }) }) },
+    resume: { options: { 'repo-root': REPO_ROOT_OPTION, cycle: STRING_OPTION }, required: ['cycle'], enums: {}, run: (root, values) => ({ ok: true, fields: resumeVerification(root, { cycle: values.cycle }) }) },
+    status: { options: { 'repo-root': REPO_ROOT_OPTION, cycle: STRING_OPTION }, required: ['cycle'], enums: {}, run: (root, values) => ({ ok: true, fields: verificationStatus(root, { cycle: values.cycle }) }) },
+    attest: { options: { 'repo-root': REPO_ROOT_OPTION, cycle: STRING_OPTION, input: STRING_OPTION }, required: ['cycle', 'input'], enums: {}, run: (root, values) => ({ ok: true, fields: attestVerification(root, { cycle: values.cycle, input: v2Input(root, values.input) }) }) },
+  } },
+  unit: { subcommands: {
+    'close-incomplete': { options: { 'repo-root': REPO_ROOT_OPTION, id: STRING_OPTION, reason: STRING_OPTION, evidence: { type: 'string', multiple: true } }, required: ['id', 'reason', 'evidence'], enums: {}, run: (root, values) => ({ ok: true, fields: closeIncompleteUnit(root, { id: values.id, reason: values.reason, evidence: values.evidence }) }) },
+    reconcile: { options: { 'repo-root': REPO_ROOT_OPTION, id: STRING_OPTION, input: STRING_OPTION }, required: ['id', 'input'], enums: {}, run: (root, values) => ({ ok: true, fields: reconcileUnit(root, { id: values.id, input: v2Input(root, values.input) }) }) },
+    begin: { options: { 'repo-root': REPO_ROOT_OPTION, id: STRING_OPTION, input: STRING_OPTION, 'previous-unit': STRING_OPTION }, required: ['id', 'input'], enums: {}, run: unitBeginCommand },
+    finish: { options: { 'repo-root': REPO_ROOT_OPTION, id: STRING_OPTION, evidence: { type: 'string', multiple: true } }, required: ['id'], enums: {}, run: (root, values) => ({ ok: true, fields: finishUnit(root, { id: values.id, evidence: values.evidence }) }) },
+  } },
+  publish: { subcommands: {
+    resume: { options: { 'repo-root': REPO_ROOT_OPTION, reservation: STRING_OPTION }, required: ['reservation'], enums: {}, run: (root, values) => ({ ok: true, fields: resumePublication(root, { reservation: values.reservation }) }) },
+  } },
+  inspect: {
+    options: { 'repo-root': REPO_ROOT_OPTION },
+    required: [],
+    enums: {},
+    run: inspectCommand,
+  },
   classify: {
     options: { 'repo-root': REPO_ROOT_OPTION, maturity: STRING_OPTION },
     required: [],
@@ -1519,6 +2730,7 @@ const COMMANDS = Object.freeze({
       'git-commits': STRING_OPTION,
       checkpoint: STRING_OPTION,
       verification: STRING_OPTION,
+      cycle: STRING_OPTION,
     },
     required: ['to', 'reason'],
     enums: { to: TRANSITION_TARGETS, 'git-commits': GIT_COMMITS_CHOICES },
@@ -1536,7 +2748,7 @@ const COMMANDS = Object.freeze({
     run: resumeNoteCommand,
   },
   approve: {
-    options: { 'repo-root': REPO_ROOT_OPTION, statement: STRING_OPTION, document: { type: 'string', multiple: true } },
+    options: { 'repo-root': REPO_ROOT_OPTION, statement: STRING_OPTION, document: { type: 'string', multiple: true }, contract: STRING_OPTION },
     required: ['statement', 'document'],
     enums: {},
     run: approveCommand,
@@ -1554,20 +2766,19 @@ const COMMANDS = Object.freeze({
         options: {
           'repo-root': REPO_ROOT_OPTION,
           id: STRING_OPTION,
-          kind: STRING_OPTION,
-          summary: STRING_OPTION,
-          authorization: STRING_OPTION,
+          input: STRING_OPTION,
         },
-        required: ['id', 'kind', 'summary'],
-        enums: { kind: EFFECT_KINDS },
+        required: ['id', 'input'],
+        enums: {},
         run: effectIntentCommand,
       },
       outcome: {
-        options: { 'repo-root': REPO_ROOT_OPTION, id: STRING_OPTION, result: STRING_OPTION, observed: STRING_OPTION },
-        required: ['id', 'result', 'observed'],
-        enums: { result: EFFECT_RESULTS },
+        options: { 'repo-root': REPO_ROOT_OPTION, id: STRING_OPTION, input: STRING_OPTION },
+        required: ['id', 'input'],
+        enums: {},
         run: effectOutcomeCommand,
       },
+      reconcile: { options: { 'repo-root': REPO_ROOT_OPTION, id: STRING_OPTION, input: STRING_OPTION }, required: ['id', 'input'], enums: {}, run: (root, values) => ({ ok: true, fields: recordEffectOutcome(root, { id: values.id, input: v2Input(root, values.input), method: 'reconciled' }) }) },
       status: {
         options: { 'repo-root': REPO_ROOT_OPTION },
         required: [],
@@ -1598,8 +2809,8 @@ const COMMANDS = Object.freeze({
     },
   },
   abandon: {
-    options: { 'repo-root': REPO_ROOT_OPTION, reason: STRING_OPTION },
-    required: ['reason'],
+    options: { 'repo-root': REPO_ROOT_OPTION, reason: STRING_OPTION, resume: { type: 'boolean' } },
+    required: [],
     enums: {},
     run: abandonCommand,
   },
@@ -1688,7 +2899,11 @@ export function main(argv = process.argv.slice(2)) {
     command = resolved.command;
     if (resolved.error) throw resolved.error;
     const values = parseCommandArgs(argv, resolved.spec, resolved.positionals);
-    result = resolved.spec.run(resolveRepoRoot(values['repo-root']), values);
+    const root = resolveRepoRoot(values['repo-root']);
+    // Admission precedes command-specific input reads, writer leases and files.
+    // verify-complete returns its read-only legacy refusal in the C6 shape.
+    if (!['start', 'verify-complete', ...LEGACY_ACTIONS].includes(command)) v2Descriptor(root);
+    result = resolved.spec.run(root, values);
     exitCode = result.ok ? 0 : 1;
   } catch (error) {
     result = { ok: false, fields: {}, error: message(error) };

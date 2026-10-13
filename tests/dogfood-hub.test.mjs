@@ -78,6 +78,21 @@ function stableApexMarkdownPaths(directory = join(repoRoot, '.apex')) {
   });
 }
 
+test('stable inception v2 knowledge preserves verification and recovery authority', () => {
+  const conventions = readFileSync(join(repoRoot, '.apex', 'conventions.md'), 'utf8');
+  const glossary = readFileSync(join(repoRoot, '.apex', 'glossary.md'), 'utf8');
+  for (const term of ['Unità persistita', 'Ciclo di verifica', 'Contratto dei controlli', 'Fotografia applicativa', 'Ricevuta di raccolta']) assert.ok(glossary.includes(`**${term}**`));
+  assert.match(conventions, /all required automatic and manual checks[\s\S]*new cycle/i);
+  assert.match(conventions, /automatically[\s\S]*correlation[\s\S]*ambiguous[\s\S]*human/i);
+  assert.match(conventions, /verify-complete[\s\S]*ordinary discovery[\s\S]*no migration/i);
+  const skills = readFileSync(join(repoRoot, '.apex', 'standards', 'skills.md'), 'utf8');
+  assert.match(skills, /research and bootstrap[\s\S]*delegate[\s\S]*one.*unit.*at a time/i);
+  const scripts = readFileSync(join(repoRoot, '.apex', 'standards', 'scripts.md'), 'utf8');
+  assert.match(scripts, /pending[\s\S]*reservation[\s\S]*never.*replay/i);
+  const tests = readFileSync(join(repoRoot, '.apex', 'standards', 'tests.md'), 'utf8');
+  assert.match(tests, /inception[\s\S]*NOT RUN[\s\S]*native/i);
+});
+
 test('the repo .apex/ hub is coherent (dogfood gate)', () => {
   assert.deepEqual(collectViolations(repoRoot), []);
 });

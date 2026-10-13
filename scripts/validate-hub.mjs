@@ -20,7 +20,7 @@ import {
   priorCanonicalRelease,
   renderProjectArtifact,
 } from './project-scaffold.mjs';
-import { RUN_DESCRIPTOR_PATH, parseRunDescriptor, nextStepFor } from './inception-state.mjs';
+import { RUN_DESCRIPTOR_PATH, ABANDON_INTENT_PATH, inspectAbandon, parseRunDescriptor, nextStepFor } from './inception-state.mjs';
 
 // A standard past this many lines is a candidate for the modular folder form
 // (a directory of smaller files instead of one long one). This is a `warn`, not
@@ -28,10 +28,10 @@ import { RUN_DESCRIPTOR_PATH, parseRunDescriptor, nextStepFor } from './inceptio
 const STANDARD_WARN_LINES = 150;
 const MAX_STABLE_FILE_BYTES = 1024 * 1024;
 const ROOT_ADMISSION = Symbol('root-admission');
-// Private reader option: admits exactly `.apex/inception/run.json` through the
+// Private reader option: admits an exact descriptor or C7 operation record through the
 // local-area exclusion. Only the pre-hub descriptor read passes it.
 const RUN_DESCRIPTOR_READ = Symbol('run-descriptor-read');
-const RUN_DESCRIPTOR_COMPONENTS = RUN_DESCRIPTOR_PATH.split('/');
+// The private admission value is one exact path supplied by the C7 verifier.
 // Private collectViolations option: receives the pre-hub run status that the
 // same descriptor read produced, so main() never reads the descriptor twice.
 const PRE_HUB_STATUS = Symbol('pre-hub-status');
@@ -175,7 +175,7 @@ function createStableReader(hubRoot, violations, rootAdmission = admitHubRoot(hu
 
   function inspect(rawPath, options = {}) {
     const { base = '', kind = 'file', reportUnsafe = true } = options;
-    const descriptorRead = options[RUN_DESCRIPTOR_READ] === true;
+    const descriptorRead = options[RUN_DESCRIPTOR_READ] === true || typeof options[RUN_DESCRIPTOR_READ] === 'string';
     if (typeof rawPath !== 'string' || rawPath.length === 0 || isAbsolute(rawPath)) {
       if (reportUnsafe) report(rawPath || '.', 'escapes the repository root');
       return { state: 'unsafe' };
@@ -185,12 +185,11 @@ function createStableReader(hubRoot, violations, rootAdmission = admitHubRoot(hu
     const baseParts = splitNativePath(base).filter((part) => part !== '' && part !== '.');
     const rawParts = splitNativePath(rawPath);
     const display = displayNativePath([base, rawPath].filter(Boolean).join(sep));
-    // The descriptor admission takes the exact components `.apex`, `inception`,
-    // `run.json`: no base, no `.`/`..`, no other spelling.
-    if (descriptorRead && (base !== '' || kind !== 'file'
-      || rawParts.length !== RUN_DESCRIPTOR_COMPONENTS.length
-      || rawParts.some((part, index) => part !== RUN_DESCRIPTOR_COMPONENTS[index]))) {
-      if (reportUnsafe) report(display, 'is not the inception run descriptor');
+    // Only a private exact-path capability can cross the inception exclusion.
+    // The archive verifier derives these paths from a strictly parsed pointer.
+    const admittedPath = options[RUN_DESCRIPTOR_READ] === true ? RUN_DESCRIPTOR_PATH : options[RUN_DESCRIPTOR_READ];
+    if (descriptorRead && (base !== '' || rawPath !== admittedPath || rawParts.some(part => !part || part === '.' || part === '..'))) {
+      if (reportUnsafe) report(display, 'is not the exact inception record');
       return { state: 'unsafe', label: display };
     }
     const stack = [];
@@ -301,7 +300,7 @@ function createStableReader(hubRoot, violations, rootAdmission = admitHubRoot(hu
     const reportUnsafe = options.reportUnsafe !== false;
     // PD3c: the admitted area file must have exactly one link, so a hard link
     // can never expose bytes outside the area.
-    const descriptorRead = options[RUN_DESCRIPTOR_READ] === true;
+    const descriptorRead = options[RUN_DESCRIPTOR_READ] === true || typeof options[RUN_DESCRIPTOR_READ] === 'string';
     const hardLinked = (stat) => {
       if (!descriptorRead || stat.nlink === 1n) return false;
       if (reportUnsafe) report(admitted.label, 'is hard-linked');
@@ -1006,10 +1005,9 @@ function validatePortableV1(hubRoot, indexText, reader, templatesDir) {
   return violations;
 }
 
-// Pre-hub state: `.apex/` is present without `_INDEX.md`, so the only stable
-// read is the inception run descriptor at its canonical path; no other run file
-// is ever read. Returns `missing` on ENOENT, `valid` with the parsed descriptor,
-// or `invalid` with only the errors that name `.apex/inception/run.json`.
+// Pre-hub descriptor admission remains exact and bounded. C7 separately admits
+// the canonical abandon pointer and only the archive records it identifies.
+// No child report or incidental area file becomes a stable document input.
 function decodeRunDescriptor(bytes) {
   try {
     return STRICT_UTF8.decode(bytes);
@@ -1036,12 +1034,41 @@ function readPreHubDescriptor(reader, violations) {
   }
 }
 
+function readPreHubState(root, reader, violations) {
+  const descriptor = readPreHubDescriptor(reader, violations);
+  if (descriptor.state === 'invalid') return descriptor;
+  const before = violations.length;
+  try {
+    const readFile = path => {
+      const result = reader.read(path, { [RUN_DESCRIPTOR_READ]: path });
+      if (result.state === 'missing') return null;
+      if (result.bytes === undefined) throw new Error(`${path}: unsafe inception record`);
+      return result.bytes;
+    };
+    const inspectEntry = path => {
+      const result = reader.inspect(path, { kind: 'entry', [RUN_DESCRIPTOR_READ]: path });
+      if (result.state === 'missing') return null;
+      if (result.state !== 'present') throw new Error(`${path}: unsafe archive entry`);
+      if (result.stat.isFile() && result.stat.nlink !== 1n) throw new Error(`${path}: hard-linked archive entry`);
+      return result;
+    };
+    const abandoned = inspectAbandon(root, { readFile, inspectEntry });
+    if (abandoned?.intent.status === 'prepared') return { state: 'valid', descriptor: {
+      runId: abandoned.intent.runId, phase: 'abandon', status: 'prepared', nextStep: 'resume abandon with --resume',
+    } };
+    return descriptor;
+  } catch (error) {
+    const observed = violations.slice(before);
+    return { state: 'invalid', violations: observed.length ? observed : [{ level: 'error', msg: `inception abandon intent ${ABANDON_INTENT_PATH}: ${error.message}` }] };
+  }
+}
+
 function preHubStatusOf(descriptor) {
   return {
     runId: descriptor.runId,
     phase: descriptor.phase,
     status: descriptor.status,
-    nextStep: nextStepFor(descriptor),
+    nextStep: descriptor.nextStep ?? nextStepFor(descriptor),
   };
 }
 
@@ -1054,7 +1081,7 @@ export function preHubInceptionStatus(hubRoot) {
   const reader = createStableReader(hubRoot, violations, rootAdmission);
   if (reader.inspect('.apex', { kind: 'directory' }).state !== 'present') return null;
   if (reader.read(join('.apex', '_INDEX.md')).state !== 'missing') return null;
-  const descriptor = readPreHubDescriptor(reader, violations);
+  const descriptor = readPreHubState(rootAdmission.root, reader, violations);
   return descriptor.state === 'valid' ? preHubStatusOf(descriptor.descriptor) : null;
 }
 
@@ -1079,9 +1106,9 @@ export function collectViolations(hubRoot, opts = {}) {
   if (apexState.state !== 'present') return violations;
   const indexResult = reader.read(join('.apex', '_INDEX.md'));
   if (indexResult.state === 'missing') {
-    // Before a hub exists, a valid inception run descriptor is the whole state:
-    // no other check runs. Without one, the hub is broken as before.
-    const descriptor = readPreHubDescriptor(reader, violations);
+    // Before a hub exists, a valid descriptor or pending C7 archive is the
+    // whole state. A completed archive alone restores the missing-index error.
+    const descriptor = readPreHubState(admittedRoot, reader, violations);
     if (descriptor.state === 'missing') {
       return [{ level: 'error', msg: `missing _INDEX.md at ${indexPath}` }];
     }

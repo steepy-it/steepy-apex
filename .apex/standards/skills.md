@@ -9,7 +9,7 @@
   short-circuit Gear 2 through brainstorm → implement, run Gear 3 through brainstorm → plan →
   implement → review, and assign Gear 4 to `loop-engineer`; standalone hub-aware skills are `init`,
   `new-surface`, `check`, and additive/re-runnable `discovery`; `inception` is pre-hub (conventions.md → "Inception (pre-hub)"). Chain skills carry gear-0, a checklist,
-  and the locked Model Selection block; `discovery` has its own prose dispatch policy; the rest do not dispatch.
+  and the locked Model Selection block; `discovery` has its own prose dispatch policy; inception research and bootstrap delegate when available, one persisted unit at a time; the other standalone skills do not dispatch.
 - Does NOT own: the engine scripts they call (→ `scripts`) or the markdown templates they copy
   (→ `templates`).
 - Exemplar: `skills/init/SKILL.md`
@@ -45,7 +45,7 @@
   A `HALTED` result is a permanently abandoned run, never an exact-resume handoff; preserve all of its state and recover only with a new ratified goal at a distinct goal path and loop workspace.
 - Project setup retains one immutable user-confirmed interview record, derives the planner's exact
   five-key Project model v1, and applies preview → conflict resolution → zero-conflict preview → apply.
-  Init/repair share this path; conflict prompts expose only planner choices and a second repair is a
+  Certified post-complete init binds exact governance provenance; pending recovery uses the retained original validated plan with public idempotent apply, never fresh replanning. Init/repair share this path; conflict prompts expose only planner choices and a second repair is a
   byte/mode/mtime no-op. Surface scaffolding separates unbound preparation from active-v1 addition;
   the latter uses the public planner to keep root, routing, create-only standard, and specialist triad
   coherent. Planner-owned provenance resolves the canonical project bootstrap, which owns navigation
@@ -132,6 +132,7 @@
   Review requires set equality between plan task IDs and result-index IDs.
 
 ## Anti-patterns
+- Inception follows conventions.md → "Inception (pre-hub)": persist unit before work, recover exact refs/publications without replay, approve the control contract, collect automatic/manual/both evidence and rerun all required checks after fixes. Complete/source import requires verified evidence and application; legacy runs never migrate.
 - Specs and plans live only under `.apex/work/` (gitignored local artifacts) — never register
   them in `_INDEX.md` or create a specs/plans sub-index.
 - Never omit `model:` when dispatching a subagent — an omitted model inherits the expensive
@@ -144,7 +145,6 @@
 
 ## Testing
 Narrowest validation that can falsify a change here:
-
 ```sh
 node --test tests/workflow-skills.test.mjs
 ```

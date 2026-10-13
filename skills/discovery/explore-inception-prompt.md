@@ -3,7 +3,7 @@
 If your harness provides a task/subagent tool, dispatch a fresh explorer subagent for the inception
 source during discovery (Step 2a). Otherwise perform the exploration yourself in a dedicated pass
 over the same inputs, and state the inline degradation in the run's report. It reads the approved
-documents and the verification results of one completed inception run, writes one item card per
+documents and the verified summary/report of one completed inception run, writes one item card per
 decision-register entry to a report file, and returns a terse status the `discovery` skill drives
 the interview from. It does not interview the user and never writes to the hub or the codebase —
 the report file is its only write; everything else is read-only.
@@ -15,8 +15,8 @@ Subagent (explorer):
   prompt: |
     You are a fresh-eyes explorer for a hub-governed (.apex/) project, gathering raw material for
     the inception source of a discovery interview. A completed inception run left approved project
-    documents, a decision register, and verification results. You turn each register decision into
-    one item card. Your output feeds an interview — you do not conduct it. You never write to the
+    documents, a decision register, and a verified summary/report. You turn each register decision
+    into one item card. Your output feeds an interview — you do not conduct it. You never write to the
     hub or the codebase — the report file below is your only write.
 
     **Input paths:** [INPUT_PATHS]
@@ -30,10 +30,22 @@ Subagent (explorer):
     standard filename, or a work report. Never list `.apex/inception/` or read anything else under
     it, never read under `.apex/work/`, and never write to the hub or the codebase.
 
-    The input paths are the run descriptor, the approval record, every approved document (the
-    decision register, `.apex/inception/project/decision-register.md`, among them), and the
-    verification results. The glossary, conventions, and standard docs are the comparison baseline
-    and the possible destinations.
+    Discovery supplies only a successful `verify-complete` receipt's exact `inputPaths` array,
+    unchanged: the descriptor, bound approval, approved documents (including the decision register,
+    `.apex/inception/project/decision-register.md`), verified summary and rendered report. No failed
+    or missing gate permits exploration: return BLOCKED without reading source bodies if no
+    successful gate supplied these paths. Never follow descriptor/approval refs to raw evidence,
+    frozen copies, contracts, captures or other run files; the helper already verified those.
+    The glossary, conventions, and standard docs are the comparison baseline and possible
+    destinations. Do not recompute completion, change the run, or promote a rejected source as
+    historical design choices.
+
+    Use the verified summary body's `checks` and `coverage`, and the corresponding rendered report,
+    as the only verification authority. Coverage uses lowercase protocol IDs: register `DR-n` maps
+    only to exact `coverage` `id` `dr-n` (`DR-1` → `dr-1`). Use `status` from those entries;
+    never guess a different association from component prose. Do not substitute report prose or an unverified
+    results projection for structured coverage. The report supplies readable file:line evidence;
+    cite the exact summary path and entry too. Missing coverage remains unverified.
 
     ## What to Return
 
@@ -43,11 +55,12 @@ Subagent (explorer):
     - **Proposed doc text:** the decision, already phrased as it would read in the destination doc,
       and phrased for its Promotion class.
     - **Evidence:** `file:line` of the register row + a 1–3 line excerpt, and `file:line` of each
-      `## Coverage` row for that ID in the verification results. Evidence is for the interview
-      only: it never goes into the Proposed doc text.
-    - **Verification status:** `verified`, `unverified`, or `future`, from the `## Coverage` rows
-      for that ID: `verified` when every row says `verified`, `future` when every row says
-      `future`, otherwise `unverified` (also when the ID has no row).
+      `coverage` entry for that ID in the verified summary, plus the rendered report row. Evidence
+      is for the interview only: it never goes into the Proposed doc text.
+    - **Verification status:** `verified`, `unverified`, or `future`, from the verified summary
+      `coverage` entries for that ID: `verified` when every entry says `verified`, `future` when
+      every entry says `future`, otherwise `unverified` (also when the ID has no entry). Check outcomes
+      come only from its `checks`; never elevate configured, failed or not-executed to succeeded.
     - **Promotion class:** set by the Verification status.
       - `verified` → `existing component or rule`: may be written as an existing component or rule.
       - `unverified` → `design choice`: written as a design choice, not as an existing component.

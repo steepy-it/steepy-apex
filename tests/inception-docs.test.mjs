@@ -162,8 +162,8 @@ test('inception guide covers the flow, helper, harnesses, and limits', () => {
   assert.match(guide, /`verified`[\s\S]*`unverified`[\s\S]*`future`/);
   assert.match(guide, /`--option=<value>`/);
   assert.match(guide, /symlinked ancestor directory[\s\S]*named twice/i);
-  assert.match(guide, /effect log is malformed at line <n>/);
-  assert.match(guide, /compact[\s\S]*key order[\s\S]*no spaces/i);
+  assert.match(guide, /legacy[\s\S]*effect log is malformed at line <n>/i);
+  assert.match(guide, /canonical[\s\S]*key order/i);
   assert.match(guide, /missing `_INDEX\.md`/);
   assert.match(guide, /no preset (application )?stack/i);
   assert.match(guide, /deferred/i);
@@ -197,11 +197,56 @@ test('acceptance protocol covers both scenarios, evidence matrix, and setup rule
   assert.match(doc, /interruption[\s\S]*between an effect's intent and its outcome[\s\S]*new session/i);
   assert.ok(doc.includes('| Run | Harness version | Plugin commit | Capabilities | Observed outcome | Observed human approver |'));
   for (const row of ['Claude Code A (with interruption)', 'Claude Code B', 'Codex A', 'Codex B']) {
-    assert.match(doc, new RegExp(`\\| ${row.replace(/[()]/g, '\\$&')} \\|[^\\n]*PENDING`), `${row} row is PENDING`);
+    assert.match(doc, new RegExp(`\\| ${row.replace(/[()]/g, '\\$&')} \\|[^\\n]*NOT RUN`), `${row} row is NOT RUN`);
   }
   assert.match(doc, /hand-written command sequence[\s\S]*not a proof/i);
   assert.match(doc, /model's approval is never recorded as a human approver/i);
   assert.match(doc, /packaged plugin[\s\S]*installed steepy-apex release[\s\S]*disabled[\s\S]*`missing _INDEX\.md`/i);
   assert.match(doc, /Scenario C is deferred out of v1/i);
   assert.match(norm(guideDoc()), /\[native acceptance protocol\]\(inception-acceptance\.md\)/);
+});
+
+test('v2 guide binds completion to approved checks and captured evidence, never editable results', () => {
+  const guide = norm(guideDoc());
+  for (const schema of ['steepy-inception-run/v2', 'steepy-inception-checks/v2', 'steepy-inception-capture/v2']) assert.ok(guide.includes(schema));
+  assert.match(guide, /required[\s\S]*automatic[\s\S]*manual[\s\S]*both/i);
+  assert.match(guide, /all required automatic and manual checks[\s\S]*new cycle/i);
+  assert.match(guide, /verification\/results\.md[\s\S]*projection[\s\S]*never edit/i);
+  assert.match(guide, /capture-inception-evidence\.mjs[\s\S]*stdout\.bin[\s\S]*stderr\.bin[\s\S]*exit 0[\s\S]*red/i);
+  assert.doesNotMatch(guide, /--verification\b|checkpoint create[^|\n]*--file\b/);
+  for (const command of ['inspect', 'resume-check', 'unit begin', 'unit finish', 'unit reconcile', 'unit close-incomplete', 'publish resume', 'block resolve', 'effect reconcile', 'verification begin', 'verification resume', 'verification attest', 'verification status', 'verification summarize', 'verify-complete']) {
+    assert.ok(guide.includes(`inception-state.mjs ${command}`), `guide lists ${command}`);
+  }
+});
+
+test('v2 recovery distinguishes proven observation from replay and writer takeover', () => {
+  const guide = norm(guideDoc());
+  assert.match(guide, /Resume decision table[\s\S]*pending[\s\S]*reservation/i);
+  assert.match(guide, /automatically[\s\S]*correlation[\s\S]*ambiguous[\s\S]*human/i);
+  assert.match(guide, /writerStopped[\s\S]*verbatim[\s\S]*live or unverifiable PID/i);
+  assert.match(guide, /--previous-unit[\s\S]*new ID[\s\S]*never infer/i);
+  assert.match(guide, /abandon-intent\.json[\s\S]*after.*run\.json[\s\S]*no automatic restart/i);
+});
+
+test('v2 post-complete docs preserve the original init plan and reject source drift', () => {
+  const guide = norm(guideDoc());
+  assert.match(guide, /init-provenance\.pending\.json[\s\S]*init-provenance\.json/);
+  assert.match(guide, /original validated plan[\s\S]*public.*apply[\s\S]*not.*replan/i);
+  assert.match(guide, /managed block[\s\S]*prefix[\s\S]*suffix/i);
+  assert.match(guide, /application drift[\s\S]*ordinary discovery[\s\S]*no.*fallback/i);
+  assert.match(guide, /v1[\s\S]*read-only[\s\S]*archiv[\s\S]*no migration/i);
+  const architecture = read('docs', 'architecture.md');
+  for (const module of ['inception-protocol.mjs', 'inception-snapshot.mjs', 'capture-inception-evidence.mjs', 'inception-governance.mjs']) assert.ok(architecture.includes(`| \`${module}\` |`));
+  const protocolRow = architecture.split('\n').find(line => line.startsWith('| `inception-protocol.mjs` |'));
+  assert.match(protocolRow, /token-bound publication/i);
+  assert.doesNotMatch(protocolRow, /does not write files/i);
+});
+
+test('native protocol requires every recovery and verification case without claiming execution', () => {
+  const doc = norm(read('docs', 'inception-acceptance.md'));
+  for (const phase of ['reconnaissance', 'architecture', 'research', 'approval', 'bootstrap', 'verification', 'complete']) assert.ok(doc.includes(phase));
+  assert.match(doc, /automatically[\s\S]*correlation[\s\S]*ambiguous[\s\S]*human/i);
+  assert.match(doc, /required check fails[\s\S]*manual.*missing[\s\S]*all required automatic and manual/i);
+  assert.match(doc, /init-provenance[\s\S]*application drift[\s\S]*ordinary discovery[\s\S]*abandon.*--resume/i);
+  assert.doesNotMatch(doc, /must not mark it succeeded without a human decision/i);
 });

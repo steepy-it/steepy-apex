@@ -142,15 +142,20 @@
 - **Decision register** — the `DR-n` table in the inception project documents; each row
   is one decision with its reason. Discovery walks it row by row.
 - **Effect log** — the append-only record of an inception run's outside effects: an
-  intent line before, an outcome line after. Distinct from the Gear-4 workflow event log.
-- **Checkpoint** — an immutable record of an inception run: file digests plus the Git
-  state at that moment. Distinct from the autopilot "non-blocking checkpoint" wording
+  intent before, an outcome after; v2 uses immutable exact-ref records rather than v1 JSONL lines. Distinct from the Gear-4 workflow event log.
+- **Checkpoint** — an immutable record of an inception run: complete application snapshot digests plus separate Git
+  provenance at that moment; never a handpicked file list in v2. Distinct from the autopilot "non-blocking checkpoint" wording
   for a collapsed gate.
 - **Resume note** — a numbered note an inception run writes when it pauses or blocks,
   and as the closing note at `complete`: next step and the exact paths the next session
   needs.
 - **Inception source** — discovery reading the exact bound documents of a `complete`
-  inception run as its seed, instead of exploring from nothing.
+  inception run as its seed after read-only completion/evidence/application verification. Source drift rejects this import only; ordinary discovery remains available.
+- **Unità persistita** (persisted unit) — the exact-ID decision/research/bootstrap/check/publication/transition unit recorded before work, with inputs, outputs, allowed paths and before snapshot. One active writer; complete reports and observed differences bind immutable evidence. A retry has a new ID and explicit predecessor; incomplete closure never proves success.
+- **Ciclo di verifica** (verification cycle) — immutable binding of approval, control contract, application identity and nonsecret environment. Application fixes or re-approval require a new cycle and every required automatic/manual check; an unchanged resume preserves applicable results but reobserves mutable resources in a new explicit verification session.
+- **Contratto dei controlli** (control contract) — human-approved structured roots/exclusions/environment/checks/coverage. Every check declares required, automatic/manual/both, expected outcome and evidence, approved execution/procedure, and snapshot/reobserve reuse. No weakening required checks after failure without human decision and re-approval.
+- **Fotografia applicativa** (application snapshot) — complete deterministic inventory of approved roots, exact exclusions and ordinary-file paths/content digests/permission modes; application identity omits record time/number and separate Git provenance. Additions/removals and uncertified governance/provider edits remain observable.
+- **Ricevuta di raccolta** (capture receipt) — immutable binding of one registered approved check execution to token/PID, command, cycle/session/unit, environment, timing, exit/signal, separate complete stdout/stderr and before/after snapshots. Collector success means captured evidence, not a green check; a synthetic external receipt cannot substitute for capture.
 - **Loop Engineer** — the gear-4 mode (an autonomous bounded loop over a
   machine-verifiable goal) and the human role that exercises it: designs the
   goal/verifier/budget up front instead of gating per turn; executed by

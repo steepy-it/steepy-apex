@@ -20,78 +20,138 @@ autopilot mode: a human answers its questions and approves the project.
 
 ## Boundaries
 
-- Work only inside `.apex/inception/` and the application's own files.
-- Never create `.apex/_INDEX.md`, routing, standards, specialist adapters, or a project bootstrap:
-  those belong to the `init` skill, after the run is complete.
-- Never create or edit the root `.gitignore` for the run's own area; only an approved bootstrap
-  tool may change it, as an application file (Step 7). The area ignores itself: the first run write
-  is `.apex/inception/.gitignore`, and `start` writes it.
-- One run per repository: its descriptor is `.apex/inception/run.json`. The descriptor changes only
-  through the helper; never write it by hand.
-- Never rewrite a record bound to an approval or a checkpoint. The helper writes each record once,
-  and a change makes a new record.
-- Run files live only in these places under `.apex/inception/`:
-  - `run.json`, `effects.jsonl`, `approvals/`, `checkpoints/`, `resume-notes/` → the helper writes
-    them.
-  - `project/`, `research/`, `verification/` → you write them.
-  - `research/`, `bootstrap/` → a child writes its one exact output there.
-
-  The helper also keeps `.gitignore` and `abandoned/`. Nothing else goes in the area.
+- Work only inside `.apex/inception/` and the application's own files. Never create
+  `.apex/_INDEX.md`, routing, standards, specialist adapters, or a project bootstrap: those belong
+  to the `init` skill after completion.
+- One run per repository, at `.apex/inception/run.json`. Only the helper mutates the descriptor,
+  effect records, frozen evidence, snapshots, approvals, checkpoints and completion. Never edit
+  these records or adopt an unbound file as evidence. New runs use v2; v1 remains readable and
+  archivable without migration, mutation, or automatic restart.
+- The first run write is `.apex/inception/.gitignore`, written by `start`. Never create or edit the
+  root `.gitignore` for this area; an approved application generator may change it as an observed
+  application effect.
+- Working documents and coordinator JSON inputs belong under `project/`, research reports under
+  `research/`, and part/check reports under `bootstrap/`. The helper owns `units/`, `approvals/`,
+  `snapshots/`, `checkpoints/`, `effects/`, `reconciliations/`, `resume-notes/`, all verification
+  evidence/results/reports, and archive records. `.apex/work/` is never a run input.
 
 ## Helper commands
 
-The run helper is `node <engine-root>/scripts/inception-state.mjs`. Run it from the repository
-root, so `--repo-root .` names the repository.
-
-The helper records and verifies; it never asks, chooses a phase, approves, or runs project commands.
-Those decisions stay with you and the user.
+Resolve `node <engine-root>/scripts/inception-state.mjs` relative to this skill, and pass
+`--repo-root .` from the application repository. Node >= 24 is the engine runtime, not an application
+stack choice. The helper records and verifies; the coordinator conducts the dialogue, establishes
+human provenance and runs authorized effects. The separate collector executes approved checks.
 
 | Command | Use |
 |---|---|
-| `node <engine-root>/scripts/inception-state.mjs classify --repo-root . [--maturity suitable\|mature]` | Read the starting state (Step 0). Read-only. |
-| `node <engine-root>/scripts/inception-state.mjs start --repo-root . --harness <slug> --capabilities <csv> --git-commits allowed\|forbidden` | Start the run (Step 1). Writes `.apex/inception/.gitignore` first, observes Git, then writes the descriptor. |
-| `node <engine-root>/scripts/inception-state.mjs transition --repo-root . --to <phase\|blocked\|active> --reason <text> [--git-commits allowed\|forbidden] [--checkpoint <path> --verification <path>]` | Move to the next phase, block, unblock, or return to approval. |
-| `node <engine-root>/scripts/inception-state.mjs resume-note --repo-root . --next <text> [--need <path>]... [--note <text>]` | Write a resume note: the next action and the exact paths to read. |
-| `node <engine-root>/scripts/inception-state.mjs approve --repo-root . --statement <text> --document <path>...` | Record the human approval, verbatim, with every project document (Step 5). |
-| `node <engine-root>/scripts/inception-state.mjs verify-approval --repo-root . [--approval <path>]` | Compare the project documents with the approval record. Read-only. |
-| `node <engine-root>/scripts/inception-state.mjs effect intent --repo-root . --id <id> --kind <kind> --summary <text> [--authorization <text>]` | Record an external effect before you run it. |
-| `node <engine-root>/scripts/inception-state.mjs effect outcome --repo-root . --id <id> --result succeeded\|failed --observed <text>` | Record what you observed after the effect. |
-| `node <engine-root>/scripts/inception-state.mjs effect status --repo-root .` | List each effect as `concluded` or `uncertain`. Read-only. |
-| `node <engine-root>/scripts/inception-state.mjs checkpoint create --repo-root . --label <text> [--file <path>]... [--files-from <path>]` | Record digests of application files and the Git state. |
-| `node <engine-root>/scripts/inception-state.mjs checkpoint verify --repo-root . [--checkpoint <path>]` | Compare the files and the Git state with a checkpoint. Read-only. |
-| `node <engine-root>/scripts/inception-state.mjs abandon --repo-root . --reason <text>` | Move the whole run, intact, to `.apex/inception/abandoned/<run-id>/`. Deletes nothing. |
+| `node <engine-root>/scripts/inception-state.mjs classify --repo-root . [--maturity suitable\|mature]` | Read fixed entry paths. |
+| `node <engine-root>/scripts/inception-state.mjs inspect --repo-root .` | Read schema, phase, actions and exact refs. |
+| `node <engine-root>/scripts/inception-state.mjs start --repo-root . --harness <slug> --capabilities <csv> --git-commits allowed\|forbidden` | Create one v2 run; never replace an existing run. |
+| `node <engine-root>/scripts/inception-state.mjs resume-check --repo-root .` | Read-only verification of approval, refs, baseline, effects and pending work. |
+| `node <engine-root>/scripts/inception-state.mjs unit begin --repo-root . --id <id> --input <json> [--previous-unit <id>]` | Persist the sole writer, before snapshot, exact inputs/outputs and allowed paths. |
+| `node <engine-root>/scripts/inception-state.mjs unit finish --repo-root . --id <id> [--evidence <path>]...` | Validate complete reports, freeze immutable outputs and observe the diff. No success boolean. |
+| `node <engine-root>/scripts/inception-state.mjs unit reconcile --repo-root . --id <id> --input <json>` | Observe and bind evidence for the interrupted unit; never invent before/after hashes. |
+| `node <engine-root>/scripts/inception-state.mjs unit close-incomplete --repo-root . --id <id> --reason=<text> --evidence <path>...` | Require stopped-writer evidence; preserve uncertain effects and independent blocks. |
+| `node <engine-root>/scripts/inception-state.mjs publish resume --repo-root . --reservation <id>` | Finish only the exact reserved publication; never rerun application work. |
+| `node <engine-root>/scripts/inception-state.mjs approve --repo-root . --statement=<text> --document <path>... --contract <path>` | Freeze the human-approved complete project and verification contract. |
+| `node <engine-root>/scripts/inception-state.mjs verify-approval --repo-root . [--approval <path>]` | Read-only comparison with frozen approval. |
+| `node <engine-root>/scripts/inception-state.mjs transition --repo-root . --to <phase\|blocked\|active> --reason=<text> [--git-commits allowed\|forbidden] [--cycle <path> --checkpoint <path>]` | Phase/status transition; complete requires current cycle and final checkpoint. |
+| `node <engine-root>/scripts/inception-state.mjs block resolve --repo-root . --id <id> --statement=<text> --evidence <path>...` | Resolve only the named block after the recorded human decision. |
+| `node <engine-root>/scripts/inception-state.mjs effect intent --repo-root . --id <id> --input <json>` | Bind intent to the active unit before the operation. |
+| `node <engine-root>/scripts/inception-state.mjs effect outcome --repo-root . --id <id> --input <json>` | Record the observed outcome and exact correlation/evidence. |
+| `node <engine-root>/scripts/inception-state.mjs effect reconcile --repo-root . --id <id> --input <json>` | Observe the same intent without replay, including while blocked. |
+| `node <engine-root>/scripts/inception-state.mjs effect status --repo-root .` | Read concluded/uncertain effects. |
+| `node <engine-root>/scripts/inception-state.mjs checkpoint create --repo-root . --label=<text>` | Capture the complete approved inventory and Git provenance, without a handpicked file list. |
+| `node <engine-root>/scripts/inception-state.mjs checkpoint verify --repo-root . [--checkpoint <path>]` | Verify an exact bound checkpoint. |
+| `node <engine-root>/scripts/inception-state.mjs verification begin --repo-root . --environment <json> --reason=<text>` | Derive approval, snapshot, cycle and first verification session. |
+| `node <engine-root>/scripts/inception-state.mjs verification resume --repo-root . --cycle <path>` | Record a new session, without rerunning checks or creating a cycle. |
+| `node <engine-root>/scripts/inception-state.mjs verification attest --repo-root . --cycle <path> --input <json>` | Bind explicit human observation within an active check unit. |
+| `node <engine-root>/scripts/inception-state.mjs verification status --repo-root . --cycle <path>` | Read applicable results and missing required checks. |
+| `node <engine-root>/scripts/inception-state.mjs verification summarize --repo-root . --cycle <path> --limits <json>` | Derive immutable summary/report; limits are descriptive strings, never editable outcomes. |
+| `node <engine-root>/scripts/inception-state.mjs resume-note --repo-root . --next=<text> [--need <path>]... [--note=<text>]` | Presentation of the next action and exact refs; never recovery authority. |
+| `node <engine-root>/scripts/inception-state.mjs verify-complete --repo-root .` | Read-only verification of completion, evidence and current application. |
+| `node <engine-root>/scripts/inception-state.mjs abandon --repo-root . --reason=<text>` | Explicitly archive the intact run. |
+| `node <engine-root>/scripts/inception-state.mjs abandon --repo-root . --resume` | Resume only the canonical archive intention, even after descriptor move. |
 
-- `--capabilities` is a comma-separated subset of
-  `shell,network,browser,subagents,question-tool,headless`.
-- `--kind` is one of `install`, `generator`, `migration`, `external-resource`, `deploy`, `commit`,
-  `remote`. Kinds `remote` and `deploy` need `--authorization`: the user's authorization for that
-  one operation.
-- `--id` is lowercase letters, digits, and dashes, and is never reused in the effect log.
+Every JSON input is an exact coordinator-declared file under the run, strict UTF-8 with all required
+keys (including nulls), no duplicate/unknown keys or aliases. Use shell-quoted `--text=value` for
+free text, particularly text beginning with `-`. Never interpolate human text as shell code.
+Capabilities are a comma-separated subset of `shell,network,browser,subagents,question-tool,headless`;
+IDs are lowercase letters/digits/dashes and never reused. Read each one-line JSON response before
+continuing: `ok`, result refs, or `error` (`verify-complete` also gives `reason`).
 
-Pass free-text values in the `--option=<value>` form: `--statement=<value>`, `--summary=<value>`,
-`--observed=<value>`, `--reason=<value>`, `--label=<value>`, `--next=<value>`, `--note=<value>`,
-`--authorization=<value>`. The helper's strict parser refuses a separate value that begins with `-`
-(exit `2`, "argument is ambiguous"), and an approval statement or a note may begin with a Markdown
-list item. Quote each value for your shell, so it arrives byte for byte.
+- Exit `0`: operation succeeded. Collector exit 0 means complete capture, even for a failed check;
+  inspect its `outcome`, `exitCode` and `signal`.
+- Exit `1`: failed precondition/verification, or incomplete capture. Preserve state and resolve the
+  reported cause; do not assume no publication or evidence exists after an interrupted write.
+- Exit `2`: usage error. Correct argv; never reinterpret a command display string as a shell.
 
-Every call prints exactly one JSON object line on stdout. Read it before you go on:
+### Persisted work units and recovery
 
-- `"ok":true` → success. The other fields carry the result, for example `row` and `nextStep` from
-  `classify`.
-- `"ok":false` → a refusal; its `error` field says why, and stderr repeats it as
-  `inception-state: <reason>`.
-- The `command` field repeats the command spelling, family form included: `"effect intent"`,
-  `"checkpoint verify"`.
+Once a v2 run exists: Before any decision, research, child dispatch, application write, or effect, run `resume-check`
+when resuming, then `unit begin` with a new ID. Prepare the bounded registration JSON first; this
+control input preparation is not application work. Its exact keys are `kind`, `inputs` (Ref objects
+with path/bytes/sha256), `outputs` (path/role), and `allowedPaths` (exact application files or assigned
+subtrees). Kinds are decision/research/bootstrap/check/publication/transition; roles are
+decision/report/evidence. Every unit declares a report. Bind the existing input bytes, never
+fabricate a digest. Use a new report path per unit. Before a later decision changes a working
+project document, declare that path as an output as well as an input; finish retains immutable
+opening inputs and output copies.
 
-Exit codes:
+The coordinator checks the complete report, unit identity, required content, every observed diff
+and its correlation to the assigned work/effects before `unit finish`. A short child answer, a file
+existing, or a report delimiter alone is insufficient. The helper independently observes the whole
+inventory and Git provenance and freezes outputs under `units/<id>/outputs/`. A directory scope
+only grants that assigned subtree. Never hide divergence with a new checkpoint/baseline. The
+helper's short internal registrations/transitions use its own publication protocol; do not open a
+second unit around them while another unit is active. Finish the decision/work unit before a
+phase transition, approval, checkpoint, or cycle registration.
 
-- Exit `0`: success.
-- Exit `1`: a refused precondition, an invalid state, or a failed verification. Read `error`, then
-  fix the cause or block the run.
-- Exit `2`: a usage error (an unknown command or option, a missing required option, a bad value).
-  Fix the command line.
+Every report, including coordinator/inline work, starts and ends exactly as follows, with a full
+body between the delimiters. Failure statuses are BLOCKED/NEEDS_CONTEXT and cannot finish a unit. A check report may be DONE
+when collection is complete even if the check failed; only helper-derived results establish green.
 
-A refusal never writes.
+<!-- example:unit-report -->
+```text
+<!-- steepy-inception-unit: v2; id: <unit-id>; status: <status> -->
+Unit: <unit-id>. Inputs and ownership: list exact paths and opening identities.
+Work and observed diff: list every changed application path, reason, checks and evidence.
+Correlation: identify assigned work and any exact effect IDs; state blockers and degradation.
+<!-- steepy-inception-unit-end: <unit-id> -->
+```
+
+For interrupted work, inspect the active unit's bound outputs and evidence; never rerun blindly.
+Complete an already demonstrably complete report/diff through finish, or use `unit reconcile` with
+`{"evidence":["<exact-path>"],"reason":"<observation>","statement":null}` for evidence-backed
+reconciliation. A non-null statement records an explicit human acceptance of observed differences;
+it never creates check success or substitutes for a manual acceptance check. If the writer has
+stopped but work is incomplete, non-capture closure requires this first exact evidence artifact:
+
+<!-- example:stopped-writer -->
+```json
+{"unitId":"interrupted","writerStopped":true,"statement":"The coordinator observed that the interrupted writer has stopped."}
+```
+
+<!-- example:close-incomplete -->
+```bash
+node <engine-root>/scripts/inception-state.mjs unit close-incomplete --repo-root . --id interrupted --reason=Writer-stopped --evidence .apex/inception/bootstrap/stopped.json
+```
+
+This is an explicit observation trust boundary: the helper validates identity/shape and freezes the
+verbatim coordinator/human statement, not its truthfulness. Never infer stop from an absent PID or
+a report alone. Registered captures require a proven-dead persisted collector PID; a live or
+unverifiable process refuses takeover, even with human input. Closure preserves incomplete history,
+uncertain effects and independent blocks; it grants neither success nor permission to repeat.
+Resolve outstanding observations/blocks before a retry. A new execution has a new ID and exact
+lineage; write the new registration at the declared retry input path, then:
+
+<!-- example:retry-begin -->
+```bash
+node <engine-root>/scripts/inception-state.mjs unit begin --repo-root . --id retry --input .apex/inception/bootstrap/retry-input.json --previous-unit interrupted
+```
+
+Never infer previous-unit from recency or kind. `publish resume --reservation <id>` settles only
+that pending publication. It is not an execution retry.
 
 ## Procedure
 
@@ -132,39 +192,52 @@ Act on the `row` field:
 
 ### Step 1 — Start or resume the run
 
-**Start** (row `start-new-run`):
+**Start:** declare actual `shell`, `network`, `browser`, `subagents`, `question-tool`, `headless`
+capabilities. Ask once whether local commits are allowed or forbidden, unless already authorized;
+without Git the helper records none. Remote operations retain their own exact scope. Then start.
+This executable illustration uses shell only and forbids commits; adapt it to the confirmed policy:
 
-1. Declare the harness capability record. Tell the user which of these your harness really has:
-   `shell`, `network`, `browser`, `subagents`, `question-tool`, `headless`.
-2. Ask the commit policy in one question: may the run create local commits (`allowed`) or not
-   (`forbidden`)? Remote operations are never covered by this answer; each one needs its own
-   authorization. Without Git, the helper records `none` whatever you pass.
-3. Run `start --harness <slug> --capabilities <csv> --git-commits allowed|forbidden`. `<slug>` names
-   your harness in lowercase letters, digits, and dashes; `<csv>` lists the capabilities you
-   declared.
-4. Go to Step 2.
+<!-- example:start -->
+```bash
+node <engine-root>/scripts/inception-state.mjs start --repo-root . --harness codex --capabilities shell --git-commits forbidden
+```
 
-**Resume** (row `resume-run`):
+**Resume:** use `inspect`, `.apex/inception/run.json`, and only the exact refs it binds; no directory
+listing, sibling/archived run discovery, or most-recent selection. The last note is not authority;
+notes only explain state established by the descriptor and evidence. Run this before any new writer:
 
-Resume reads only the descriptor, the records it binds, and the latest resume note: the last element
-of `resumeNotes`, with the exact paths it lists. Resume never lists a directory and never reopens a
-sibling file, such as an older note, an unbound record, or an abandoned run. So whenever you stop
-before the run is complete, write a resume note first (see Blocking and abandon).
+<!-- example:resume-check -->
+```bash
+node <engine-root>/scripts/inception-state.mjs resume-check --repo-root .
+```
 
-1. Read `.apex/inception/run.json`, the records it binds, and the latest resume note.
-2. If the status is `blocked`, resolve the block the note records with the user, then run
-   `transition --to active --reason=<value>`.
-3. Run `effect status`. For every `uncertain` effect, observe the real state, explain any divergence
-   to the user, and complete only the missing step the evidence proves. Record what you observed
-   with `effect outcome --id <id> --result succeeded|failed --observed=<value>`. A missing step that
-   still has to run is a new effect with its own `effect intent`. Never repeat a concluded or
-   uncertain effect. A divergence you cannot explain blocks the run.
-4. Continue at the step that owns the descriptor's `phase`: Step 2 for `reconnaissance`, Step 3 for
-   `architecture`, Step 4 for `research`, Step 5 for `approval`, Step 7 for `bootstrap`, Step 10 for
-   `verification`. For `complete`, give the closing report (Step 10).
+1. If v1, preserve it: inspect/read-only checks or explicit abandon are available, but no migration,
+   new unit, note, approval, or completion. Explain legacy refusal.
+2. If pending publication exists, use its exact reservation with `publish resume` and recheck. It
+   publishes reserved bytes only. For an active unit, follow Persisted work units and recovery;
+   do not dispatch another writer or treat absence of a child response as stopped-writer evidence.
+3. Observe uncertain effects via their exact intent, correlation and real evidence (Step 8). Never
+   repeat a concluded or uncertain effect. Reconcile only when proven; ambiguity blocks for a
+   human decision. A similar resource or free text is insufficient.
+4. Approval has three cases: **absent** means continue the persisted preapproval phase, never
+   require a nonexistent approval or jump to bootstrap; **valid** means retain it without asking
+   again; **divergent** means stop writers, explain the exact change, return explicitly to approval,
+   then use a decision unit and targeted reapproval of the complete current project. A hash alone
+   does not prove a human confirmation. Git branch/HEAD/status drift also needs evidenced
+   reconciliation; a reconciled content-identical commit alone does not create a new cycle.
+5. Resolve only the named block via `block resolve`, recording the human statement and evidence.
+   A proven reconciliation can clear its own block, never unrelated blocks. Only after zero
+   residual blocks may `transition --to active` proceed; recheck before new work.
+6. Continue by persisted phase: reconnaissance → Step 2, architecture → Step 3, research → Step 4,
+   approval → Step 5, bootstrap → Step 7, verification → Step 10. On a new verification session,
+   after resume-check and recovery, use `verification resume --cycle <exact-current-cycle>` once.
+   Repeated read-only resume-check calls in that session do not invalidate anything.
+7. If complete, use `verify-complete` and give Step 10's closing presentation only. A missing
+   closing note never restarts verification/bootstrap or changes completion.
 
 ### Step 2 — Reconnaissance
 
+Begin a decision unit for the dialogue and exact reconnaissance output before work.
 Find out what exists and what the user wants. Create `.apex/inception/project/` as an ordinary
 directory if it is absent.
 
@@ -196,10 +269,12 @@ Before you propose a remote repository owner or name, check the authenticated id
 owners are really accessible, for example with `gh auth status` and `gh api user/orgs` when they are
 available, and propose only those.
 
+Finish the decision unit with its complete report and observed diff.
 When the reconnaissance record is complete, run `transition --to architecture --reason=<value>`.
 
 ### Step 3 — Architecture decisions
 
+Begin a decision unit before each bounded architecture dialogue/document update.
 Decide the architecture with the user before the definitive project is written. Cover these nine
 stack-neutral categories:
 
@@ -238,284 +313,359 @@ command. It is project context for the `init` interview, not a machine input to 
 No preset application stack: every layer is decided here. Node is the engine's runtime only, not a
 default for the application.
 
+Finish each decision unit and freeze its report/documents before moving phases.
 When every category is decided or excluded, run `transition --to research --reason=<value>`.
 
 ### Step 4 — Research and versions
 
 Every foundational choice (runtime, framework, build tooling, generators, main dependencies) gets an
 official source, an explicit version, a verification date, its support status, and a compatibility
-check. Record each research result in `.apex/inception/research/<slug>.md`; create the directory as
-an ordinary directory if it is absent.
+check. Versions you remember are not verified versions. Without network access, ask for official
+sources or block. Begin a research unit before investigation/experiments/child dispatch, with exact
+inputs and one report `.apex/inception/research/<unit-id>.md`. Use `research-prompt.md`, one child
+at a time, or do the same bounded work inline and record the degradation. Experiments stay in a
+new OS temporary directory outside the application repository and never become bootstrap silently.
+Review the complete report and observed diff before finishing the research unit.
 
-- Versions you remember are not verified versions.
-- Without network access, ask the user for official sources or block, and never pin a remembered
-  version.
-
-Present the version review per layer, with exactly these six columns:
+Present the version combination with these columns; obtain human confirmation in a decision unit
+and record it without repeating confirmed answers:
 
 | Component | Chosen version | Latest stable | Support or end of life | Reason for any deviation | Source and date |
 |---|---|---|---|---|---|
 
-The user confirms the combination or corrects rows.
-
-An experiment runs isolated outside the application repository, in an OS temporary directory. It is
-recorded as an experiment in `.apex/inception/research/` and never silently becomes the bootstrap.
-
-When your harness has subagents, document research goes to a child with exact inputs and one exact
-output, a report under `.apex/inception/research/`. Without delegation, run the research inline and
-write the declared degradation in that report.
-
 ### Step 5 — Project and approval
 
-Write the project: one or more documents under `.apex/inception/project/`, in proportion to
-complexity. Together they hold the materials and simulations, the constraints, the decision
-register, the components and contracts, the official research, reuse, the behaviors to preserve,
-the representative path, the verification plan, deploy, and limits.
+In a decision unit, write the project documents and decision-register, including materials and
+simulations, constraints, components/contracts, sources/versions, reuse and preserved behaviors,
+one representative path, deploy scope and limits. Other flows remain future; never start them as
+a backlog. Write `.apex/inception/project/verification-contract.json` before human approval.
+The contract assigns automatic, manual or both to each check; subject, procedure, expected outcome,
+evidenceRequired, required boolean and applicable command/procedures are explicit. Declare roots,
+exact justified exclusions (dependencies/cache/generated), tools/resources, and coverage for every
+approved decision/component, current or future. Do not exclude pertinent manifests, lockfiles,
+configuration or migrations to conceal failure. Before approval the helper inventories `.` with
+only reserved protocol areas excluded; Gitignore is not the inventory rule.
 
-The representative path is one complete flow across the agreed boundaries (interface, logic, data,
-needed integrations). Other flows stay future context: they never become an automatically started
-backlog.
+For mutable remote resources use reuse policy reobserve with approved automatic and/or manual
+reobservation procedures; snapshot is suitable for evidence that remains applicable to unchanged
+local contents. Command uses executable, args, cwd and successExitCodes; shell use requires explicit
+approved executable/argv. Commands must actually test expected, not merely print a version or
+rely on the agent's visual judgement. Manual checks define procedure and acceptance. A both check
+requires both kinds of evidence. At least one check is required.
 
-When the project is written, run `transition --to approval --reason=<value>`.
+The following small **illustration**, not a preset stack, verifies an `app.cjs` exporting `ready`
+and an explicitly human-observed representative path. Replace its claims, paths and commands with
+the real project before approval. Write this registration to `project/project-unit.json` before
+its unit; obtain each Ref from the actual existing input bytes (none in this illustration):
 
-The user approves the complete project **once**, before bootstrap:
+<!-- example:project-unit -->
+```json
+{"kind":"decision","inputs":[],"outputs":[{"path":".apex/inception/project/decision-register.md","role":"decision"},{"path":".apex/inception/project/verification-contract.json","role":"decision"},{"path":".apex/inception/project/project-report.md","role":"report"}],"allowedPaths":[]}
+```
 
-1. Present every project document path.
-2. Obtain an explicit human approval. Never self-approve. If no human is available, block
-   (`transition --to blocked --reason=<value>`) instead of approving.
-3. Quote it verbatim into `approve --statement=<value> --document <path>`, with one `--document` for
-   every project document, `.apex/inception/project/decision-register.md` included.
-4. Run `transition --to bootstrap --reason=<value>`, which runs `verify-approval` on the latest
-   approval. Any mismatch blocks until a targeted decision and a new approval.
+<!-- example:project-begin -->
+```bash
+node <engine-root>/scripts/inception-state.mjs unit begin --repo-root . --id project --input .apex/inception/project/project-unit.json
+```
 
-The approval record does not prove that a human approved: the helper only stores the statement it
-is given. Acceptance evidence never presents a model's approval as a human's.
+Write the contract at the canonical path and the full project report using this unit's delimiters:
 
-After approval, installation, generation, implementation, and ordinary fixes proceed autonomously
-inside the agreed scope. A local choice already covered does not reopen the questionnaire.
+<!-- example:verification-contract -->
+```json
+{"schema":"steepy-inception-checks/v2","roots":["."],"exclusions":[],"environment":{"tools":[],"resources":[]},"checks":[{"id":"representative","required":true,"type":"both","subject":"Representative path","procedure":"Run assertion and open path","expected":"Ready export and readable path","evidenceRequired":"Captured assertion streams and explicit human observation","automatic":{"executable":"node","args":["-e","if(require('./app.cjs')!=='ready')process.exit(1)"],"cwd":".","successExitCodes":[0]},"manual":{"procedure":"Open the representative path","acceptance":"Path is readable"},"reuse":{"policy":"reobserve","automatic":null,"manual":{"procedure":"Reopen the same representative path","acceptance":"Same path remains readable"}}}],"coverage":[{"id":"dr-1","component":"Representative path","checks":["representative"],"status":"current"}]}
+```
 
-A substantial change (the database, boundaries, flows, design, deploy, a foundational technology, or
-the commit policy) needs a targeted decision and a new approval of the changed parts:
+<!-- example:project-finish -->
+```bash
+node <engine-root>/scripts/inception-state.mjs unit finish --repo-root . --id project
+```
 
-1. Run `transition --to approval --reason=<value>`. For a commit-policy change, run
-   `transition --to approval --git-commits allowed|forbidden --reason=<value>`.
-2. Ask the targeted decision, then update the affected documents and the decision register.
-3. Present the changed parts and obtain a new explicit human approval. Run `approve` again with
-   every current project document: each approval record covers the complete set.
-4. Run `transition --to bootstrap --reason=<value>` again.
+After the project unit finishes, `transition --to approval --reason=<text>` if still in research.
+Present all current project documents, decision-register and the contract, and obtain explicit
+human approval once. A valid previous authorization persists. Never self-approve; a hash is not
+proof of human provenance. Record the actual statement verbatim. This sample statement is test
+illustration only, never substitute it for the user's answer:
+
+<!-- example:approve -->
+```bash
+node <engine-root>/scripts/inception-state.mjs approve --repo-root . --statement=Approved-project-and-contract --document .apex/inception/project/decision-register.md --contract .apex/inception/project/verification-contract.json
+```
+
+Repeat `--document` for **all current project documents**, including any design/project prose beyond
+this illustration. The helper freezes each document and the contract; it cannot certify who spoke.
+Then enter bootstrap, which verifies approval:
+
+<!-- example:bootstrap -->
+```bash
+node <engine-root>/scripts/inception-state.mjs transition --repo-root . --to bootstrap --reason=Approved
+```
+
+Ordinary in-scope implementation/fixes proceed autonomously. A substantial change in boundaries,
+flows, database, design, technology, deploy or commit policy needs targeted reapproval: explicitly
+return to approval first (add `--git-commits allowed|forbidden` for a policy change), begin a decision
+unit, update documents/contract/register, finish, obtain the human decision and approve the full
+current set again. New approval invalidates old cycles even with identical application bytes.
+Never make a failed required check optional or weaken expected/type to close; reducing delivery
+requires a human decision and reapproval.
 
 ### Step 6 — Pause after approval
 
-Session 1 ends here (see Sessions and context). Before you pause:
-
-1. Publish the next phase in the descriptor. Step 5 ends with
-   `transition --to bootstrap --reason=<value>`; check that its output says phase `bootstrap`. Do
-   not run it again.
-2. Wait for every active child to return.
-3. Write the resume note: `resume-note --next=<value> --need <path> --note=<value>`, with one
-   `--need` for every exact path the next session needs, such as each project document. Each
-   `--need` is an existing file under `.apex/inception/`. `--note=<value>` carries, on one line, the
-   concrete model of each child dispatched in this session. Leave `--note` out when there is nothing
-   to record. The helper writes the descriptor path and the phase into the note.
-
-The pause is not a block: the run stays `active`.
-
-Recommend a new session for bootstrap: everything earlier in this session stays in context, and that
-context is paid again on every turn. If the user explicitly asks to continue in the same session,
-continue, and state the cost. A pause is never a refusal.
+Recommend a new session after approval. First finish all units/children, confirm the already
+published bootstrap phase, then write `resume-note --next=<text> --need <exact-ref>` for needed
+existing run artifacts. Record concrete child models and any degradation with `--note=<text>`.
+The pause leaves the run active. Continue in the same session when requested; explain that earlier
+context is paid on each turn. The note summarizes state and never grants a capability.
 
 ### Step 7 — Bootstrap
 
-Build the approved project: one representative path, not the whole product.
+Build one representative path in dependency order: a contract's producer before consumers. Each
+part owns exact application paths and one `.apex/inception/bootstrap/<unit-id>.md` report. Begin a
+bootstrap unit before dispatch or application writes, bind approved inputs, and supply unit ID,
+exact inputs/output, allowed paths and correlation in `bootstrap-part-prompt.md`. One child at a
+time; inline uses the same contract and records degradation. Child never mutates descriptor,
+effect records, checkpoints, approval, or commits. It requests needed effects; the coordinator
+runs them inside an appropriate unit under Step 8. Check the full report and observed diff before
+finish; changed-paths in a response is telemetry, not authority.
 
-Split the work into parts and build them in dependency order: a contract's producer comes before
-its consumers. Each part has explicit ownership, the exact application paths it may modify, and a
-report, `.apex/inception/bootstrap/<part>.md`.
-
-- When your harness has subagents, dispatch each part with `bootstrap-part-prompt.md`, one at a time
-  (see Children and dispatch policy). A child modifies only its own part.
-- You, the coordinator, keep the dialogue, the effect log, checkpoints, any commits, and the
-  descriptor.
-
-The bootstrap delivers:
-
-- manifests and lockfiles produced with the official tools at the approved versions;
-- install, build, test, and start commands usable from a clean checkout;
-- an example configuration without secrets;
-- the data, integrations, and migrations the representative path needs;
-- reuse of the chosen materials and preservation of the agreed behaviors;
-- the representative path, actually integrated across its boundaries;
-- CI and deploy instructions when the project includes them.
-
-Deploy is included or excluded with a reason, as the approved project says:
-
-- Included → it needs evidence of its result.
-- Excluded → it does not prevent bootstrap from concluding.
-
-A passing local test does not prove a remote deploy or CI.
-
-Never build every prototype screen: the other flows stay future context.
-
-Build and test fixes inside the scope are autonomous. A substantial change follows the re-approval
-rule in Step 5.
-
-The run never creates or edits the root `.gitignore` for its own area. An approved tool, such as a
-generator or a framework CLI, may create or edit the root `.gitignore` as an application file. That
-is an operation with effects, recorded with `effect intent` and `effect outcome` like any other
-generator output (Step 8).
-
-Every operation with effects follows Step 8. When every part is built and checked, go to Step 9.
+Deliver manifests and lockfiles from official approved tools/versions; clean-checkout install,
+build, test and start commands; example configuration without secrets; necessary integrations,
+data and migrations; chosen reused materials and preserved behaviors; the integrated representative
+path; CI/deploy instructions if approved. Include/exclude deploy explicitly with a reason. Included
+deploy needs real evidence: local green tests do not prove remote deploy or CI. Never build every
+prototype screen. Ordinary fixes remain autonomous; substantial changes use Step 5. An approved
+generator may change the root `.gitignore` only as a recorded application effect, never for the
+run's own area.
 
 ### Step 8 — Effects and checkpoints
 
-An operation with effects is an installation, a generator, a migration, an external resource, a
-deploy, a commit, or a remote operation. For each one, in this order:
+Install/generator/migration/external-resource/deploy/commit/remote operations belong to the
+coordinator, never a child. Before an effect, begin its bounded work unit and write the exact intent
+input with keys `id` (matching the CLI ID), `kind`, `summary`, `command` or null, `procedure` or null, `scope`, `authorization`
+or null, `correlation` (name/value pairs), and `observation` (procedure/expected/evidencePaths).
+At least a command or procedure must describe the operation. Use exact non-secret resource
+identities and evidence paths, not a similar resource name or an invented receipt. Each evidence
+file must be strict JSON with exactly id/procedure/result/correlation/observed matching the intent's
+observation procedure and outcome; plain stdout or a generic report is not that structured evidence.
+The coordinator must observe the real result before writing this evidence.
 
-1. Before it runs: `effect intent --id <id> --kind <kind> --summary=<value>`.
-2. Run the operation.
-3. After it: `effect outcome --id <id> --result succeeded|failed --observed=<value>`, with what you
-   really observed.
-4. Run the relevant checks, for example the build and the tests.
-5. Record a checkpoint: `checkpoint create --label=<value> --file <path>`, with one `--file` for
-   every application file the operation created or changed.
+This local generator illustration belongs inside an approved bootstrap unit allowing generated.txt.
+Write the intent input at `bootstrap/generate-intent.json` before execution:
 
-Remote operations (a push, a repository creation, a deploy) need the user's explicit authorization
-for that one operation. Quote it in `--authorization=<value>`, with kind `remote` or `deploy`. The
-commit policy never covers a remote operation.
+<!-- example:effect-intent-input -->
+```json
+{"id":"generate","kind":"generator","summary":"Generate the assigned fixture file","command":{"executable":"node","args":["-e","require('node:fs').writeFileSync('generated.txt','generated\\n')"],"cwd":".","successExitCodes":[0]},"procedure":null,"scope":["generated.txt"],"authorization":null,"correlation":[{"name":"operation","value":"generate-1"}],"observation":{"procedure":"Read the generated file","expected":"Exact generated newline bytes","evidencePaths":[".apex/inception/bootstrap/generate-observation.json"]}}
+```
 
-Commits follow the commit policy in the descriptor:
+<!-- example:effect-intent -->
+```bash
+node <engine-root>/scripts/inception-state.mjs effect intent --repo-root . --id generate --input .apex/inception/bootstrap/generate-intent.json
+```
 
-- `allowed` → the commit and its checks come before the checkpoint. The commit is itself an
-  effect, of kind `commit`.
-- `forbidden`, or `none` without Git → make no commit. A repository without Git and an uncommitted
-  tree are supported when the checkpoint records them faithfully.
+Execute the exact intent command once, then observe the file bytes before writing
+`bootstrap/generate-observation.json`. This sample succeeded outcome applies only if observed:
 
-Rules:
+<!-- example:effect-observation -->
+```json
+{"id":"generate","procedure":"Read the generated file","result":"succeeded","correlation":[{"name":"operation","value":"generate-1"}],"observed":"The file contains exact generated newline bytes"}
+```
 
-- An interruption never authorizes repeating a concluded or uncertain effect. On resume, Step 1
-  settles every `uncertain` effect first.
-- A checkpoint is never replaced by a new baseline to hide changes. A later change gets its own
-  effect and a new checkpoint.
-- Children never run an operation with effects. A bootstrap part lists the effects it needs in its
-  report, and you run them. A research experiment stays in its isolated directory outside the
-  repository.
-- `checkpoint create` refuses an application file reached through a symlinked ancestor directory,
-  and a path named twice across `--file` and `--files-from`. Name each application file once, by its
-  real path.
+Write `bootstrap/generate-outcome.json` with the same observed result/correlation:
+
+<!-- example:effect-outcome-input -->
+```json
+{"result":"succeeded","observed":"The file contains exact generated newline bytes","correlation":[{"name":"operation","value":"generate-1"}],"evidence":[".apex/inception/bootstrap/generate-observation.json"]}
+```
+
+<!-- example:effect-outcome -->
+```bash
+node <engine-root>/scripts/inception-state.mjs effect outcome --repo-root . --id generate --input .apex/inception/bootstrap/generate-outcome.json
+```
+
+The general sequence is:
+
+1. `effect intent --id <id> --input <exact-intent-json>` binds the active unit and before snapshot.
+2. Run only that authorized command/procedure. A remote creation/push/deploy requires explicit
+   authorization for that operation; retain existing still-valid authorization in the input.
+   Commit policy never authorizes remote operations. Local commits require allowed; none/forbidden
+   means no commit. A dirty tree or absent Git is supported when recorded faithfully.
+3. `effect outcome --id <id> --input <exact-outcome-json>` supplies exactly result, observed,
+   correlation and evidence (exact path list). Results: succeeded/failed/not-started/partial.
+   Helper derives intent/before/after and fixes method. Partial remains uncertain, not replayable.
+4. Check the unit report, effects and observed diff, finish the unit, then
+   `checkpoint create --label=<text>`. This snapshots the entire approved inventory and Git after
+   authorized commits/checks. No file list or new baseline can hide unexplained changes.
+
+On interruption observe the same intent through `effect reconcile --id <id> --input <json>`;
+this is observation, never a new remote operation. Automatic reconciliation requires exact matching
+correlation plus sufficient real evidence. Not-started needs proof and closes only that intention;
+it does not authorize replay. Without proof preserve uncertainty, block and request a human
+decision. Reconciliation is not a replacement for required manual acceptance. Resolve independent
+blocks separately. Git provenance drift needs its own authorized/evidenced explanation even if
+contents match. Application inventory rejects symlinks/special files and never silently normalizes
+unrepresentable names.
 
 ### Step 9 — Pause after bootstrap
 
-Session 2 ends here. Before you pause:
-
-1. Publish the next phase in the descriptor: `transition --to verification --reason=<value>`.
-2. Wait for every active child to return.
-3. Write the resume note: `resume-note --next=<value> --need <path> --note=<value>`, with one
-   `--need` for every exact path the next session needs, such as each bootstrap part report. Each
-   `--need` is an existing file under `.apex/inception/`. `--note=<value>` carries, on one line, the
-   concrete model of each child dispatched in this session and any degradation first met since
-   approval. Leave `--note` out when there is nothing to record. The helper writes the descriptor
-   path and the phase into the note.
-
-The pause is not a block: the run stays `active`.
-
-Recommend a new session for verification: everything earlier in this session stays in context, and
-that context is paid again on every turn. If the user explicitly asks to continue in the same
-session, continue, and state the cost. A pause is never a refusal.
+Recommend a new session for verification. Finish all children and units, check effects/blocks, take
+the bootstrap checkpoint, and publish `transition --to verification --reason=<text>`. Then write
+`resume-note --next=<text> --need <exact-ref>`, including approved contract, part reports and needed
+bound evidence; add concrete child models/degradation in `--note=<text>`. The run remains active.
+Continue if requested. This pause is context management, never a new approval or authority.
 
 ### Step 10 — Final verification and conclusion
 
-Session 3 verifies the application and concludes the run.
+Use resume-check first on every resumed entry, and verification resume once for a new session with
+an existing cycle. After bootstrap enter verification and establish observed non-secret environment
+identities using the contract's tool/resource list; never copy credentials or environment variables.
+For the illustration only, write `project/environment.json` as follows:
 
-Verify from a clean state, such as a fresh checkout without installed dependencies, build output,
-or processes left from bootstrap: install, build, test, start, the representative path, and the
-preserved behaviors. A verification step with effects, such as an install, follows Step 8.
+<!-- example:environment -->
+```json
+{"tools":[],"resources":[]}
+```
 
-For each check, keep its environment, exact command or procedure, expected result, observed result,
-and limits. Each check gets exactly one of five result values:
+<!-- example:verification-begin -->
+```bash
+node <engine-root>/scripts/inception-state.mjs verification begin --repo-root . --environment .apex/inception/project/environment.json --reason=Bootstrap-ready
+```
 
-- `configured`: set up but not run here, such as CI or a deploy that only a remote run proves.
-- `executed`: run, but the observation cannot show whether the expected result holds.
-- `succeeded`: run, and the observed result matches the expected one.
-- `not-executed`: not run; the limits say why.
-- `failed`: run, and the observed result differs from the expected one.
+Read the returned `cycle.path`; never construct a record number. It binds approval, contract,
+application snapshot and environment. Identical identities reuse the current cycle; changes create
+a new cycle. Verify approved install/build/test/start, representative path, preserved behaviors and
+resolved versions from a clean state as the contract requires. Preparation with effects follows
+Step 8 before beginning the stable cycle; do not allow a verification command to change the
+application and still count as a successful old-cycle check.
 
-Check that the resolved versions, in the lockfiles and the tools' version output, match the approved
-combination.
+Begin a check unit before each automatic/manual check with exact report under `bootstrap/`,
+allowedPaths empty and declared inputs. The helper also binds current cycle/session. The collector
+runs one approved command at a time, streams complete stdout/stderr separately and binds a receipt:
 
-Write `.apex/inception/verification/results.md`; create `.apex/inception/verification/` as an
-ordinary directory if it is absent. It has two sections. `## Checks` has one row per check:
+<!-- example:capture -->
+```bash
+node <engine-root>/scripts/capture-inception-evidence.mjs --repo-root . --cycle <cycle> --check representative --unit <unit-id> --purpose check
+```
 
-| Check | Environment | Command or procedure | Expected | Observed | Limits | Result |
-|---|---|---|---|---|---|---|
-| install | <environment> | <exact command> | <expected> | <observed> | <limits, or none> | succeeded |
+No alternative command, imported receipt or passed/success boolean is accepted. Read compact outcome
+without loading all streams. Capture exit 0 may describe a failed command. For interrupted capture,
+never rerun the application command: retain its registered attempt. Reinvoke the same collector
+CLI with the exact cycle/check/unit/purpose; its registered-attempt path performs recovery only,
+requires a dead/verifiable collector before recovery/binding, and never launches the command again; if no complete reserved proof exists, close incomplete with evidence and preserve
+uncertainty. A new execution needs a new unit ID, explicit previous-unit and settled effects.
 
-`## Coverage` has one row for each decision-register ID and each component:
+For manual checks obtain explicit human observation of the exact check IDs, procedures and outcomes.
+One confirmation may cover multiple IDs only if the question and answer identify them. After the
+answer, write the verbatim statement and observations to the exact attestation input. This sample
+is fixture data, never a human statement the agent may invent:
 
-| ID | Component | Status | Checks |
-|---|---|---|---|
-| DR-1 | <component> | verified | <the checks that cover it> |
+<!-- example:manual-attestation -->
+```json
+{"checks":[{"id":"representative","procedure":"Open the representative path","result":"succeeded","observed":"Path is readable"}],"statement":"I opened the representative path and confirm it is readable.","environment":{"tools":[],"resources":[]},"purpose":"check"}
+```
 
-Status is `verified`, `unverified`, or `future`. Never edit the approved documents to record the
-results.
+<!-- example:attest -->
+```bash
+node <engine-root>/scripts/inception-state.mjs verification attest --repo-root . --cycle <cycle> --input <attestation-input>
+```
 
-Conclude the run after the last authorized commits:
+The helper observes before/after and rejects drift; it verifies shape/identity, not human truth.
+For both, collect automatic and manual evidence; neither alone passes. Write the complete check
+report, review its observed diff and `unit finish` before reading applicable status:
 
-1. Create the final checkpoint: `checkpoint create --label=<value> --file <path>`. Its output's
-   `checkpoint` field is the path to pass next.
-2. Run `transition --to complete --checkpoint <path> --verification .apex/inception/verification/results.md --reason=<value>`.
-   The helper refuses while that checkpoint does not verify clean, or while any effect is
-   `uncertain`.
-3. Write the closing note: `resume-note --next=<value> --need .apex/inception/verification/results.md`,
-   where `<value>` is exactly `run the init skill, then the discovery skill with the inception source`.
-   Add `--note=<value>` to the closing note when a degradation was first met in this session.
-4. Give the closing report: what is verified, unverified, and future, and the next steps: the `init`
-   skill, then the `discovery` skill with the inception source.
+<!-- example:verification-status -->
+```bash
+node <engine-root>/scripts/inception-state.mjs verification status --repo-root . --cycle <cycle>
+```
 
-The run ends at `complete`. It does not run the `init` skill.
+At each new verification session, after resume-check and recovery:
+
+<!-- example:verification-resume -->
+```bash
+node <engine-root>/scripts/inception-state.mjs verification resume --repo-root . --cycle <cycle>
+```
+
+Unchanged snapshot evidence stays applicable. For reuse reobserve, collect fresh approved procedures
+in the new session with `--purpose revalidate` for the collector and `purpose: "revalidate"` for
+attest. Manual revalidation uses reuse.manual.procedure, never the primary manual procedure. If
+unavailable, the old outcome remains historical and the check is still missing. Do not rerun other
+valid checks indiscriminately.
+
+After any application correction, finish/reconcile the fixing unit, call verification begin for a
+new cycle, and repeat **all required automatic and manual checks**. No selective impact-based
+reuse. A new approval likewise invalidates all old results. An unchanged retry in the same cycle
+uses a new unit/proof and preserves failed attempts. Never make failures optional to permit closure.
+
+Result distinctions remain configured/executed/succeeded/not-executed/failed; only succeeded with
+all required types satisfies a required check. Optional missing checks are not-executed with explicit
+limits. Coverage is derived: verified/unverified/future; future never becomes delivered implicitly.
+Write a JSON array of descriptive limits at `project/limits.json` (for example `[]`), then:
+
+<!-- example:summarize -->
+```bash
+node <engine-root>/scripts/inception-state.mjs verification summarize --repo-root . --cycle <cycle> --limits .apex/inception/project/limits.json
+```
+
+The helper derives immutable summary/report from accepted evidence. Do not hand-edit outcomes,
+approved project documents or final `verification/results.md`. After final authorized commits are
+observed/reconciled and every unit is finished:
+
+<!-- example:checkpoint -->
+```bash
+node <engine-root>/scripts/inception-state.mjs checkpoint create --repo-root . --label=Final-verification
+```
+
+Use returned `checkpoint.path`, then:
+
+<!-- example:complete -->
+```bash
+node <engine-root>/scripts/inception-state.mjs transition --repo-root . --to complete --cycle <cycle> --checkpoint <checkpoint> --reason=All-required-checks-verified
+```
+
+Complete checks approval, cycle/inventory/environment/reuse, final checkpoint, all required types,
+transitive digests, zero uncertain/partial effects, active units, residual blocks and foreign pending
+writes. It publishes immutable report/completion plus `verification/results.md`, then complete state.
+
+<!-- example:verify-complete -->
+```bash
+node <engine-root>/scripts/inception-state.mjs verify-complete --repo-root .
+```
+
+After successful verification, read the returned completion ref for the closing presentation only:
+
+<!-- example:closing-note -->
+```bash
+node <engine-root>/scripts/inception-state.mjs resume-note --repo-root . --next=init-then-discovery --need <completion>
+```
+
+A complete run with a missing closing note permits presentation only referencing the existing
+completion; never restart verification or bootstrap. Give verified/unverified/future results and
+limits, then recommend the `init` skill followed by the `discovery` skill with inception source.
+The run does not invoke init. A rejected verify-complete source remains intact; do not silently
+import historical choices as current truth. Ordinary discovery of current code stays available.
 
 ## Sessions and context
 
-A run takes three sessions with two planned pauses: after approval (Step 6) and after bootstrap
-(Step 9).
-
-| Session | Phases | Ends at |
-|---|---|---|
-| 1 | reconnaissance, architecture, research, approval | the pause after approval (Step 6) |
-| 2 | bootstrap | the pause after bootstrap (Step 9) |
-| 3 | verification and conclusion | `complete` and the closing note (Step 10) |
-
-A new session starts from the descriptor and the latest resume note (Step 1), not from the earlier
-conversation. Earlier context is paid on every turn, so a new session at each pause keeps the cost
-down.
+Recommend three sessions: reconnaissance/architecture/research/approval, bootstrap, then verification
+and conclusion. Pauses are recommendations and never authorize work or require a new approval.
+Recovery works from any persisted point, independent of chat history. Earlier context is paid on
+each turn, so new sessions can reduce cost; continue in the same session when requested.
 
 ## Children and dispatch policy
 
-A child is a subagent that does one bounded job for you, the coordinator.
+Only one child or other work-unit writer runs at a time. Research may run while the coordinator
+prepares dialogue, but another decision unit or document writer waits for its finish. A child gets
+an already persisted unit ID, exact input paths, exact report output and correlation; bootstrap also
+gets exact allowed application paths. Children never inherit coordinator read capability, list run
+records, or mutate helper state. The coordinator reads the complete report and checks observed diff
+before finish; a terse response alone is insufficient.
 
-- A child receives exact input paths and one exact output path. It writes its detail to its own
-  report and returns a short answer: the four fields `status`, `artifact`, `changed-paths`,
-  `signals`.
-- Read a full child report only for a concrete missing fact.
-- Children never inherit the coordinator's read capability: a child reads only the paths you pass
-  it.
-- Only one child runs at a time. Research may continue in the background while you keep the dialogue
-  going.
-- Tiers are abstract: `standard` for research and experiments, `most-capable` for bootstrap parts.
-  Never write a concrete model ID; translate the tier to a concrete model when you dispatch.
-- Record the concrete model each child ran on, and any degradation, in the next resume note
-  (`--note=<value>` at Step 6 or Step 9).
-- Without subagents, run the work inline yourself, and write the explicit degradation in the report
-  the work produces.
+Translate abstract tier to the concrete available model at dispatch, and record the actual model
+and degradation in the report/next note. Without subagents execute the same prompt inline with
+explicit degradation. Each prompt returns status/artifact/changed-paths/signals after its full report.
 
-The two prompt templates live in this skill's base directory:
-
-| Template | Child | Tier | Placeholders |
-|---|---|---|---|
-| `research-prompt.md` | one research question or experiment (Step 4) | `standard` | `[INPUT_PATHS]`, `[OUTPUT_FILE]`, `[QUESTION]` |
-| `bootstrap-part-prompt.md` | one bootstrap part (Step 7) | `most-capable` | `[INPUT_PATHS]`, `[OUTPUT_FILE]`, `[PART]`, `[ALLOWED_PATHS]` |
-
-`[OUTPUT_FILE]` is `.apex/inception/research/<slug>.md` for research and
-`.apex/inception/bootstrap/<part>.md` for a bootstrap part.
+| Template | Tier | Bindings |
+|---|---|---|
+| `research-prompt.md` | `standard` | `[UNIT_ID]`, `[INPUT_PATHS]`, `[OUTPUT_FILE]`, `[CORRELATION]`, `[QUESTION]` |
+| `bootstrap-part-prompt.md` | `most-capable` | `[UNIT_ID]`, `[INPUT_PATHS]`, `[OUTPUT_FILE]`, `[CORRELATION]`, `[PART]`, `[ALLOWED_PATHS]` |
 
 ## Harness capabilities and degradations
 
@@ -533,21 +683,77 @@ change.
 
 ## Blocking and abandon
 
-Block the run on an unreadable determining input, an out-of-scope change, an uncertain external
-effect, or an unexplained divergence:
+On unreadable determining material, scope change, uncertain effect or unexplained divergence:
 
-1. Run `transition --to blocked --reason=<value>`.
-2. Preserve every file and result.
-3. Write a precise resume note with `resume-note --next=<value> --need <path> --note=<value>`: the
-   exact next action, one `--need` for every path the next session must read, and what blocked the
-   run.
+1. Preserve all evidence and stop new work. Inspect the exact active unit and any pending
+   reservation. Use Step 1 to settle only a correlated reserved publication; never bypass writer
+   exclusion or invoke application work again.
+2. Settle the active writer before the blocked transition. Finish/reconcile only demonstrably
+   completed work with its full valid report and observed diff. For stopped unfinished work,
+   retain BLOCKED/NEEDS_CONTEXT in its report, record the actual stopped-writer observation and
+   use `unit close-incomplete` as described above. Never fabricate a successful report to release
+   the writer. Closure records incomplete history, leaves uncertain effects, unaccepted application
+   drift and independent blocks intact, and grants no replay permission.
+3. If a child/capture is live or its stop is unverifiable, retain the active unit and report the
+   waiting condition with its exact ID and needed stop evidence. Request/await writer settlement;
+   do not claim that the helper recorded a blocked transition or a resume-note. A capture's
+   persisted PID must be proven dead; a human stopped-writer statement cannot bypass that rule.
+   Return to settlement when proof becomes available, without starting another writer.
+4. Only after activeUnit is null and pending publication is settled, persist the blocked
+   transition. Then write an exact next-action note with the bound evidence paths when allowed.
+   Check both command responses; a refusal is never a recorded status/note. Resolve only the
+   relevant observations and named blocks under Step 1 before any return to active.
 
-Restart only on an explicit user request to abandon:
+This missing-material recipe begins a decision unit before reconnaissance (research uses the same
+sequence with kind research). Write `project/recon-input.json` first:
 
-1. Run `abandon --reason=<value>`. It moves the run intact and deletes nothing: the run goes to
-   `.apex/inception/abandoned/<run-id>/`.
-2. Then start the new run in the same step: go through Step 1 (capability record, commit policy,
-   `start`). Without a new run, `.apex/` holds neither a hub nor a run, and the hub linter reports
-   the missing `_INDEX.md`.
+<!-- example:blocking-unit -->
+```json
+{"kind":"decision","inputs":[],"outputs":[{"path":".apex/inception/project/recon-report.md","role":"report"}],"allowedPaths":[]}
+```
 
-Never delete `.apex/inception/`.
+<!-- example:blocking-begin -->
+```bash
+node <engine-root>/scripts/inception-state.mjs unit begin --repo-root . --id recon --input .apex/inception/project/recon-input.json
+```
+
+If a required input is missing/unreadable, stop the incomplete reconnaissance and record the reason
+in recon-report.md using this unit's BLOCKED report delimiters. Unit finish cannot accept that
+report, and transition to blocked while recon is active refuses. Once the coordinator has actually
+stopped its own writer (or has observed the child's stop), write `project/recon-stopped.json`:
+
+<!-- example:blocking-stopped -->
+```json
+{"unitId":"recon","writerStopped":true,"statement":"The coordinator stopped its incomplete reconnaissance because required material is unreadable."}
+```
+
+This sample is only appropriate to an actual observation, never a substitute for stop evidence.
+Close the stopped unit incomplete, preserving any uncertain effects or unaccepted changes:
+
+<!-- example:blocking-close -->
+```bash
+node <engine-root>/scripts/inception-state.mjs unit close-incomplete --repo-root . --id recon --reason=Required-material-unreadable --evidence .apex/inception/project/recon-stopped.json
+```
+
+Read the closure response and descriptor; require activeUnit null, not completed work. Only then:
+
+<!-- example:blocking-transition -->
+```bash
+node <engine-root>/scripts/inception-state.mjs transition --repo-root . --to blocked --reason=Required-material-unreadable
+```
+
+<!-- example:blocking-note -->
+```bash
+node <engine-root>/scripts/inception-state.mjs resume-note --repo-root . --next=obtain-readable-required-material --need .apex/inception/project/recon-stopped.json
+```
+
+The note describes how to obtain the missing material, not authority to retry the unit. Preserve
+its incomplete identity and exact closure evidence; a later authorized execution needs a new ID
+and explicit previous-unit after uncertainty/drift/blocks are resolved. Nothing in this settlement
+sequence repeats application work or attests success.
+
+Only an explicit user abandon authorizes `abandon --reason=<text>`. First settle the active writer;
+the helper archives intact, deleting nothing. An interrupted archive resumes via
+`abandon --repo-root . --resume` using canonical intent and exact children, even after run.json has
+moved. Never scan abandoned runs. A verified complete archive is not automatic restart permission:
+start a distinct run only on an explicit user request. Never delete `.apex/inception/`.

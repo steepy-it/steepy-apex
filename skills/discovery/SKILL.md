@@ -41,10 +41,12 @@ table), and whether to also include the cross-cutting docs this run — `convent
 `glossary.md` — plus project-doc discovery (README / `docs/` / ADRs). This keeps a run bounded and
 re-runnable one surface at a time.
 
-If `.apex/inception/run.json` exists and its `status` is `complete`, also offer the **inception
-source**: turn the decisions of that completed inception run into hub text (Step 2a). Read only that
-one file to check this, and never list `.apex/inception/`. Otherwise do not mention the inception
-source, and run exactly as below.
+If `.apex/inception/run.json` exists, its `schema` is `steepy-inception-run/v2`, and its `status`
+is `complete` (with phase `complete`), also offer the **inception source**: import decisions only
+if Step 2a verifies that completed delivery. Read only that one file to check this, and never list
+`.apex/inception/`. This is a candidate offer, not a verified source; do not load approval or document
+bodies here. Otherwise do not mention the inception source; absent, active, blocked or legacy runs
+leave ordinary discovery available with the user's selected scope. Never migrate or restart a run.
 
 ### Step 2 — Per-surface iterative loop
 
@@ -132,24 +134,33 @@ Run this step only when the user chose the inception source in Step 1. It turns 
 completed inception run into hub text. Read by exact path only: never list `.apex/inception/` or a
 directory under it. A stop in this step ends only the inception source; Step 3 and Step 4 still run.
 
-1. **Read and verify.** Read the descriptor, `.apex/inception/run.json`, then only the paths it
-   binds: the latest bound approval record — the last element of the descriptor's `approvals`
-   array, by binding order, never by file recency — then that record's `documents[].path`, and the
-   descriptor's `verification.path`. Then run:
+1. **Verify before reading.** Before reading any source approval, document, summary, or report
+   body, run:
 
    ```bash
-   node <engine-root>/scripts/inception-state.mjs verify-approval --repo-root .
+   node <engine-root>/scripts/inception-state.mjs verify-complete --repo-root .
    ```
 
-   On any divergence (`"ok":false`), stop the inception source and report each divergence to the
-   user: drifted documents are not promoted. Also stop and report it when
-   `.apex/inception/project/decision-register.md` is not among the approved documents.
+   Require exit 0 and JSON `ok: true` with `runId`, `completion`, `inputPaths`, `checks`, and
+   `coverage`. The helper verifies transitive evidence and current application identity, including
+   only exact certified init additions, before returning document paths. Only after this success may
+   the coordinator or explorer read source bodies, and only the exact returned `inputPaths`.
+   Do not traverse descriptor or approval refs, append raw evidence, infer summary/report paths, or
+   choose an approval by recency. Stop this source if
+   `.apex/inception/project/decision-register.md` is not among the returned `inputPaths`.
+
+   On nonzero exit, `ok: false`, malformed output, or missing fields, stop only the inception source
+   and report the returned reason (legacy, tamper, application-drift, or another verification failure).
+   No source bodies are loaded and no source decisions are promoted. Never downgrade rejected
+   source decisions into old design choices. Ordinary discovery remains available for the current
+   code and surfaces already selected in Step 1; the per-surface interview and Steps 3–4 continue.
+   Keep the complete run and all its evidence immutable: no reopen, repeat bootstrap, migration or
+   restart. A refused source is not a request to widen the discovery scope.
 2. **Explore.** Ensure `.apex/work/discovery/` exists (create it if absent), then set
    `[REPORT_FILE] = .apex/work/discovery/YYYY-MM-DD-inception.md`. If your harness provides a
    task/subagent tool, dispatch a fresh subagent using `skills/discovery/explore-inception-prompt.md`,
-   and always set `model: standard` explicitly. Pass `[INPUT_PATHS]` = exactly the descriptor, the
-   approval record, every approved document, and the verification results — no other path. Also
-   pass `[REPORT_FILE]`, `glossary.md` as `[GLOSSARY_PATH]`, `conventions.md` as
+   and always set `model: standard` explicitly. Pass `[INPUT_PATHS]` = exactly the successful gate's
+   `inputPaths` array, unchanged — no other run path. Also pass `[REPORT_FILE]`, `glossary.md` as `[GLOSSARY_PATH]`, `conventions.md` as
    `[CONVENTIONS_PATH]`, and as `[STANDARD_PATHS]` the standard docs of every surface in the routing
    table (the single `standards/<surface>.md`, or the core plus every leaf its mini-routing table
    lists). Otherwise run the same prompt inline over the same inputs, and state the inline
@@ -159,13 +170,15 @@ directory under it. A stop in this step ends only the inception source; Step 3 a
    read the report back from `[REPORT_FILE]` before the interview.
 3. **Walk the decision register.** The report holds one item card per `DR-n`, in register order.
    For each decision, print in a plain text message its card — Proposed doc text, Evidence (the
-   local file and line; it is for the interview only), Verification status (from the verification
-   results' `## Coverage` rows), Promotion class — immediately followed by its write-back preview:
+   local file and line; it is for the interview only), Verification status (from the verified summary's
+   `coverage` entries), Promotion class — immediately followed by its write-back preview:
    the destination and the exact text that would be written. Then run the same accept / correct /
    skip interview as Step 2.4: decide on the preview, a correction re-renders the preview, one
    question at a time. Never use bare IDs (DR-1, DR-2, …) as option labels: the user decides on the
    printed card and preview. A skip is a rejection: ask the user for its reason.
-4. **Promotion rules.** Every decision in the register is approved: Step 2a.1 verified the approval.
+4. **Promotion rules.** Every decision in the register is approved: Step 2a.1 verified complete
+   delivery, including its approval. Use only the verified summary for coverage and check outcomes; a red source gate
+   permits none of these promotions.
    - Approved and verified (`verified`) → may be written as an existing component or rule.
    - Approved but unverified (`unverified`) → written as a design choice, not as an existing
      component.

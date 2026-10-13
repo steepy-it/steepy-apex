@@ -372,25 +372,14 @@ function flat(text) {
   return text.replace(/\s+/g, ' ');
 }
 
-test('discovery inception source (SC11): Step 1 offers the source only for a complete run and reads only the descriptor', () => {
-  const text = readFileSync(skillPath, 'utf8');
-  const step1 = flat(sectionBetween(text, '### Step 1', '### Step 2'));
-  assert.match(
-    step1,
-    /If `\.apex\/inception\/run\.json` exists and its `status` is `complete`, also offer the \*\*inception source\*\*/,
-    'Step 1 must offer the inception source only for a complete run',
-  );
-  assert.match(
-    step1,
-    /Read only that one file to check this, and never list `\.apex\/inception\/`\./,
-    'Step 1 must read only the descriptor and never list the area',
-  );
-  assert.match(
-    step1,
-    /Otherwise do not mention the inception source, and run exactly as below\./,
-    'Step 1 must stay silent about the source when no complete run exists',
-  );
-  assert.doesNotMatch(step1, /explore-surface-prompt\.md/, 'Step 1 must not mention the surface explorer prompt');
+test('discovery inception source (SC11): Step 1 offers only a v2 complete candidate without body reads', () => {
+  const step1 = flat(sectionBetween(readFileSync(skillPath, 'utf8'), '### Step 1', '### Step 2'));
+  assert.match(step1, /`schema` is `steepy-inception-run\/v2`.*`status` is `complete`/);
+  assert.match(step1, /offer the \*\*inception source\*\*/);
+  assert.match(step1, /Read only that one file.*never list `\.apex\/inception\/`/);
+  assert.match(step1, /candidate.*not.*verified/i);
+  assert.match(step1, /legacy.*ordinary discovery/i);
+  assert.doesNotMatch(step1, /documents\[\]|verification\.path/);
 });
 
 test('discovery inception source (SC11): Step 2a sits between Step 2 and Step 3 and runs only on the user\'s choice', () => {
@@ -405,26 +394,23 @@ test('discovery inception source (SC11): Step 2a sits between Step 2 and Step 3 
   assert.match(section, /A stop in this step ends only the inception source/);
 });
 
-test('discovery inception source (SC11): Step 2a reads only the descriptor and its bound paths, then runs verify-approval', () => {
-  const text = readFileSync(skillPath, 'utf8');
-  const section = flat(sectionBetween(text, STEP_2A, '### Step 3'));
-  assert.match(section, /Read the descriptor, `\.apex\/inception\/run\.json`, then only the paths it binds/);
-  assert.match(
-    section,
-    /the last element of the descriptor's `approvals` array, by binding order, never by file recency/,
-    'the approval record is chosen by binding order, never by file recency',
-  );
-  assert.match(section, /that record's `documents\[\]\.path`, and the descriptor's `verification\.path`/);
-  assert.match(section, /node <engine-root>\/scripts\/inception-state\.mjs verify-approval --repo-root \./);
-  assert.match(
-    section,
-    /On any divergence[^.]*stop the inception source[^.]*: drifted documents are not promoted\./,
-    'a divergence stops the inception source and nothing drifted is promoted',
-  );
-  assert.match(section, /`\.apex\/inception\/project\/decision-register\.md` is not among the approved documents/);
+test('discovery inception source (SC11): complete gate precedes source body reads and failures stop only the source', () => {
+  const raw = sectionBetween(readFileSync(skillPath, 'utf8'), STEP_2A, '### Step 3');
+  const section = flat(raw);
+  const gate = raw.indexOf('node <engine-root>/scripts/inception-state.mjs verify-complete --repo-root .');
+  const read = raw.indexOf('Only after');
+  assert.ok(gate >= 0 && read > gate, 'verify-complete must come before document body reads');
+  assert.match(section, /Before reading.*approval.*document.*summary.*report.*run:/i);
+  assert.match(section, /`ok: true`.*`runId`.*`completion`.*`inputPaths`.*`checks`.*`coverage`/);
+  assert.match(section, /legacy.*tamper.*application-drift/);
+  assert.match(section, /ordinary discovery.*surfaces already selected/i);
+  assert.match(section, /Never.*design choices/i);
+  assert.match(section, /complete run.*immutable/i);
+  assert.doesNotMatch(section, /verify-approval|verification\.path|last element.*approvals|documents\[\]\.path/);
+  assert.match(section, /decision-register\.md.*not among.*`inputPaths`/);
 });
 
-test('discovery inception source (SC11): Step 2a passes exactly the bound paths as [INPUT_PATHS] with an explicit model:', () => {
+test('discovery inception source (SC11): Step 2a passes exactly the verified returned inputPaths as [INPUT_PATHS] with an explicit model:', () => {
   const text = readFileSync(skillPath, 'utf8');
   const raw = sectionBetween(text, STEP_2A, '### Step 3');
   const section = flat(raw);
@@ -438,7 +424,7 @@ test('discovery inception source (SC11): Step 2a passes exactly the bound paths 
   assert.match(raw.slice(idx, idx + 300), /model: standard/, 'must set model: standard explicitly near the dispatch');
   assert.match(
     section,
-    /Pass `\[INPUT_PATHS\]` = exactly the descriptor, the approval record, every approved document, and the verification results — no other path\./,
+    /Pass `\[INPUT_PATHS\]` = exactly the successful gate\x27s `inputPaths` array, unchanged — no other run path\./,
   );
   assert.match(section, /`\[GLOSSARY_PATH\]`[^]*`\[CONVENTIONS_PATH\]`[^]*`\[STANDARD_PATHS\]`/);
   assert.match(
@@ -477,7 +463,7 @@ test('discovery inception source (SC12): Step 2a walks the decision register, on
   assert.match(section, /one item card per `DR-n`/);
   assert.match(section, /Proposed doc text/);
   assert.match(section, /Evidence \(the local file and line; it is for the interview only\)/);
-  assert.match(section, /Verification status \(from the verification results' `## Coverage` rows\)/);
+  assert.match(section, /Verification status \(from the verified summary's `coverage` entries\)/);
   assert.match(section, /Promotion class/);
   assert.match(section, /write-back preview: the destination and the exact text that would be written/);
   assert.match(section, /accept \/ correct \/ skip interview as Step 2\.4/);
@@ -597,4 +583,16 @@ test('discovery inception source (SC12): explore-surface-prompt.md gains the inc
     text,
     /beyond what is needed to confirm a finding\.\n {4}Never read under `\.apex\/work\/` or `\.apex\/inception\/`: inception material reaches discovery only\s+through its inception source\./,
   );
+});
+
+
+test('discovery inception explorer consumes verified summary coverage without following descriptor refs', () => {
+  const body = flat(readFileSync(inceptionPromptPath, 'utf8'));
+  assert.match(body, /successful `verify-complete`.*`inputPaths`/);
+  assert.match(body, /verified summary.*`checks`.*`coverage`/);
+  assert.match(body, /Never follow.*refs.*raw evidence/i);
+  assert.match(body, /no.*gate.*BLOCKED/i);
+  assert.match(body, /`coverage`.*`id`.*`status`/);
+  assert.match(body, /`DR-1` → `dr-1`/);
+  assert.doesNotMatch(body, /descriptor.*verification\.path|latest.*approval|## Coverage.*rows/);
 });
