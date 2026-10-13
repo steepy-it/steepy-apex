@@ -1784,6 +1784,74 @@ function prepareProjectScaffoldLock(root) {
   }
 }
 
+const LEASE_PREFIX = PROJECT_SCAFFOLD_LOCK.replaceAll('.', '\\.');
+const LEASE_TOKEN = LOCK_TOKEN.source.slice(1, -1); // LOCK_TOKEN grammar without its anchors
+const LEASE_NAME_SHAPES = [
+  { kind: 'canonical', pattern: new RegExp(`^${LEASE_PREFIX}$`) },
+  { kind: 'stale', pattern: new RegExp(`^${LEASE_PREFIX}\\.stale-(${LEASE_TOKEN})$`) },
+  { kind: 'retired', pattern: new RegExp(`^${LEASE_PREFIX}\\.retired-(${LEASE_TOKEN})$`) },
+  { kind: 'candidate', pattern: new RegExp(`^${LEASE_PREFIX}\\.candidate-([1-9][0-9]*)-(${LEASE_TOKEN})$`) },
+];
+
+function leaseNameShape(name) {
+  for (const { kind, pattern } of LEASE_NAME_SHAPES) {
+    const match = pattern.exec(name);
+    if (match) {
+      if (kind === 'candidate') return { kind, pid: Number(match[1]), token: match[2] };
+      return { kind, token: match[1] };
+    }
+  }
+  return null;
+}
+
+// Read-only structural recognition of lease directories directly under `root`.
+// Liveness is deliberately not consulted; any malformed entry is silently excluded.
+export function recognizeProjectScaffoldLeases(root) {
+  const recognized = [];
+  for (const name of readdirSync(root).sort()) {
+    const shape = leaseNameShape(name);
+    if (shape === null) continue;
+    if (shape.pid !== undefined && !Number.isSafeInteger(shape.pid)) continue;
+    let fd;
+    try {
+      const path = join(root, name);
+      const directory = lstatSync(path, { bigint: true });
+      if (directory.isSymbolicLink() || !directory.isDirectory()) continue;
+      const entries = readdirSync(path);
+      if (entries.length !== 1 || entries[0] !== PROJECT_SCAFFOLD_LOCK_OWNER) continue;
+      const ownerPath = join(path, PROJECT_SCAFFOLD_LOCK_OWNER);
+      const before = lstatSync(ownerPath, { bigint: true });
+      if (before.isSymbolicLink() || !before.isFile() || before.nlink !== 1n
+          || (before.mode & 0o7777n) !== 0o600n) continue;
+      fd = openSync(ownerPath, FS_CONSTANTS.O_RDONLY | FS_CONSTANTS.O_NOFOLLOW);
+      const opened = fstatSync(fd, { bigint: true });
+      const text = readFileSync(fd, 'utf8');
+      const after = lstatSync(ownerPath, { bigint: true });
+      if (!opened.isFile() || statIdentity(opened) !== statIdentity(before)
+          || statIdentity(after) !== statIdentity(before)) continue;
+      const record = JSON.parse(text);
+      assertLockRecord(record, 'project scaffold lease owner record');
+      if (text !== lockRecordBytes({ schemaVersion: 1, pid: record.pid, token: record.token })) continue;
+      if (shape.token !== undefined && shape.token !== record.token) continue;
+      if (shape.pid !== undefined && shape.pid !== record.pid) continue;
+      recognized.push({
+        name,
+        pid: record.pid,
+        token: record.token,
+        directoryIdentity: statIdentity(directory),
+        ownerIdentity: statIdentity(before),
+      });
+    } catch {
+      continue;
+    } finally {
+      if (fd !== undefined) {
+        try { closeSync(fd); } catch { /* Read-only recognition ignores close failures. */ }
+      }
+    }
+  }
+  return Object.freeze(recognized);
+}
+
 function contentionRenameError(error) {
   return ['EEXIST', 'ENOTEMPTY', 'ENOTDIR', 'EISDIR'].includes(error.code);
 }

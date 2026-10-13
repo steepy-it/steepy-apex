@@ -459,7 +459,16 @@ for (const prefix of ['full-scaffold', 'through-customized-replacement']) test(`
   const result = JSON.parse(recovered.stdout);
   assert.equal(result.applied, originalPlan.operations.length - alreadyApplied.length);
   assert.deepEqual(metadata(), before, 'recovery never rewrites completed scaffold files');
-  for (const document of JSON.parse(inputBytes).documents) f.write(document.path, document.content);
+  const documentsLine = init.split('\n').map(line => line.trim()).find(line => line.startsWith('node <engine-root>/scripts/inception-governance.mjs documents '));
+  assert.ok(documentsLine, 'document the public documents command');
+  const documentsArgs = documentsLine.replace('node ', '').replaceAll('<engine-root>', root).replaceAll('<repo-root>', f.repo).replaceAll('<governance-input-json>', inputPath).split(' ');
+  const written = spawnSync(process.execPath, documentsArgs, { encoding: 'utf8' });
+  assert.equal(written.status, 0, written.stdout + written.stderr);
+  assert.ok(JSON.parse(written.stdout).created.length > 0, 'documents writes the missing certified documents');
+  for (const document of JSON.parse(inputBytes).documents) {
+    assert.equal(readFileSync(join(f.repo, document.path), 'utf8'), document.content);
+    assert.equal(statSync(join(f.repo, document.path)).mode & 0o777, 0o644);
+  }
   governance('finish');
   assert.equal(f.run('verify-complete').ok, true);
   assert.deepEqual(readFileSync(join(f.repo, inputPath)), inputBytes);

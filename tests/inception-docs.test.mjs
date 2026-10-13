@@ -250,3 +250,52 @@ test('native protocol requires every recovery and verification case without clai
   assert.match(doc, /init-provenance[\s\S]*application drift[\s\S]*ordinary discovery[\s\S]*abandon.*--resume/i);
   assert.doesNotMatch(doc, /must not mark it succeeded without a human decision/i);
 });
+
+test('pre-merge rules agree across skills and guides', () => {
+  const init = norm(read('skills', 'init', 'SKILL.md'));
+  assert.ok(init.includes('node <engine-root>/scripts/inception-governance.mjs documents --repo-root <repo-root> --input <governance-input-json>'));
+  assert.match(init, /never write certified document bytes/i);
+  assert.match(init, /mode 0644/);
+  const inception = norm(read('skills', 'inception', 'SKILL.md'));
+  assert.match(inception, /Git status leaves out the same reserved areas, recognized scaffold leases and approved exclusions/i);
+  assert.match(inception, /recognized scaffold lease is not divergence/i);
+  assert.doesNotMatch(inception, /with only reserved protocol areas excluded/i);
+  assert.match(inception, /Before approval the helper inventories `\.` excluding only the reserved protocol areas and recognized scaffold leases; Gitignore is not the inventory rule/i);
+  assert.match(inception, /new decision document[\s\S]*only in the approval phase/i);
+  const discovery = norm(read('skills', 'discovery', 'SKILL.md'));
+  assert.match(discovery, /does not cover every registered decision document/i);
+  assert.match(discovery, /uncovered decision/);
+  const guide = norm(read('docs', 'inception.md'));
+  assert.match(guide, /A recognized lease is a repository-root directory/);
+  for (const suffix of [/\.stale-<token>/, /\.retired-<token>/, /\.candidate-<pid>-<token>/]) assert.match(guide, suffix);
+  assert.match(guide, /Git status uses the same excluded set as the inventory/);
+  assert.match(guide, /covered by the latest approval/);
+  assert.match(guide, /inception-governance\.mjs documents/);
+  assert.doesNotMatch(guide, /recognized active lease/);
+  const architecture = read('docs', 'architecture.md').split('\n');
+  assert.match(architecture.find(line => line.startsWith('| `inception-snapshot.mjs` |')), /recognized scaffold lease/);
+  assert.match(architecture.find(line => line.startsWith('| `inception-governance.mjs` |')), /writes the certified stable documents/);
+  const acceptance = read('docs', 'inception-acceptance.md').split('\n');
+  assert.match(acceptance.find(line => /complete → init → discovery/.test(line)), /`documents`/);
+});
+
+test('hub promotes the pre-merge inception rules', () => {
+  const lease = glossaryEntry('Lease riconosciuto');
+  assert.ok(lease, 'glossary.md must define Lease riconosciuto');
+  assert.match(lease, /stale[\s\S]*retired[\s\S]*candidate/);
+  assert.match(lease, /0600/);
+  assert.match(lease, /live or dead/i);
+  assert.match(glossaryEntry('Fotografia applicativa'), /Git status/);
+  const section = conventionsSection('Inception (pre-hub)');
+  assert.match(section, /recognized lease/i);
+  assert.match(section, /Git status excludes the same set as the inventory/i);
+  assert.match(section, /covered by the latest approval/i);
+  assert.match(section, /documents[\s\S]*0644/);
+  const scripts = read('.apex', 'standards', 'scripts.md');
+  assert.match(scripts, /recognized scaffold leases/);
+  assert.match(scripts, /documents/);
+  assert.match(read('.apex', 'standards', 'skills.md'), /governance `documents` command/);
+  const tests = read('.apex', 'standards', 'tests.md');
+  assert.match(tests, /umask/);
+  assert.match(tests, /recognized lease/);
+});

@@ -45,7 +45,7 @@
   A `HALTED` result is a permanently abandoned run, never an exact-resume handoff; preserve all of its state and recover only with a new ratified goal at a distinct goal path and loop workspace.
 - Project setup retains one immutable user-confirmed interview record, derives the planner's exact
   five-key Project model v1, and applies preview → conflict resolution → zero-conflict preview → apply.
-  Certified post-complete init binds exact governance provenance; pending recovery uses the retained original validated plan with public idempotent apply, never fresh replanning. Init/repair share this path; conflict prompts expose only planner choices and a second repair is a
+  Certified post-complete init binds exact governance provenance; pending recovery uses the retained original validated plan with public idempotent apply, never fresh replanning; certified stable documents come only from the governance `documents` command, never from the agent. Init/repair share this path; conflict prompts expose only planner choices and a second repair is a
   byte/mode/mtime no-op. Surface scaffolding separates unbound preparation from active-v1 addition;
   the latter uses the public planner to keep root, routing, create-only standard, and specialist triad
   coherent. Planner-owned provenance resolves the canonical project bootstrap, which owns navigation

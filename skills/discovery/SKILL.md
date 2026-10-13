@@ -143,14 +143,15 @@ directory under it. A stop in this step ends only the inception source; Step 3 a
 
    Require exit 0 and JSON `ok: true` with `runId`, `completion`, `inputPaths`, `checks`, and
    `coverage`. The helper verifies transitive evidence and current application identity, including
-   only exact certified init additions, before returning document paths. Only after this success may
+   only exact certified init additions, before returning document paths. It also rejects a completion whose latest approval does not cover
+   every registered decision document, naming that path. Only after this success may
    the coordinator or explorer read source bodies, and only the exact returned `inputPaths`.
    Do not traverse descriptor or approval refs, append raw evidence, infer summary/report paths, or
    choose an approval by recency. Stop this source if
    `.apex/inception/project/decision-register.md` is not among the returned `inputPaths`.
 
    On nonzero exit, `ok: false`, malformed output, or missing fields, stop only the inception source
-   and report the returned reason (legacy, tamper, application-drift, or another verification failure).
+   and report the returned reason (legacy, tamper, application-drift, uncovered decision, or another verification failure).
    No source bodies are loaded and no source decisions are promoted. Never downgrade rejected
    source decisions into old design choices. Ordinary discovery remains available for the current
    code and surfaces already selected in Step 1; the per-surface interview and Steps 3–4 continue.

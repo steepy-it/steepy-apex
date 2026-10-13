@@ -30,15 +30,21 @@ export function fixture(t, { checks, approvedContract = contract(checks), phase 
   for (const key of Object.keys(env)) if (key.startsWith('GIT_') && !['GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL'].includes(key)) delete env[key];
   fs.mkdirSync(env.HOME); fs.mkdirSync(env.XDG_CONFIG_HOME);
   let serial = 0;
+  // A child umask comes only from a sandbox preload; the runner's umask never changes.
+  const umaskPreload = mask => {
+    const octal = mask.toString(8).padStart(3, '0'); const path = join(sandbox, `umask-${octal}.mjs`);
+    if (!fs.existsSync(path)) fs.writeFileSync(path, `process.umask(0o${octal});\n`);
+    return ['--import', path];
+  };
   const f = {
-    root, sandbox, env, contract: approvedContract,
+    root, sandbox, env, contract: approvedContract, umask: null,
     put(path, bytes) { fs.mkdirSync(dirname(join(root, path)), { recursive: true }); fs.writeFileSync(join(root, path), bytes); return path; },
     json(path, value) { return f.put(path, JSON.stringify(value)); },
     read(path) { return JSON.parse(fs.readFileSync(join(root, path))); },
     descriptor() { return f.read(`${area}/run.json`); },
     snapshot(path = '') { return physicalSnapshot(join(root, path)); },
     input(value) { return f.json(`${area}/inputs/${++serial}.json`, value); },
-    process(args, options = {}) { return spawnSync(process.execPath, args, { cwd: root, env, encoding: 'utf8', timeout: 30000, ...options }); },
+    process(args, options = {}) { return spawnSync(process.execPath, [...(f.umask === null ? [] : umaskPreload(f.umask)), ...args], { cwd: root, env, encoding: 'utf8', timeout: 30000, ...options }); },
     run(name, args, expected = 0) { const r = f.process([script(name), ...args]); assert.equal(r.status, expected, `${name} ${args.join(' ')}\n${r.stdout}\n${r.stderr}`); return r; },
     cli(...args) { return JSON.parse(f.run('inception-state', [...args, '--repo-root', root]).stdout); },
     refuse(...args) { return JSON.parse(f.run('inception-state', [...args, '--repo-root', root], 1).stdout); },

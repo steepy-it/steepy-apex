@@ -1476,8 +1476,9 @@ function withInceptionLease(repoRoot, options, operation) {
   const root = resolveRepoRoot(repoRoot);
   operation(root, options, true);
   return withProjectScaffoldLock({ hubRoot: root }, lease => {
-    // Exempt only this recognized live lease during its synchronous transaction,
-    // never arbitrary lock-like names or records observed by read-only callers.
+    // This exemption applies only to legacy v1 Git provenance (observeGitState).
+    // V2 application snapshots recognize the lease family structurally in
+    // inception-snapshot.mjs.
     ACTIVE_INCEPTION_LEASES.set(lease, root);
     try { return operation(root, options, false, lease); }
     finally { ACTIVE_INCEPTION_LEASES.delete(lease); }
@@ -1502,7 +1503,7 @@ function withV2SnapshotLease(root, observed, action) {
   };
   // The scaffold lease retains a reclaimed generation until release. Complete
   // that retirement before observing application files, using only the public
-  // lease API; arbitrary lock-like paths remain part of the inventory.
+  // lease API; lock-like paths that fail structural recognition remain part of the inventory.
   withProjectScaffoldLock({ hubRoot: root }, currentDescriptor);
   // Another cooperating writer may run between leases. Recheck the descriptor
   // under the observation lease before any application read or publication.
@@ -1614,6 +1615,8 @@ export function beginUnit(repoRoot, { id, input, previousUnit = null, expectedRe
     if (descriptor.units.some(u => u.id === id)) throw refuse('unit ID already exists; use a new ID');
     if (previousUnit !== null && !descriptor.units.some(u => u.id === previousUnit)) throw refuse('previousUnit does not exist');
     if (descriptor.approvals.length && descriptor.phase !== 'approval') {
+      const late = input.outputs.find(isProjectDecision);
+      if (late) throw refuse(`${late.path}: a new project decision after approval requires returning to the approval phase`);
       const approval = readApprovalV2(root, descriptor, descriptor.approvals.at(-1)).record;
       if (input.outputs.some(o => approval.body.documents.some(d => d.path === o.path))) throw refuse('approved project documents may change only in approval phase');
     }
@@ -1732,6 +1735,8 @@ function transitionV2(repoRoot, options) {
 // V2 inventory/effect registrations all use the same reserved immutable publication.
 const withinAllowed = (path, allowed) => allowed.some(p => path === p || path.startsWith(`${p}/`));
 const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// Git status is filtered by the snapshot scope, so statuses compare only within one scope.
+const sameScope = (a, b) => sameValue(a.roots, b.roots) && sameValue(a.exclusions, b.exclusions);
 function newRecordV2(descriptor, kind, body, unitId = null, offset = 0) {
   const record = descriptor.nextRecord + offset;
   const family = { snapshot: 'snapshots', checkpoint: 'checkpoints', 'effect-intent': 'effects', 'effect-outcome': 'effects', reconciliation: 'reconciliations', approval: 'approvals', cycle: 'verification/cycles', 'verification-session': 'verification/sessions', manual: 'verification/manual', result: 'verification/results', summary: 'verification/summaries', completion: 'verification/completions' }[kind];
@@ -1766,6 +1771,7 @@ function assertBaseline(root, descriptor, observed) {
 }
 function effectBlockId(id) { return `effect-${createHash('sha256').update(id).digest('hex').slice(0, 32)}`; }
 function assertGitExplained(root, descriptor, before, after, unitId) {
+  if (!sameScope(before, after)) throw refuse('Git status from a different snapshot scope is unexplained drift');
   if (sameValue(before.git, after.git)) return;
   // Dirty status normally changes with the authorized application diff. A branch
   // or HEAD change, or status-only drift, requires a correlated commit observation.
@@ -1775,9 +1781,12 @@ function assertGitExplained(root, descriptor, before, after, unitId) {
   if (before.git.present === after.git.present && before.git.branch === after.git.branch && before.git.head === after.git.head
       && statusChanges.every(entry => changedPaths.has(statusPath(entry)))) return;
   const effects = readEffectsV2(root, descriptor);
+  const committed = e => {
+    const observed = readRecordV2(root, descriptor, e.outcome.body.after, 'snapshot').body;
+    return sameScope(observed, after) && sameValue(observed.git, after.git);
+  };
   if (!effects.effects.some(e => e.intent.body.unitId === unitId && e.intent.body.kind === 'commit'
-      && e.outcome?.body.result === 'succeeded'
-      && sameValue(readRecordV2(root, descriptor, e.outcome.body.after, 'snapshot').body.git, after.git))) throw refuse('Git drift requires a correlated commit observation or human reconciliation');
+      && e.outcome?.body.result === 'succeeded' && committed(e))) throw refuse('Git drift requires a correlated commit observation or human reconciliation');
 }
 function verifyCorrelation(intent, outcome) {
   if (!sameValue(intent.correlation, outcome.correlation)) throw refuse('effect correlation differs from intent');
@@ -1893,7 +1902,7 @@ export function verifyCheckpointV2(repoRoot, path) {
   const observed = observeRunApplication(root, descriptor);
   const changes = applicationChanges(snapshot, observed);
   const divergences = [...changes.map(c => ({ path: c.path, reason: 'application-drift' })), ...(!sameValue(snapshot.git, observed.git) ? [{ path: '.git', reason: 'git-drift' }] : [])];
-  if (applicationIdentity(snapshot) !== applicationIdentity(observed) && !changes.length) divergences.push({ path: '.', reason: 'scope-drift' });
+  if (!sameScope(snapshot, observed)) divergences.push({ path: '.', reason: 'scope-drift' });
   return { ok: divergences.length === 0, checkpoint: ref, divergences };
 }
 export function reconcileUnit(repoRoot, options = {}) {
@@ -2066,6 +2075,12 @@ export function resumeCheck(repoRoot) {
 // Approval keeps source paths as logical identities; historical reads resolve
 // the frozen copies, including the contract, rather than changing working bytes.
 const CONTRACT_PATH_V2 = `${INCEPTION_AREA}/project/verification-contract.json`;
+// One predicate decides which registered outputs every approval must cover.
+const isProjectDecision = output => output.role === 'decision' && output.path.startsWith(PROJECT_PREFIX);
+// Every unit counts, in any state, including closed-incomplete ones.
+function projectDecisionPaths(descriptor) {
+  return [...new Set(descriptor.units.flatMap(unit => unit.outputs.filter(isProjectDecision).map(output => output.path)))].sort();
+}
 function readApprovalV2(root, descriptor, ref, { historical = false } = {}) {
   if (!ref || !descriptor.approvals.some(r => sameValue(r, ref))) throw refuse('approval is not recorded');
   const record = readRecordV2(root, descriptor, ref, 'approval');
@@ -2079,6 +2094,13 @@ function readApprovalV2(root, descriptor, ref, { historical = false } = {}) {
     const bytes = readRefV2(root, frozen.artifact);
     if (!historical) readRefV2(root, source);
     if (source.path === body.contract.path) contract = parseVerificationContract(bytes);
+  }
+  // Only the latest approval read as current must cover every registered
+  // decision; historical reads and earlier approvals keep their recorded scope.
+  if (!historical && sameValue(ref, descriptor.approvals.at(-1))) {
+    const covered = new Set(body.documents.map(d => d.path));
+    const uncovered = projectDecisionPaths(descriptor).find(path => !covered.has(path));
+    if (uncovered !== undefined) throw refuse(`${uncovered}: registered project decision is not covered by the latest approval`);
   }
   return { record, contract };
 }
@@ -2105,9 +2127,7 @@ function approveRunV2(repoRoot, options) {
     // copy in approval cannot silently replace the accepted application baseline.
     assertBaseline(root, descriptor, observeRunApplication(root, descriptor));
     const requiredDocuments = new Set(descriptor.approvals.length ? readApprovalV2(root, descriptor, descriptor.approvals.at(-1), { historical: true }).record.body.documents.map(d => d.path) : []);
-    for (const unit of descriptor.units) for (const output of unit.outputs) {
-      if (output.role === 'decision' && output.path.startsWith(PROJECT_PREFIX)) requiredDocuments.add(output.path);
-    }
+    for (const path of projectDecisionPaths(descriptor)) requiredDocuments.add(path);
     if ([...requiredDocuments].some(path => !paths.includes(path))) throw refuse('approval must include all current project decision documents');
     const targets = paths.map((path, index) => ({ path: `${INCEPTION_AREA}/approvals/${String(descriptor.nextRecord).padStart(4, '0')}-documents/${String(index + 1).padStart(4, '0')}.bin`, content: readPublicationFile(root, path) }));
     const documents = targets.map((t, i) => publicationRef(paths[i], t.content));

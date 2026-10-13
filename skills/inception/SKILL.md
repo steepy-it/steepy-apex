@@ -343,8 +343,11 @@ The contract assigns automatic, manual or both to each check; subject, procedure
 evidenceRequired, required boolean and applicable command/procedures are explicit. Declare roots,
 exact justified exclusions (dependencies/cache/generated), tools/resources, and coverage for every
 approved decision/component, current or future. Do not exclude pertinent manifests, lockfiles,
-configuration or migrations to conceal failure. Before approval the helper inventories `.` with
-only reserved protocol areas excluded; Gitignore is not the inventory rule.
+configuration or migrations to conceal failure. Before approval the helper inventories `.`
+excluding only the reserved protocol areas and recognized scaffold leases; Gitignore is not the
+inventory rule. The recorded Git status
+leaves out the same reserved areas, recognized scaffold leases and approved exclusions as the
+inventory, tracked or untracked; branch and HEAD stay compared.
 
 For mutable remote resources use reuse policy reobserve with approved automatic and/or manual
 reobservation procedures; snapshot is suitable for evidence that remains applicable to unchanged
@@ -405,6 +408,11 @@ flows, database, design, technology, deploy or commit policy needs targeted reap
 return to approval first (add `--git-commits allowed|forbidden` for a policy change), begin a decision
 unit, update documents/contract/register, finish, obtain the human decision and approve the full
 current set again. New approval invalidates old cycles even with identical application bytes.
+After an approval, register a new decision document (a `decision` output under
+`.apex/inception/project/`) only in the approval phase; elsewhere `unit begin` refuses it. Until the
+latest approval covers every registered decision document, `resume-check` reports an approval
+divergence and forward transitions, verification commands and `verify-complete` refuse, naming the
+path.
 Never make a failed required check optional or weaken expected/type to close; reducing delivery
 requires a human decision and reapproval.
 
@@ -501,7 +509,8 @@ correlation plus sufficient real evidence. Not-started needs proof and closes on
 it does not authorize replay. Without proof preserve uncertainty, block and request a human
 decision. Reconciliation is not a replacement for required manual acceptance. Resolve independent
 blocks separately. Git provenance drift needs its own authorized/evidenced explanation even if
-contents match. Application inventory rejects symlinks/special files and never silently normalizes
+contents match. A write under an approved exclusion is neither inventory nor Git status drift; a
+branch or HEAD change still needs a correlated commit effect. Application inventory rejects symlinks/special files and never silently normalizes
 unrepresentable names.
 
 ### Step 9 — Pause after bootstrap
@@ -682,6 +691,11 @@ approval goes in the next resume note (`--note=<value>`), because the approved d
 change.
 
 ## Blocking and abandon
+
+A recognized scaffold lease is not divergence: the `.steepy-project-scaffold.lock` directory or its
+stale, retired or candidate residue at the repository root that holds only its canonical 0600
+`owner.json` record, live or dead. Never ask a human about it; a lock-like path that fails
+recognition remains divergence.
 
 On unreadable determining material, scope change, uncertain effect or unexplained divergence:
 

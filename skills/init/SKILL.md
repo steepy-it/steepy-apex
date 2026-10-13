@@ -311,16 +311,25 @@ assert.deepEqual(plan.operations.map(op => ({ path: op.path, kind: op.kind,
 console.log(JSON.stringify(applyProjectScaffold({ hubRoot: repoRoot, plan })));
 ```
 
-After the retained apply succeeds, proceed directly to Step 4 with only the exact retained document
-bytes from the governance input, preserving any already-complete outputs. Then run finish and both
-Step 5 gates. Never revisit detection, the interview, rendering, or fresh preview while this receipt
+After the retained apply succeeds, proceed directly to Step 4 and run its `documents` command with
+the same retained governance input; it writes only missing certified documents and preserves complete
+ones. Then run finish and both Step 5 gates. Never revisit detection, the interview, rendering, or fresh preview while this receipt
 is pending. Ordinary repair and its original preview/conflict procedure remain separate.
 
 ### Step 4 — Complete the governed hub
 
-For a prepared governance receipt, create only its missing stable hub documents using the exact
-retained document bytes from Step 3. Preserve already-applied bytes on recovery; a divergent file
-stops without overwrite. For ordinary init/repair, create missing stable hub documents from the
+For a prepared governance receipt, never write certified document bytes yourself. Run:
+
+```bash
+node <engine-root>/scripts/inception-governance.mjs documents --repo-root <repo-root> --input <governance-input-json>
+```
+
+Require exit 0 and `ok: true`. The command writes each missing stable hub document from the exact
+retained bytes with mode 0644 and preserves an already-exact document without rewriting it. It
+refuses before any write on a divergent document, a mode mismatch, drift outside the certified
+operations, or an unsafe target; it never changes a mode.
+
+For ordinary init/repair, create missing stable hub documents from the
 authoritative confirmed interview record. Use the engine
 templates; `domainVocabulary` is the only source for glossary scaffolding, and `gitPolicyDirective` is the
 only source for the index directive. In repair, preserve every existing document and append only missing
@@ -351,7 +360,7 @@ sub-index files.
 
 ### Step 5 — Validate and report
 
-When Step 3 prepared a receipt, after normal planner apply and Step 4 hub creation run:
+When Step 3 prepared a receipt, after the retained planner apply and the Step 4 `documents` command, run:
 
 ```bash
 node <engine-root>/scripts/inception-governance.mjs finish --repo-root <repo-root>

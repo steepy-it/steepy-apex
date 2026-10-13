@@ -2,7 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { join } from 'node:path';
-import { fixture, area, check, contract, command, governanceInput, script } from './helpers/inception-fixture.mjs';
+import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes, createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
+import { fixture, area, check, contract, command, governanceInput, script, moduleURL } from './helpers/inception-fixture.mjs';
+import { parseRunDescriptorV2, serializeRunDescriptorV2 } from '../scripts/inception-protocol.mjs';
+import { planProjectScaffold } from '../scripts/project-scaffold.mjs';
+import { GOVERNANCE_PENDING, GOVERNANCE_RECEIPT } from '../scripts/inception-governance.mjs';
 
 test('M01 CLI session recovery preserves completed work without a resume note', t => {
   const f = fixture(t);
@@ -274,4 +280,467 @@ for (const descriptor of ['{"schema":"unknown"}', '{"schema":']) test('M13 unkno
   f.refuse('inspect'); f.refuse('classify'); f.refuse('verify-complete'); f.refuse('abandon', '--reason', 'Invalid source');
   assert.equal(JSON.parse(f.run('stop-hook', [f.root]).stdout).decision, 'block');
   f.run('validate-hub', [f.root], 1); assert.deepEqual(f.snapshot(), before);
+});
+
+// F2: approved exclusions hide the same paths from the walk and from Git status,
+// so excluded generated output and dependencies never read as Git drift.
+const excluded = checks => contract(checks, { exclusions: [{ path: 'dist', kind: 'generated', reason: 'Build output' }, { path: 'node_modules', kind: 'dependencies', reason: 'Installed packages' }] });
+const BUILD = command(`const fs=require('node:fs');fs.mkdirSync('dist',{recursive:true});fs.writeFileSync('dist/out.js','built\\n')`);
+const F2_VARIANTS = { git: { git: true }, 'git-literal-pathspecs': { git: true }, 'no-git': { git: false }, gitignored: { git: true, initialFiles: { '.gitignore': 'dist/\nnode_modules/\n' } } };
+function f2Fixture(t, variant, { phase = 'verification', initialFiles = {} } = {}) {
+  const checks = [check('build', 'automatic', { automatic: BUILD }), check('app')];
+  const options = F2_VARIANTS[variant];
+  const f = fixture(t, { phase, approvedContract: excluded(checks), git: options.git, initialFiles: { ...options.initialFiles, ...initialFiles } });
+  // The fixture env object reaches every later process by reference.
+  if (variant === 'git-literal-pathspecs') f.env.GIT_LITERAL_PATHSPECS = '1';
+  return f;
+}
+// Read-only and refused calls leave every byte, mode and mtime unchanged.
+function unchanged(f, action) { const before = f.snapshot(); const result = action(); assert.deepEqual(f.snapshot(), before); return result; }
+const checkResult = (f, id) => unchanged(f, () => f.status()).checks.find(c => c.id === id).result;
+for (const variant of ['git', 'git-literal-pathspecs', 'no-git', 'gitignored']) {
+  test(`F2 SC4 ${variant}: an approved check capture may write excluded build output`, t => {
+    const f = f2Fixture(t, variant);
+    f.automatic('capture-build', 'build');
+    assert.equal(fs.readFileSync(join(f.root, 'dist/out.js'), 'utf8'), 'built\n');
+    assert.equal(checkResult(f, 'build'), 'succeeded');
+  });
+
+  test(`F2 SC4 ${variant}: an excluded write outside any unit is not drift`, t => {
+    const f = f2Fixture(t, variant);
+    const cp = f.checkpoint();
+    f.put('dist/manual.js', 'Manual excluded output\n');
+    assert.equal(unchanged(f, () => f.cli('resume-check')).ok, true);
+    assert.equal(unchanged(f, () => f.cli('checkpoint', 'verify', '--checkpoint', cp)).ok, true);
+    f.manual('human', ['app']);
+    assert.equal(checkResult(f, 'app'), 'succeeded');
+  });
+
+  test(`F2 SC4 ${variant}: a bootstrap install records its manifests but not excluded dependencies`, t => {
+    const f = f2Fixture(t, variant, { phase: 'bootstrap' });
+    f.begin('install', { kind: 'bootstrap', allowedPaths: ['package.json', 'package-lock.json'] });
+    f.put('package.json', '{"name":"sample"}\n'); f.put('package-lock.json', '{"lockfileVersion":3}\n'); f.put('node_modules/dep/index.js', 'module.exports = 1;\n');
+    f.report('install'); f.finish('install');
+    const after = f.read(f.descriptor().units.find(u => u.id === 'install').after.path).body;
+    const paths = after.files.map(file => file.path);
+    for (const path of ['package.json', 'package-lock.json']) assert.ok(paths.includes(path), path);
+    assert.equal(paths.some(path => path.startsWith('node_modules/')), false);
+    if (variant === 'no-git') assert.deepEqual(after.git, { present: false, branch: null, head: null, status: [] });
+    else {
+      for (const entry of ['?? package.json', '?? package-lock.json']) assert.ok(after.git.status.includes(entry), entry);
+      assert.equal(after.git.status.some(entry => entry.includes('node_modules')), false);
+    }
+  });
+
+  if (['git', 'no-git'].includes(variant)) test(`F2 SC5 ${variant}: unexcluded application, branch and config drift is still refused`, t => {
+    const f = f2Fixture(t, variant);
+    const refused = () => unchanged(f, () => {
+      assert.equal(f.refuse('resume-check').ok, false);
+      assert.equal(f.refuse('checkpoint', 'create', '--label', 'Cannot absorb drift').ok, false);
+    });
+    f.put('src/new.js', 'Unexplained application file\n'); refused(); fs.unlinkSync(join(f.root, 'src/new.js'));
+    if (variant === 'git') {
+      // GIT_CONFIG_GLOBAL=/dev/null leaves the initial branch name unspecified.
+      const branch = f.git('symbolic-ref', '--short', 'HEAD');
+      f.git('checkout', '-qb', 'other'); refused(); f.git('checkout', '-q', branch);
+    }
+    f.put('package-lock.json', '{"lockfileVersion":3}\n'); refused(); fs.unlinkSync(join(f.root, 'package-lock.json'));
+    assert.equal(unchanged(f, () => f.cli('resume-check')).ok, true);
+  });
+}
+
+test('F2 SC4 git: an approved check may rewrite a tracked file under an exclusion', t => {
+  const f = f2Fixture(t, 'git', { initialFiles: { 'dist/out.js': 'v1' } });
+  assert.equal(f.git('ls-files', 'dist/out.js'), 'dist/out.js');
+  f.automatic('capture-build', 'build');
+  assert.equal(fs.readFileSync(join(f.root, 'dist/out.js'), 'utf8'), 'built\n');
+  assert.equal(checkResult(f, 'build'), 'succeeded');
+});
+
+test('F2 SC6 a changed approved scope is scope drift and never a filtered equal checkpoint', t => {
+  const f = fixture(t, { phase: 'verification', git: true });
+  const dist = [{ path: 'dist', kind: 'generated', reason: 'Build output' }];
+  const reapprove = exclusions => { f.transition('approval'); f.json(`${area}/project/verification-contract.json`, { ...f.contract, exclusions }); f.approve(); };
+  const divergences = cp => unchanged(f, () => f.refuse('checkpoint', 'verify', '--checkpoint', cp)).divergences;
+  const has = (list, path, reason) => list.some(d => d.path === path && d.reason === reason);
+  f.manual('v1', ['app']); const cp1 = f.checkpoint();
+  reapprove(dist);
+  assert.deepEqual(f.read(f.descriptor().baseline.path).body.exclusions, dist);
+  assert.ok(has(divergences(cp1), '.', 'scope-drift'));
+  f.transition('bootstrap'); f.transition('verification'); f.beginCycle();
+  assert.ok(unchanged(f, () => f.status()).checks.every(c => c.result === 'not-executed'));
+  f.put('dist/out.js', 'built\n'); const cp2 = f.checkpoint();
+  reapprove([]);
+  const drift = divergences(cp2);
+  assert.ok(has(drift, '.', 'scope-drift'), JSON.stringify(drift));
+  assert.ok(has(drift, 'dist/out.js', 'application-drift'), JSON.stringify(drift));
+});
+
+// F3: every registered project decision must be covered by the latest approval.
+// Outside approval a new decision is refused at registration.
+for (const phase of ['bootstrap', 'verification']) test(`F3 SC7 ${phase}: a new project decision after approval is refused at registration`, t => {
+  const f = fixture(t, { phase });
+  const input = f.input({ kind: 'decision', inputs: [], outputs: [{ path: `${area}/project/late.md`, role: 'report' }, { path: `${area}/project/late-decision.md`, role: 'decision' }], allowedPaths: [] });
+  const units = f.descriptor().units;
+  const refused = unchanged(f, () => f.refuse('unit', 'begin', '--id', 'late', '--input', input));
+  assert.match(refused.error, /project\/late-decision\.md/);
+  assert.match(refused.error, /approval/);
+  assert.deepEqual(f.descriptor().units, units);
+  // Control: a report-only decision unit is still admitted.
+  f.begin('control');
+  assert.deepEqual(f.descriptor().units.map(u => u.id), [...units.map(u => u.id), 'control']);
+});
+
+// Inside approval a decision registered after the latest approval stays
+// uncovered until a new approval names it.
+const ADDENDUM = `${area}/project/addendum-decision.md`;
+function addendum(f) {
+  f.begin('addendum', { outputs: [{ path: `${area}/project/addendum.md`, role: 'report' }, { path: ADDENDUM, role: 'decision' }] });
+  f.put(ADDENDUM, 'Addendum decision\n'); f.report('addendum'); f.finish('addendum');
+}
+const namesAddendum = text => assert.match(text, /project\/addendum-decision\.md/);
+
+test('F3 SC8 a decision registered after approval blocks the approval gate until a new approval covers it', t => {
+  const f = fixture(t, { phase: 'approval' });
+  f.approve(); addendum(f);
+  const resumed = unchanged(f, () => f.refuse('resume-check'));
+  assert.ok(resumed.divergences.some(d => d.kind === 'approval' && /project\/addendum-decision\.md/.test(d.reason)), JSON.stringify(resumed.divergences));
+  namesAddendum(unchanged(f, () => f.refuse('transition', '--to', 'bootstrap', '--reason', 'Uncovered decision')).error);
+  namesAddendum(unchanged(f, () => f.refuse('verify-approval')).error);
+  f.cli('approve', '--statement', 'I approve this exact delivery and its checks.', '--document', `${area}/project/decision-register.md`, '--document', ADDENDUM, '--contract', `${area}/project/verification-contract.json`);
+  // Control (SC9 positive): the covering approval reopens every gate.
+  f.transition('bootstrap');
+  assert.equal(f.cli('resume-check').ok, true);
+  f.transition('verification'); f.beginCycle(); f.manual('check', ['app']); f.complete();
+  assert.ok(f.cli('verify-complete').inputPaths.includes(ADDENDUM));
+});
+
+test('F3 SC8 a historical approval is read without the coverage rule', t => {
+  const f = fixture(t, { phase: 'approval' });
+  f.approve(); f.transition('bootstrap'); f.transition('approval'); f.approve();
+  const [first, latest] = f.descriptor().approvals.map(ref => ref.path);
+  assert.notEqual(first, latest);
+  addendum(f);
+  // Control: the earlier approval still verifies.
+  assert.equal(unchanged(f, () => f.cli('verify-approval', '--approval', first)).ok, true);
+  namesAddendum(unchanged(f, () => f.refuse('verify-approval')).error);
+});
+
+// Corrected CLIs no longer produce an uncovered decision outside approval, so
+// the state is built faithfully: one closed-incomplete unit at the same revision.
+const UNCOVERED = `${area}/project/uncovered-decision.md`;
+function injectUncoveredDecision(f) {
+  const path = join(f.root, `${area}/run.json`);
+  const d = parseRunDescriptorV2(fs.readFileSync(path));
+  const unit = { id: 'uncovered', previousUnit: null, kind: 'decision', phase: 'verification', inputs: [], outputs: [{ path: `${area}/project/uncovered-report.md`, role: 'report' }, { path: UNCOVERED, role: 'decision' }], allowedPaths: [], before: d.baseline, state: 'closed-incomplete', evidence: [], after: d.baseline, capture: null };
+  fs.writeFileSync(path, serializeRunDescriptorV2({ ...d, units: [...d.units, unit] }));
+}
+
+test('F3 SC9 complete refuses a registered decision the latest approval does not cover', t => {
+  const f = fixture(t, { phase: 'verification' });
+  f.manual('check', ['app']);
+  injectUncoveredDecision(f);
+  assert.match(f.complete(1).error, /uncovered-decision\.md/);
+  // The refused terminal transition publishes nothing.
+  const checkpoint = f.descriptor().checkpoints.at(-1).path;
+  assert.match(unchanged(f, () => f.refuse('transition', '--to', 'complete', '--reason', 'Verified delivery', '--cycle', f.cycle(), '--checkpoint', checkpoint)).error, /uncovered-decision\.md/);
+  assert.equal(f.descriptor().status, 'active');
+});
+
+test('F3 SC9 verify-complete refuses only the source of a completed run with an uncovered decision', t => {
+  const f = fixture(t, { phase: 'verification' });
+  f.manual('check', ['app']); f.complete();
+  assert.equal(f.cli('verify-complete').ok, true);
+  injectUncoveredDecision(f);
+  const refused = unchanged(f, () => f.refuse('verify-complete'));
+  assert.equal(refused.ok, false);
+  assert.equal(refused.reason, `${UNCOVERED}: registered project decision is not covered by the latest approval`);
+  assert.equal(f.descriptor().status, 'complete');
+});
+
+// F4: structurally recognized lease directories, live or dead, own or foreign,
+// are excluded for every observer. Read-only readers never acquire or retire.
+const LOCK = '.steepy-project-scaffold.lock';
+const leaseBytes = (pid, token) => `${JSON.stringify({ schemaVersion: 1, pid, token })}\n`;
+const leaseToken = () => randomBytes(16).toString('hex');
+// Recognition never consults liveness, so residues name an already exited pid.
+function exitedPid() { const r = spawnSync(process.execPath, ['-e', '']); assert.equal(r.status, 0); return r.pid; }
+function leaseDir(f, name, bytes, mode = 0o600) {
+  fs.mkdirSync(join(f.root, name), { mode: 0o700 });
+  const owner = join(f.root, name, 'owner.json'); fs.writeFileSync(owner, bytes); fs.chmodSync(owner, mode);
+  return name;
+}
+// A canonical residue whose name agrees with its own record.
+function residue(f, kind, pid = exitedPid(), token = leaseToken()) {
+  return leaseDir(f, kind === 'candidate' ? `${LOCK}.candidate-${pid}-${token}` : `${LOCK}.${kind}-${token}`, leaseBytes(pid, token));
+}
+const deadLock = f => { f.crash('project-scaffold', 'api.withProjectScaffoldLock({ hubRoot: root }, () => process.exit(73))'); return LOCK; };
+const LEASE_STATES = { 'dead lock': deadLock, stale: f => residue(f, 'stale'), retired: f => residue(f, 'retired'), candidate: f => residue(f, 'candidate') };
+const verificationReaders = (f, cp) => () => ({ resume: f.cli('resume-check'), checkpoint: f.cli('checkpoint', 'verify', '--checkpoint', cp), status: f.cli('verification', 'status', '--cycle', f.cycle()) });
+const completeReaders = f => () => ({ verify: f.cli('verify-complete'), resume: f.cli('resume-check') });
+// Reference outputs come from the lease-free tree and must be deterministic.
+function referenceReads(readers) { const expected = readers(); assert.deepEqual(readers(), expected, 'reader outputs are deterministic'); return expected; }
+// Each state is read, then removed by the test; readers never retire it.
+function leaseMatrix(f, readers) {
+  const clean = f.snapshot(); const expected = referenceReads(readers);
+  for (const [state, make] of Object.entries(LEASE_STATES)) {
+    const name = make(f); const before = f.snapshot();
+    assert.ok(before[`${name}/owner.json`], state);
+    assert.deepEqual(readers(), expected, state);
+    assert.deepEqual(f.snapshot(), before, state);
+    fs.rmSync(join(f.root, name), { recursive: true });
+    assert.deepEqual(f.snapshot(), clean, state);
+  }
+  return expected;
+}
+// A foreign process holds the live lease until the test writes `stop`. Its
+// signal files stay in the sandbox, outside the observed repository root.
+const LEASE_HOLDER_MARKER = 'steepy-f4-foreign-lease-holder';
+let holders = 0;
+async function underForeignLease(t, f, readers) {
+  const clean = f.snapshot(); const expected = referenceReads(readers);
+  const ready = join(f.sandbox, `ready-${++holders}`); const stop = join(f.sandbox, `stop-${holders}`);
+  const child = spawn(process.execPath, ['--input-type=module', '-e', `// ${LEASE_HOLDER_MARKER}
+import fs from 'node:fs'; import { withProjectScaffoldLock } from ${JSON.stringify(moduleURL('project-scaffold'))};
+withProjectScaffoldLock({ hubRoot: ${JSON.stringify(f.root)} }, () => {
+  fs.writeFileSync(${JSON.stringify(ready)}, '');
+  const cell = new Int32Array(new SharedArrayBuffer(4));
+  while (!fs.existsSync(${JSON.stringify(stop)})) Atomics.wait(cell, 0, 0, 25);
+});`], { cwd: f.root, env: f.env, stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = ''; child.stderr.on('data', chunk => { stderr += chunk; });
+  const exited = new Promise(resolve => child.on('close', (code, signal) => resolve({ code, signal })));
+  t.after(async () => { if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; } });
+  for (const deadline = Date.now() + 10000; !fs.existsSync(ready);) {
+    assert.ok(child.exitCode === null && child.signalCode === null, `lease holder exited early: ${stderr}`);
+    assert.ok(Date.now() < deadline, 'lease holder was not ready within 10 s');
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  const held = f.snapshot();
+  assert.equal(JSON.parse(Buffer.from(held[`${LOCK}/owner.json`][0], 'base64')).pid, child.pid);
+  assert.deepEqual(readers(), expected);
+  assert.deepEqual(f.snapshot(), held);
+  fs.writeFileSync(stop, '');
+  assert.deepEqual(await exited, { code: 0, signal: null }, stderr);
+  assert.deepEqual(f.snapshot(), clean);
+}
+// Structures that fail recognition. `.stale-*` and the bare lock name with a
+// record are omitted: the lease itself legitimately retires stale generations.
+const UNRECOGNIZED = {
+  'retired with an extra file': f => { const name = residue(f, 'retired'); f.put(`${name}/extra.txt`, 'Extra entry\n'); return name; },
+  'candidate with a truncated record': f => { const pid = exitedPid(); const token = leaseToken(); return leaseDir(f, `${LOCK}.candidate-${pid}-${token}`, leaseBytes(pid, token).slice(0, 10)); },
+  'retired with reordered record keys': f => { const token = leaseToken(); return leaseDir(f, `${LOCK}.retired-${token}`, `${JSON.stringify({ token, pid: exitedPid(), schemaVersion: 1 })}\n`); },
+  // A symlink to a regular file: the fixture snapshot reads through links.
+  'retired symlink to a sandbox file': f => {
+    const token = leaseToken(); const target = join(f.sandbox, `outside-${token}.json`); const name = `${LOCK}.retired-${token}`;
+    fs.writeFileSync(target, leaseBytes(exitedPid(), token)); fs.chmodSync(target, 0o600); fs.symlinkSync(target, join(f.root, name));
+    return name;
+  },
+  'candidate record with mode 0644': f => { const pid = exitedPid(); const token = leaseToken(); return leaseDir(f, `${LOCK}.candidate-${pid}-${token}`, leaseBytes(pid, token), 0o644); },
+  'retired name with a foreign token': f => leaseDir(f, `${LOCK}.retired-${leaseToken()}`, leaseBytes(exitedPid(), leaseToken())),
+  'canonical lock below the root': f => leaseDir(f, `src/${LOCK}`, leaseBytes(exitedPid(), leaseToken())),
+};
+function refusedFor(f, commands) {
+  for (const [shape, make] of Object.entries(UNRECOGNIZED)) {
+    const name = make(f);
+    for (const args of commands) {
+      const before = f.snapshot(); const refused = f.refuse(...args);
+      assert.equal(refused.ok, false, `${shape}: ${args.join(' ')}`);
+      assert.match(JSON.stringify(refused), /drift|symlink is not an application file/, `${shape}: ${args.join(' ')}`);
+      assert.deepEqual(f.snapshot(), before, `${shape}: ${args.join(' ')}`);
+    }
+    fs.rmSync(join(f.root, name), { recursive: true });
+  }
+}
+
+for (const git of [false, true]) {
+  const label = git ? 'Git' : 'no Git';
+  test(`F4 SC10 ${label}: readers ignore dead and residual lease directories without retiring them`, t => {
+    const f = fixture(t, { phase: 'verification', git });
+    f.manual('check', ['app']); const cp = f.checkpoint();
+    const reads = leaseMatrix(f, verificationReaders(f, cp));
+    assert.equal(reads.resume.ok, true); assert.equal(reads.checkpoint.ok, true);
+    f.complete();
+    const completed = leaseMatrix(f, completeReaders(f));
+    assert.equal(completed.verify.ok, true); assert.equal(completed.resume.ok, true);
+  });
+
+  test(`F4 SC10 ${label}: readers ignore a live foreign lease`, async t => {
+    const f = fixture(t, { phase: 'verification', git });
+    f.manual('check', ['app']); const cp = f.checkpoint();
+    await underForeignLease(t, f, verificationReaders(f, cp));
+    f.complete();
+    await underForeignLease(t, f, completeReaders(f));
+  });
+
+  test(`F4 SC10 ${label}: a crashed lease holder leaves a dead lock that readers ignore`, t => {
+    const f = fixture(t, { phase: 'verification', git });
+    f.begin('w'); f.report('w');
+    f.crash('inception-state', "api.finishUnit(root,{id:'w',reservation:'finish-w',fault:e=>{if(e==='before-reserve')process.exit(73)}})");
+    const crashed = f.snapshot();
+    assert.ok(crashed[`${LOCK}/owner.json`], 'the writer crashed inside the lease');
+    assert.equal(f.cli('resume-check').ok, true);
+    assert.deepEqual(f.snapshot(), crashed, 'the dead lock is still there');
+    f.finish('w'); f.manual('check', ['app']); f.complete();
+    deadLock(f);
+    const completed = f.snapshot();
+    assert.ok(completed[`${LOCK}/owner.json`]);
+    assert.equal(f.cli('verify-complete').ok, true);
+    assert.deepEqual(f.snapshot(), completed);
+  });
+
+  test(`F4 SC11 ${label}: unrecognized lease structures stay drift for readers and lease holders`, t => {
+    const f = fixture(t, { phase: 'verification', git });
+    f.manual('check', ['app']);
+    refusedFor(f, [['resume-check'], ['checkpoint', 'create', '--label', 'Cannot absorb lease drift']]);
+    f.complete();
+    refusedFor(f, [['resume-check'], ['verify-complete']]);
+  });
+
+  test(`F4 SC12 ${label}: a lease-holding checkpoint retires dead generations and preserves foreign residues`, t => {
+    const f = fixture(t, { phase: 'verification', git });
+    f.manual('check', ['app']);
+    for (const [state, make] of [['dead lock', deadLock], ['stale', f => residue(f, 'stale')]]) {
+      const name = make(f); assert.ok(fs.existsSync(join(f.root, name, 'owner.json')), state);
+      const cp = f.checkpoint();
+      assert.equal(fs.existsSync(join(f.root, name)), false, `${state} is retired`);
+      assert.equal(f.cli('checkpoint', 'verify', '--checkpoint', cp).ok, true, state);
+    }
+    for (const kind of ['retired', 'candidate']) {
+      const name = residue(f, kind);
+      const metadata = () => { const dir = fs.lstatSync(join(f.root, name)); return { dir: [dir.ino, dir.mode, dir.mtimeMs], files: f.snapshot(name) }; };
+      const before = metadata();
+      const cp = f.checkpoint();
+      assert.deepEqual(metadata(), before, `${kind} is preserved`);
+      assert.equal(f.cli('checkpoint', 'verify', '--checkpoint', cp).ok, true, kind);
+      fs.rmSync(join(f.root, name), { recursive: true });
+    }
+  });
+}
+
+// F1: `documents` is the only writer of the certified stable documents. Their
+// mode comes from the receipt, never from the umask, and recovery completes
+// only what is missing.
+const INIT_INPUT = '.apex/work/init/input.json';
+const INIT_PLAN = '.apex/work/init/plan.json';
+function initFixture(t) {
+  const f = fixture(t, { phase: 'verification' });
+  f.manual('verified', ['app']); f.complete();
+  const request = governanceInput(f); f.json(INIT_INPUT, request);
+  // The runner only plans, read-only; every repository write runs in a child.
+  f.json(INIT_PLAN, planProjectScaffold({ hubRoot: f.root, model: request.projectModel }));
+  return { f, request, paths: request.documents.map(d => d.path).sort() };
+}
+const governanceCli = (f, ...args) => JSON.parse(f.run('inception-governance', [...args, '--repo-root', f.root]).stdout);
+function applyPlan(f) {
+  const r = f.process(['--input-type=module', '-e', `import { applyProjectScaffold } from ${JSON.stringify(moduleURL('project-scaffold'))};
+import plan from ${JSON.stringify(pathToFileURL(join(f.root, INIT_PLAN)).href)} with { type: 'json' };
+applyProjectScaffold({ hubRoot: ${JSON.stringify(f.root)}, plan });`]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+}
+// Control: the preload really sets the child umask, so no mode check is vacuous.
+function assertChildUmask(f, mask) {
+  const probe = join(f.sandbox, `umask-probe-${mask.toString(8)}`);
+  const r = f.process(['-e', `require('node:fs').writeFileSync(${JSON.stringify(probe)}, '')`]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.statSync(probe).mode & 0o777, 0o666 & ~mask);
+  fs.unlinkSync(probe);
+}
+function assertDocuments(f, request) {
+  for (const doc of request.documents) {
+    const absolute = join(f.root, doc.path);
+    assert.equal(fs.readFileSync(absolute, 'utf8'), doc.content, doc.path);
+    assert.equal(fs.lstatSync(absolute).mode & 0o7777, 0o644, doc.path);
+  }
+}
+for (const mask of [0o022, 0o002, 0o077]) test(`F1 SC1 umask 0${mask.toString(8).padStart(3, '0')}: documents certifies every stable document at 0644`, t => {
+  const { f, request, paths } = initFixture(t);
+  f.umask = mask; assertChildUmask(f, mask);
+  assert.equal(f.cli('verify-complete').ok, true);
+  governanceCli(f, 'prepare', '--input', INIT_INPUT); applyPlan(f);
+  const written = governanceCli(f, 'documents', '--input', INIT_INPUT);
+  assert.equal(written.ok, true); assert.deepEqual(written.created, paths); assert.deepEqual(written.preserved, []);
+  governanceCli(f, 'finish');
+  assert.equal(f.cli('verify-complete').ok, true);
+  f.run('validate-hub', [f.root]);
+  assertDocuments(f, request);
+});
+
+function crashDocuments(f, request, boundary) {
+  const fault = join(f.sandbox, 'fault.json');
+  f.crash('inception-governance', `const { writeFileSync } = await import('node:fs'); api.writeGovernanceDocuments(root, ${JSON.stringify(request)}, { fault: (event, detail) => { if (event === ${JSON.stringify(boundary)}) { writeFileSync(${JSON.stringify(fault)}, JSON.stringify(detail)); process.exit(73); } } });`);
+  return JSON.parse(fs.readFileSync(fault, 'utf8'));
+}
+// Recovery `documents` runs through the CLI in a fresh process. A sandbox preload
+// records every rename, so the published stage is observed directly.
+function recoverDocuments(f) {
+  const log = join(f.sandbox, 'renames.jsonl'); const preload = join(f.sandbox, 'record-renames.mjs');
+  fs.writeFileSync(preload, `import fs from 'node:fs';
+const rename = fs.renameSync;
+fs.renameSync = (from, to) => { fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ from: String(from), to: String(to) }) + '\\n'); return rename(from, to); };
+`);
+  const r = f.process(['--import', preload, script('inception-governance'), 'documents', '--input', INIT_INPUT, '--repo-root', f.root]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const renames = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse) : [];
+  return { output: JSON.parse(r.stdout), renames };
+}
+function fileIdentity(f, path) {
+  const absolute = join(f.root, path); const st = fs.lstatSync(absolute);
+  return { bytes: fs.readFileSync(absolute).toString('base64'), mode: st.mode & 0o7777, mtimeMs: st.mtimeMs, ino: st.ino };
+}
+const sibling = (stage, generation) => stage.replace(/-0001\.tmp$/u, `-${generation}.tmp`);
+function documentsRecovery(t, boundary, alterStage) {
+  const { f, request, paths } = initFixture(t); f.umask = 0o002;
+  const { id } = governanceCli(f, 'prepare', '--input', INIT_INPUT); applyPlan(f);
+  const detail = crashDocuments(f, request, boundary);
+  assert.equal(detail.path, paths[0]);
+  if (boundary === 'documents-after-stage') assert.match(detail.stage, /^\.apex\/work\/init-provenance\/[0-9a-f]{64}\/document-[0-9a-f]{64}-0001\.tmp$/u);
+  // After the crash every certified path is absent or exact at 0644.
+  for (const op of f.read(GOVERNANCE_PENDING).operations) {
+    const absolute = join(f.root, op.path);
+    if (!fs.existsSync(absolute)) continue;
+    const bytes = fs.readFileSync(absolute);
+    assert.deepEqual({ bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), mode: fs.lstatSync(absolute).mode & 0o7777 },
+      { bytes: op.after.bytes, sha256: op.after.sha256, mode: 0o644 }, op.path);
+  }
+  const complete = Object.fromEntries(paths.filter(path => fs.existsSync(join(f.root, path))).map(path => [path, fileIdentity(f, path)]));
+  assert.deepEqual(Object.keys(complete), boundary === 'documents-after-rename' ? [paths[0]] : []);
+  alterStage?.(f, detail.stage);
+  // Recovery in fresh processes: the same input, then the same plan.
+  assert.equal(governanceCli(f, 'prepare', '--input', INIT_INPUT).id, id);
+  applyPlan(f);
+  const { output, renames } = recoverDocuments(f);
+  assert.deepEqual(output, { ok: true, id, created: paths.filter(path => !(path in complete)), preserved: Object.keys(complete) });
+  governanceCli(f, 'finish');
+  assert.equal(f.cli('verify-complete').ok, true);
+  for (const [path, identity] of Object.entries(complete)) assert.deepEqual(fileIdentity(f, path), identity, `${path} keeps bytes, mode and mtime`);
+  assert.equal(f.read(GOVERNANCE_RECEIPT).id, id);
+  assertDocuments(f, request);
+  // The stages renamed onto the crashed document path, in order.
+  const published = renames.filter(r => r.to === join(f.root, detail.path)).map(r => r.from);
+  return { f, detail, published };
+}
+for (const boundary of ['documents-before-stage', 'documents-after-stage', 'documents-after-rename']) test(`F1 SC2 crash at ${boundary}: fresh-process recovery completes only the missing documents`, t => {
+  const { f, detail, published } = documentsRecovery(t, boundary);
+  if (boundary === 'documents-after-rename') assert.deepEqual(published, [], 'the complete document is not republished');
+  else if (boundary === 'documents-before-stage') { assert.equal(published.length, 1); assert.match(published[0], /\/document-[0-9a-f]{64}-0001\.tmp$/u); }
+  else {
+    assert.deepEqual(published, [join(f.root, detail.stage)], 'the complete stage is reused');
+    assert.equal(fs.existsSync(join(f.root, detail.stage)), false);
+  }
+});
+test('F1 SC2 documents-after-stage (a): a truncated stage stays byte-identical and publication uses generation -0002', t => {
+  let partial;
+  const { f, detail, published } = documentsRecovery(t, 'documents-after-stage', (f, stage) => {
+    fs.truncateSync(join(f.root, stage), 10); partial = fs.readFileSync(join(f.root, stage));
+    assert.equal(fs.existsSync(join(f.root, sibling(stage, '0002'))), false);
+  });
+  assert.equal(partial.length, 10);
+  assert.deepEqual(fs.readFileSync(join(f.root, detail.stage)), partial);
+  assert.deepEqual(published, [join(f.root, sibling(detail.stage, '0002'))]);
+  for (const generation of ['0002', '0003']) assert.equal(fs.existsSync(join(f.root, sibling(detail.stage, generation))), false, generation);
+});
+test('F1 SC2 documents-after-stage (b): a stage chmodded to 0600 is published at 0644', t => {
+  const { f, detail, published } = documentsRecovery(t, 'documents-after-stage', (f, stage) => fs.chmodSync(join(f.root, stage), 0o600));
+  assert.deepEqual(published, [join(f.root, detail.stage)]);
+  assert.equal(fs.lstatSync(join(f.root, detail.path)).mode & 0o7777, 0o644);
 });

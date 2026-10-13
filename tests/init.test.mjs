@@ -220,7 +220,10 @@ test('init prepares exact rendered governance after zero-conflict preview and be
   const prepare = 'node <engine-root>/scripts/inception-governance.mjs prepare --repo-root <repo-root> --input <governance-input-json>';
   const apply = 'node <engine-root>/scripts/project-scaffold.mjs --hub <repo-root> --model <planner-model-json> --apply';
   const finish = 'node <engine-root>/scripts/inception-governance.mjs finish --repo-root <repo-root>';
+  const documents = 'node <engine-root>/scripts/inception-governance.mjs documents --repo-root <repo-root> --input <governance-input-json>';
   assert.ok(text.includes(prepare), 'document the actual prepare CLI');
+  assert.ok(text.includes(documents), 'document the actual documents CLI');
+  assert.ok(text.indexOf(apply) < text.indexOf(documents) && text.indexOf(documents) < text.indexOf(finish), 'documents runs after apply and before finish');
   assert.ok(text.indexOf('Continue until `conflicts` is empty') < text.indexOf(prepare));
   assert.ok(text.indexOf(prepare) < text.indexOf(apply), 'prepare precedes any planner writes');
   assert.ok(text.indexOf(apply) < text.indexOf(finish));
@@ -233,6 +236,7 @@ test('init prepares exact rendered governance after zero-conflict preview and be
   const flat = text.replace(/\s+/g, ' ');
   assert.match(flat, /render.*before.*Step 3.*Step 4.*writes/i);
   assert.match(flat, /exact retained.*bytes/i);
+  assert.match(flat, /never write certified document bytes/i);
   assert.match(flat, /\.apex\/work\/init\/.*governance-input\.json/);
   assert.match(flat, /never.*inside.*completed run/i);
 });

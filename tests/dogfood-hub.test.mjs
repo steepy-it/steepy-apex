@@ -81,7 +81,7 @@ function stableApexMarkdownPaths(directory = join(repoRoot, '.apex')) {
 test('stable inception v2 knowledge preserves verification and recovery authority', () => {
   const conventions = readFileSync(join(repoRoot, '.apex', 'conventions.md'), 'utf8');
   const glossary = readFileSync(join(repoRoot, '.apex', 'glossary.md'), 'utf8');
-  for (const term of ['Unità persistita', 'Ciclo di verifica', 'Contratto dei controlli', 'Fotografia applicativa', 'Ricevuta di raccolta']) assert.ok(glossary.includes(`**${term}**`));
+  for (const term of ['Unità persistita', 'Ciclo di verifica', 'Contratto dei controlli', 'Fotografia applicativa', 'Ricevuta di raccolta', 'Lease riconosciuto']) assert.ok(glossary.includes(`**${term}**`));
   assert.match(conventions, /all required automatic and manual checks[\s\S]*new cycle/i);
   assert.match(conventions, /automatically[\s\S]*correlation[\s\S]*ambiguous[\s\S]*human/i);
   assert.match(conventions, /verify-complete[\s\S]*ordinary discovery[\s\S]*no migration/i);

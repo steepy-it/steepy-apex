@@ -7,7 +7,7 @@ import { parseArgs } from 'node:util';
 import { createHash } from 'node:crypto';
 import { normalizeProjectModel, planProjectScaffold, renderProjectArtifact, withProjectScaffoldLock } from './project-scaffold.mjs';
 import { parseStrictJson, validateRef, validateAppEntry, validateId, validatePath, publicationRef, readPublicationFile, parseInceptionRecord } from './inception-protocol.mjs';
-import { observeApplication, applicationIdentity, withApplicationSnapshotLease } from './inception-snapshot.mjs';
+import { observeApplication, applicationIdentity, applicationChanges, withApplicationSnapshotLease } from './inception-snapshot.mjs';
 import { parseRunDescriptor, verifyComplete } from './inception-state.mjs';
 import { writeAllSync } from './write-all.mjs';
 
@@ -170,7 +170,10 @@ function inverse(root, receipt, ctx, { partial = false } = {}) {
     }
   }
   const projected = { ...clean, files: [...files.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0) };
-  requireThat(applicationIdentity(projected) === applicationIdentity(ctx.snapshot), 'application-drift outside certified init operations');
+  if (applicationIdentity(projected) !== applicationIdentity(ctx.snapshot)) {
+    const drift = applicationChanges(ctx.snapshot, projected)[0]?.path ?? 'scope';
+    requireThat(false, `application-drift outside certified init operations: ${drift}`);
+  }
   if (!partial) {
     requireThat(same(clean.files, expectedAfter(receipt, ctx.snapshot)), 'applicationAfter differs from prepared operations');
     if (receipt.status === 'complete') requireThat(same(clean.files, receipt.applicationAfter), 'applicationAfter drift');
@@ -190,7 +193,8 @@ export function verifyGovernance(root, ctx) {
 function checkCompletion(root, receipt, partial) {
   let projection;
   const result = verifyComplete(root, { verifyGovernance: (_root, ctx) => { projection = inverse(root, receipt, ctx, { partial }); return projection; } });
-  requireThat(result.ok, result.reason); return projection;
+  if (!result.ok) throw new Error(String(result.reason).startsWith('governance: ') ? result.reason : `governance: ${result.reason}`);
+  return projection;
 }
 function syncDirectory(path) { const fd = fs.openSync(path, 'r'); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); } }
 function stagingBase(receipt) { return `.apex/work/init-provenance/${receipt.id}`; }
@@ -278,7 +282,8 @@ function withGovernanceSnapshotLease(root, observed, expectedId, options, action
     return { ...file, device: String(stat.dev), inode: String(stat.ino) };
   };
   // The public lease retains a reclaimed dead generation until release. Retire
-  // it before any application observation; do not exempt stale-looking paths.
+  // it before any application observation; observation excludes only structurally
+  // recognized lease directories, and other lock-like paths stay drift.
   const authority = withProjectScaffoldLock({ hubRoot: root }, () => {
     requireThat(same(context(root).descriptor, observed.descriptor), 'descriptor revision, run identity or completion changed');
     const pending = readReceipt(root, GOVERNANCE_PENDING, true);
@@ -325,6 +330,91 @@ export function prepareGovernance(repoRoot, rawInput, options = {}) {
     bindReceipt(receipt, current); stagingReservation(root, receipt, { create: true, fault: options.fault }); options.fault?.('after-reservation'); publish(root, GOVERNANCE_PENDING, receipt, options); options.fault?.('after-prepare'); return receipt;
   });
 }
+// Read-only: every existing ancestor is a physical directory and an existing
+// target is an ordinary single-link file. Anything else refuses the whole call.
+function documentEntry(root, path) {
+  try {
+    const parts = path.split('/');
+    for (let n = 1; n < parts.length; n++) {
+      const absolute = join(root, ...parts.slice(0, n));
+      let stat;
+      try { stat = fs.lstatSync(absolute); } catch (error) { if (error.code === 'ENOENT') break; throw error; }
+      if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync(absolute) !== absolute) throw new Error(`${parts.slice(0, n).join('/')} is not a physical directory`);
+    }
+    return currentEntry(root, path);
+  } catch (error) { throw new Error(`governance: ${path} has an unsafe target or ancestor: ${error.message}`); }
+}
+function absent(root, path) {
+  try { fs.lstatSync(join(root, path)); return false; } catch (error) { if (error.code === 'ENOENT') return true; throw error; }
+}
+// The reserved namespace owns the generations: a complete stage is reused at the
+// certified mode, an exact prefix is kept and skipped, anything else collides.
+function stageDocument(root, pending, op, bytes) {
+  const base = stagingBase(pending); const family = `${base}/document-${sha(op.path)}`;
+  for (let generation = 1; ; generation++) {
+    requireThat(Number.isSafeInteger(generation), 'staging generation overflow');
+    const stage = `${family}-${String(generation).padStart(4, '0')}.tmp`;
+    const staged = readPublicationFile(root, stage, { missing: true });
+    if (staged === null) {
+      const fd = fs.openSync(join(root, stage), 'wx', 0o600);
+      try { writeAllSync(fd, bytes); fs.fchmodSync(fd, op.after.mode); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      syncDirectory(join(root, base)); return stage;
+    }
+    if (staged.equals(bytes)) {
+      const fd = fs.openSync(join(root, stage), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const stat = fs.fstatSync(fd); requireThat(stat.isFile() && stat.nlink === 1, `${stage} must be an ordinary single-link staging file`);
+        fs.fchmodSync(fd, op.after.mode); fs.fsyncSync(fd);
+      } finally { fs.closeSync(fd); }
+      return stage;
+    }
+    requireThat(staged.length < bytes.length && bytes.subarray(0, staged.length).equals(staged), `${stage} divergent document staging collision`);
+  }
+}
+function publishDocument(root, pending, op, bytes, fault) {
+  fault?.('documents-before-stage', { path: op.path });
+  ensureDirectory(root, dirname(op.path));
+  const stage = stageDocument(root, pending, op, bytes);
+  fault?.('documents-after-stage', { path: op.path, stage });
+  requireThat(absent(root, op.path), `${op.path} appeared before publication`);
+  fs.renameSync(join(root, stage), join(root, op.path)); syncDirectory(join(root, stagingBase(pending))); syncDirectory(dirname(join(root, op.path)));
+  requireThat(same(currentEntry(root, op.path), op.after), `${op.path} published document differs from the certified document`);
+  fault?.('documents-after-rename', { path: op.path });
+}
+// The only writer of the certified stable documents: exact bytes at the receipt
+// mode, never the umask. Provider artifacts stay with the planner.
+export function writeGovernanceDocuments(repoRoot, rawInput, options = {}) {
+  const input = validateGovernanceInput(rawInput); const root = fs.realpathSync(repoRoot); const producer = producerFor(input);
+  const id = receiptId(input.runId, input.completion, producer); const ctx = context(root);
+  requireThat(input.runId === ctx.descriptor.runId && same(input.completion, ctx.descriptor.completion), 'input completion mismatch');
+  return withGovernanceSnapshotLease(root, ctx, id, options, () => {
+    const pending = readReceipt(root, GOVERNANCE_PENDING, true); const final = readReceipt(root, GOVERNANCE_RECEIPT, true);
+    requireThat(pending !== null, 'documents requires the prepared pending receipt');
+    requireThat(pending.id === id && same(pending.producer, producer), 'documents input differs from the prepared receipt');
+    const paths = new Set(producer.documents.map(d => d.path));
+    const documents = pending.operations.filter(op => op.kind === 'create' && paths.has(op.path));
+    if (final !== null) {
+      const result = verifyComplete(root); requireThat(result.ok, result.reason);
+      return { receipt: final, created: [], preserved: documents.map(op => op.path) };
+    }
+    stagingReservation(root, pending);
+    const missing = []; const preserved = [];
+    // Classify every document read-only before the first write. A divergent mode
+    // is refused, never corrected: documents does not chmod an existing file.
+    const octal = mode => `0${mode.toString(8)}`;
+    for (const op of documents) {
+      const current = documentEntry(root, op.path);
+      if (current === null) { missing.push(op); continue; }
+      if (same(current, op.after)) { preserved.push(op.path); continue; }
+      requireThat(false, current.bytes === op.after.bytes && current.sha256 === op.after.sha256
+        ? `${op.path} mode ${octal(current.mode)} differs from certified mode ${octal(op.after.mode)}; documents never changes modes`
+        : `${op.path} exists with bytes that differ from the certified document`);
+    }
+    checkCompletion(root, pending, true);
+    for (const op of missing) publishDocument(root, pending, op, Buffer.from(input.documents.find(d => d.path === op.path).content), options.fault);
+    return { receipt: pending, created: missing.map(op => op.path), preserved };
+  });
+}
 export function finishGovernance(repoRoot, options = {}) {
   const root = fs.realpathSync(repoRoot); const observed = context(root);
   return withGovernanceSnapshotLease(root, observed, null, options, ctx => {
@@ -339,14 +429,22 @@ export function finishGovernance(repoRoot, options = {}) {
 export function main(argv = process.argv.slice(2)) {
   let command; let values;
   try {
-    command = argv[0]; requireThat(['prepare', 'finish'].includes(command), 'usage: prepare --repo-root <root> --input <exact-json> | finish --repo-root <root>');
-    ({ values } = parseArgs({ args: argv.slice(1), strict: true, allowPositionals: false, options: { 'repo-root': { type: 'string' }, ...(command === 'prepare' ? { input: { type: 'string' } } : {}) } }));
-    requireThat(values['repo-root'] && (command !== 'prepare' || values.input), 'missing required option');
+    command = argv[0]; requireThat(['prepare', 'documents', 'finish'].includes(command), 'usage: prepare --repo-root <root> --input <exact-json> | documents --repo-root <root> --input <exact-json> | finish --repo-root <root>');
+    const takesInput = command !== 'finish';
+    ({ values } = parseArgs({ args: argv.slice(1), strict: true, allowPositionals: false, options: { 'repo-root': { type: 'string' }, ...(takesInput ? { input: { type: 'string' } } : {}) } }));
+    requireThat(values['repo-root'] && (!takesInput || values.input), 'missing required option');
   } catch (error) { console.error(error.message); return 2; }
   try {
     const root = fs.realpathSync(values['repo-root']);
-    if (command === 'prepare') { validatePath(values.input); requireThat(values.input.startsWith('.apex/work/'), 'init input must be an exact file in its authorized work scope'); }
-    const receipt = command === 'prepare' ? prepareGovernance(root, parseStrictJson(readPublicationFile(root, values.input))) : finishGovernance(root);
+    const input = () => {
+      validatePath(values.input); requireThat(values.input.startsWith('.apex/work/'), 'init input must be an exact file in its authorized work scope');
+      return parseStrictJson(readPublicationFile(root, values.input));
+    };
+    if (command === 'documents') {
+      const { receipt, created, preserved } = writeGovernanceDocuments(root, input());
+      console.log(JSON.stringify({ ok: true, id: receipt.id, created, preserved })); return 0;
+    }
+    const receipt = command === 'prepare' ? prepareGovernance(root, input()) : finishGovernance(root);
     console.log(JSON.stringify({ ok: true, id: receipt.id, status: receipt.status, path: receipt.status === 'complete' ? GOVERNANCE_RECEIPT : GOVERNANCE_PENDING })); return 0;
   } catch (error) { console.error(error.message); return 1; }
 }

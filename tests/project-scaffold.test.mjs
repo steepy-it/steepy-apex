@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   lstatSync,
+  linkSync,
+  readlinkSync,
   chmodSync,
   cpSync,
   existsSync,
@@ -31,8 +33,10 @@ import {
   planSpecialistScaffold,
   previewProjectScaffold,
   priorCanonicalRelease,
+  recognizeProjectScaffoldLeases,
   renderProjectArtifact,
   validateProjectScaffoldPlan,
+  withProjectScaffoldLock,
 } from '../scripts/project-scaffold.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1675,4 +1679,208 @@ test('prior adapter templates are digest-pinned', () => {
     rmSync(hubRoot, { recursive: true, force: true });
     rmSync(next, { recursive: true, force: true });
   }
+});
+
+// --- recognizeProjectScaffoldLeases: structural, read-only lease recognition ---
+
+const LEASE_NAME = '.steepy-project-scaffold.lock';
+const tokenA = 'a'.repeat(32);
+const tokenB = 'b'.repeat(32);
+const tokenC = 'c'.repeat(32);
+const tokenD = 'd'.repeat(32);
+
+function leaseBytes(pid, token) {
+  return `${JSON.stringify({ schemaVersion: 1, pid, token })}\n`;
+}
+
+function writeLeaseEntry(root, name, bytes, mode = 0o600) {
+  const dir = join(root, name);
+  mkdirSync(dir, { mode: 0o700 });
+  const owner = join(dir, 'owner.json');
+  writeFileSync(owner, bytes);
+  chmodSync(owner, mode);
+  return { dir, owner };
+}
+
+function withLeaseRoot(fn) {
+  const root = mkdtempSync(join(tmpdir(), 'steepy-lease-recognize-'));
+  try {
+    return fn(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function treeMetadata(dir, base = dir, out = []) {
+  for (const name of readdirSync(dir).sort()) {
+    const path = join(dir, name);
+    const stat = lstatSync(path);
+    const rel = path.slice(base.length);
+    if (stat.isSymbolicLink()) {
+      out.push([rel, 'link', readlinkSync(path), stat.mtimeMs]);
+    } else if (stat.isDirectory()) {
+      out.push([rel, 'dir', stat.mode, stat.mtimeMs]);
+      treeMetadata(path, base, out);
+    } else {
+      out.push([rel, 'file', stat.mode, stat.mtimeMs, readFileSync(path).toString('hex')]);
+    }
+  }
+  return out;
+}
+
+test('recognizeProjectScaffoldLeases recognizes the canonical lock left by a terminated holder', () => {
+  withLeaseRoot((root) => {
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e',
+      `import { withProjectScaffoldLock } from ${JSON.stringify(scaffoldModuleUrl)};\n`
+      + `withProjectScaffoldLock({ hubRoot: ${JSON.stringify(root)} }, () => process.exit(73));`],
+    { encoding: 'utf8' });
+    assert.equal(child.status, 73, child.stderr);
+    const leases = recognizeProjectScaffoldLeases(root);
+    assert.equal(leases.length, 1);
+    assert.equal(leases[0].name, LEASE_NAME);
+    assert.ok(Number.isSafeInteger(leases[0].pid) && leases[0].pid > 0);
+    assert.match(leases[0].token, /^[a-f0-9]{32}$/);
+    assert.match(leases[0].directoryIdentity, /^\d+:\d+$/);
+    assert.match(leases[0].ownerIdentity, /^\d+:\d+$/);
+    assert.ok(Object.isFrozen(leases));
+  });
+});
+
+test('recognizeProjectScaffoldLeases recognizes stale, retired and candidate entries sorted by name', () => {
+  withLeaseRoot((root) => {
+    writeLeaseEntry(root, `${LEASE_NAME}.stale-${tokenA}`, leaseBytes(11, tokenA));
+    writeLeaseEntry(root, `${LEASE_NAME}.retired-${tokenB}`, leaseBytes(22, tokenB));
+    writeLeaseEntry(root, `${LEASE_NAME}.candidate-33-${tokenC}`, leaseBytes(33, tokenC));
+    writeLeaseEntry(root, LEASE_NAME, leaseBytes(44, tokenD));
+    const leases = recognizeProjectScaffoldLeases(root);
+    assert.deepEqual(leases.map(({ name, pid, token }) => ({ name, pid, token })), [
+      { name: LEASE_NAME, pid: 44, token: tokenD },
+      { name: `${LEASE_NAME}.candidate-33-${tokenC}`, pid: 33, token: tokenC },
+      { name: `${LEASE_NAME}.retired-${tokenB}`, pid: 22, token: tokenB },
+      { name: `${LEASE_NAME}.stale-${tokenA}`, pid: 11, token: tokenA },
+    ]);
+    const { dir, owner } = { dir: join(root, LEASE_NAME), owner: join(root, LEASE_NAME, 'owner.json') };
+    assert.equal(leases[0].directoryIdentity, `${lstatSync(dir).dev}:${lstatSync(dir).ino}`);
+    assert.equal(leases[0].ownerIdentity, `${lstatSync(owner).dev}:${lstatSync(owner).ino}`);
+  });
+});
+
+test('recognizeProjectScaffoldLeases recognizes the live lease of the calling process', () => {
+  withLeaseRoot((root) => {
+    withProjectScaffoldLock({ hubRoot: root }, () => {
+      const leases = recognizeProjectScaffoldLeases(root);
+      assert.equal(leases.length, 1);
+      assert.equal(leases[0].name, LEASE_NAME);
+      assert.equal(leases[0].pid, process.pid);
+    });
+  });
+});
+
+test('recognizeProjectScaffoldLeases excludes entries that are not exact canonical leases', () => {
+  const cases = {
+    'extra directory entry': (root) => {
+      const { dir } = writeLeaseEntry(root, LEASE_NAME, leaseBytes(5, tokenA));
+      writeFileSync(join(dir, 'extra'), 'x');
+    },
+    'truncated owner': (root) => {
+      writeLeaseEntry(root, LEASE_NAME, leaseBytes(5, tokenA).slice(0, 20));
+    },
+    'reordered keys': (root) => {
+      writeLeaseEntry(root, LEASE_NAME,
+        `${JSON.stringify({ token: tokenA, pid: 5, schemaVersion: 1 })}\n`);
+    },
+    'indented json': (root) => {
+      writeLeaseEntry(root, LEASE_NAME,
+        `${JSON.stringify({ schemaVersion: 1, pid: 5, token: tokenA }, null, 2)}\n`);
+    },
+    'missing trailing newline': (root) => {
+      writeLeaseEntry(root, LEASE_NAME, leaseBytes(5, tokenA).trimEnd());
+    },
+    'mode 0644': (root) => {
+      writeLeaseEntry(root, LEASE_NAME, leaseBytes(5, tokenA), 0o644);
+    },
+    'extra hard link': (root) => {
+      const { owner } = writeLeaseEntry(root, LEASE_NAME, leaseBytes(5, tokenA));
+      linkSync(owner, join(root, 'owner-alias'));
+    },
+    'directory symlink': (root) => {
+      writeLeaseEntry(root, 'real-lease', leaseBytes(5, tokenA));
+      symlinkSync('real-lease', join(root, LEASE_NAME));
+    },
+    'owner symlink': (root) => {
+      const dir = join(root, LEASE_NAME);
+      mkdirSync(dir, { mode: 0o700 });
+      writeFileSync(join(root, 'target.json'), leaseBytes(5, tokenA), { mode: 0o600 });
+      symlinkSync(join(root, 'target.json'), join(dir, 'owner.json'));
+    },
+    'stale token mismatch': (root) => {
+      writeLeaseEntry(root, `${LEASE_NAME}.stale-${tokenA}`, leaseBytes(5, tokenB));
+    },
+    'retired token mismatch': (root) => {
+      writeLeaseEntry(root, `${LEASE_NAME}.retired-${tokenA}`, leaseBytes(5, tokenB));
+    },
+    'candidate pid mismatch': (root) => {
+      writeLeaseEntry(root, `${LEASE_NAME}.candidate-6-${tokenA}`, leaseBytes(5, tokenA));
+    },
+    'candidate token mismatch': (root) => {
+      writeLeaseEntry(root, `${LEASE_NAME}.candidate-5-${tokenA}`, leaseBytes(5, tokenB));
+    },
+    'uppercase token': (root) => {
+      const upper = 'A'.repeat(32);
+      writeLeaseEntry(root, `${LEASE_NAME}.stale-${upper}`, leaseBytes(5, upper));
+    },
+    'short token': (root) => {
+      const short = 'a'.repeat(31);
+      writeLeaseEntry(root, `${LEASE_NAME}.stale-${short}`, leaseBytes(5, short));
+    },
+    'long token': (root) => {
+      const long = 'a'.repeat(33);
+      writeLeaseEntry(root, `${LEASE_NAME}.stale-${long}`, leaseBytes(5, long));
+    },
+    'token with trailing dot segment': (root) => {
+      writeLeaseEntry(root, `${LEASE_NAME}.retired-${tokenA}.x`, leaseBytes(5, tokenA));
+    },
+    'leading-zero candidate pid': (root) => {
+      writeLeaseEntry(root, `${LEASE_NAME}.candidate-05-${tokenA}`, leaseBytes(5, tokenA));
+    },
+    'unrelated suffix': (root) => {
+      writeLeaseEntry(root, `${LEASE_NAME}.other`, leaseBytes(5, tokenA));
+    },
+    'nested lock': (root) => {
+      mkdirSync(join(root, 'src'));
+      writeLeaseEntry(join(root, 'src'), LEASE_NAME, leaseBytes(5, tokenA));
+    },
+    'regular file with lock name': (root) => {
+      writeFileSync(join(root, LEASE_NAME), leaseBytes(5, tokenA));
+    },
+  };
+  for (const [label, build] of Object.entries(cases)) {
+    withLeaseRoot((root) => {
+      build(root);
+      assert.deepEqual(recognizeProjectScaffoldLeases(root), [], label);
+    });
+  }
+});
+
+test('recognizeProjectScaffoldLeases is read-only and creates no lock', () => {
+  withLeaseRoot((root) => {
+    writeLeaseEntry(root, LEASE_NAME, leaseBytes(44, tokenD));
+    writeLeaseEntry(root, `${LEASE_NAME}.stale-${tokenA}`, leaseBytes(11, tokenA));
+    writeLeaseEntry(root, `${LEASE_NAME}.stale-${tokenB}`, leaseBytes(11, tokenA));
+    symlinkSync('missing-target', join(root, 'dangling'));
+    const before = treeMetadata(root);
+    assert.equal(recognizeProjectScaffoldLeases(root).length, 2);
+    assert.deepEqual(treeMetadata(root), before);
+  });
+  withLeaseRoot((root) => {
+    const before = treeMetadata(root);
+    assert.deepEqual(recognizeProjectScaffoldLeases(root), []);
+    assert.deepEqual(treeMetadata(root), before);
+    assert.equal(existsSync(join(root, LEASE_NAME)), false);
+  });
+});
+
+test('recognizeProjectScaffoldLeases propagates an unreadable root error', () => {
+  assert.throws(() => recognizeProjectScaffoldLeases(join(tmpdir(), 'steepy-lease-recognize-absent-xyz')),
+    { code: 'ENOENT' });
 });

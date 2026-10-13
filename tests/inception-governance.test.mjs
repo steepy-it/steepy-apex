@@ -8,7 +8,7 @@ import * as state from '../scripts/inception-state.mjs';
 import { planProjectScaffold, applyProjectScaffold, renderProjectArtifact, withProjectScaffoldLock } from '../scripts/project-scaffold.mjs';
 import { fixture as processFixture, governanceInput } from './helpers/inception-fixture.mjs';
 import { renderTemplate } from '../scripts/template.mjs';
-import { prepareGovernance, finishGovernance, GOVERNANCE_PENDING, GOVERNANCE_RECEIPT } from '../scripts/inception-governance.mjs';
+import { prepareGovernance, writeGovernanceDocuments, finishGovernance, GOVERNANCE_PENDING, GOVERNANCE_RECEIPT } from '../scripts/inception-governance.mjs';
 
 const area = '.apex/inception';
 const put = (root, path, bytes) => { fs.mkdirSync(join(root, path, '..'), { recursive: true }); fs.writeFileSync(join(root, path), bytes); };
@@ -385,3 +385,95 @@ for (const scope of ['narrow-roots', 'excluded-root', 'existing-provider']) {
     assert.deepEqual(metadata(join(root, area)), run);
   });
 }
+
+// F1: `documents` is the only writer of the certified stable documents. The
+// receipt fixes their mode; a refusal happens before any write.
+const DOCUMENT_PATHS = documents().map(d => d.path).sort();
+// Applies only the provider plan; the stable documents stay with `documents`.
+function applyProviders(root, request) {
+  const plan = planProjectScaffold({ hubRoot: root, model: request.projectModel });
+  assert.equal(plan.conflicts.length, 0);
+  applyProjectScaffold({ hubRoot: root, plan });
+}
+function fileMetadata(root, path) {
+  const absolute = join(root, path);
+  if (!fs.existsSync(absolute)) return null;
+  const st = fs.lstatSync(absolute); return [fs.readFileSync(absolute).toString('base64'), st.mode, st.mtimeMs, st.ino];
+}
+const F1_REFUSALS = [
+  ['no pending receipt', { prepared: false }, /governance: documents requires the prepared pending receipt/],
+  ['an input that differs from the prepared receipt', { change: r => { r.documents[0].content += 'Different'; } }, /governance: documents input differs from the prepared receipt/],
+  ['an existing document with different bytes', { setup: root => put(root, '.apex/conventions.md', 'Different bytes\n') },
+    /governance: \.apex\/conventions\.md exists with bytes that differ from the certified document/],
+  ['an exact document at mode 0664', { setup: (root, request) => {
+    put(root, '.apex/conventions.md', request.documents.find(d => d.path === '.apex/conventions.md').content); fs.chmodSync(join(root, '.apex/conventions.md'), 0o664);
+  } }, /governance: \.apex\/conventions\.md mode 0664 differs from certified mode 0644; documents never changes modes/],
+  ['foreign application drift', { setup: root => put(root, 'foreign.txt', 'foreign') }, /^(?:Error: )?governance: application-drift outside certified init operations: foreign\.txt$/],
+];
+for (const [name, { prepared = true, change, setup }, error] of F1_REFUSALS) {
+  test(`F1 SC3 documents refuses ${name} before any write`, t => {
+    const root = fixture(t); const request = input(root);
+    if (prepared) prepareGovernance(root, request);
+    setup?.(root, request);
+    const call = structuredClone(request); change?.(call);
+    const before = metadata(root);
+    assert.throws(() => writeGovernanceDocuments(root, call), error);
+    assert.deepEqual(metadata(root), before);
+  });
+}
+for (const [name, linked, link] of [
+  ['.apex/standards as a symlink to src', '.apex/standards', root => fs.symlinkSync(join(root, 'src'), join(root, '.apex/standards'))],
+  ['.apex/conventions.md as a symlink', '.apex/conventions.md', root => fs.symlinkSync(join(root, 'src/app.js'), join(root, '.apex/conventions.md'))],
+]) {
+  test(`F1 SC3 documents refuses ${name} created after prepare without writing through it`, t => {
+    const root = fixture(t); const request = input(root); prepareGovernance(root, request); link(root);
+    // metadata() reads through links, so the link target, receipts, run and work are compared.
+    const guarded = () => ({ src: metadata(join(root, 'src')), run: metadata(join(root, area)), work: metadata(join(root, '.apex/work')),
+      receipts: [GOVERNANCE_PENDING, GOVERNANCE_RECEIPT].map(path => fileMetadata(root, path)) });
+    const before = guarded();
+    const target = linked === '.apex/standards' ? '.apex/standards/src.md' : linked;
+    assert.throws(() => writeGovernanceDocuments(root, request), new RegExp(`governance: ${target.replaceAll('.', '\\.')} has an unsafe target or ancestor: `));
+    assert.deepEqual(guarded(), before);
+    for (const path of DOCUMENT_PATHS) assert.equal(fs.existsSync(join(root, path)), path === linked, path);
+  });
+}
+test('F1 documents preserves an exact 0644 document, creates the rest at 0644 and replays without writes', t => {
+  const root = fixture(t); const request = input(root);
+  const pending = prepareGovernance(root, request); applyProviders(root, request);
+  const kept = request.documents.find(d => d.path === '.apex/glossary.md');
+  put(root, kept.path, kept.content); fs.chmodSync(join(root, kept.path), 0o644); const keptBefore = fileMetadata(root, kept.path);
+  assert.deepEqual(writeGovernanceDocuments(root, request), { receipt: pending, created: DOCUMENT_PATHS.filter(path => path !== kept.path), preserved: [kept.path] });
+  assert.deepEqual(fileMetadata(root, kept.path), keptBefore, 'the exact document is preserved, not rewritten');
+  for (const doc of request.documents) {
+    assert.equal(fs.readFileSync(join(root, doc.path), 'utf8'), doc.content, doc.path);
+    assert.equal(fs.lstatSync(join(root, doc.path)).mode & 0o7777, 0o644, doc.path);
+  }
+  const written = metadata(root);
+  assert.deepEqual(writeGovernanceDocuments(root, request), { receipt: pending, created: [], preserved: DOCUMENT_PATHS });
+  assert.deepEqual(metadata(root), written);
+  const final = finishGovernance(root); assert.equal(state.verifyComplete(root).ok, true);
+  const complete = metadata(root);
+  assert.deepEqual(writeGovernanceDocuments(root, request), { receipt: final, created: [], preserved: DOCUMENT_PATHS });
+  assert.deepEqual(metadata(root), complete);
+  put(root, kept.path, 'Altered after the final receipt\n'); const altered = metadata(root);
+  assert.throws(() => writeGovernanceDocuments(root, request), /\.apex\/glossary\.md governance output drift/);
+  assert.deepEqual(metadata(root), altered);
+});
+test('F1 CLI documents requires its exact work input and reports the receipt id with created and preserved paths', t => {
+  const root = fixture(t); const request = input(root); const path = '.apex/work/init/input.json'; put(root, path, JSON.stringify(request));
+  const cli = (...args) => spawnSync(process.execPath, [resolve('scripts/inception-governance.mjs'), ...args], { encoding: 'utf8' });
+  const pending = prepareGovernance(root, request); applyProviders(root, request);
+  const usage = cli(); assert.equal(usage.status, 2, usage.stderr);
+  assert.match(usage.stderr, /\| documents --repo-root <root> --input <exact-json> \|/);
+  let before = metadata(root);
+  const missing = cli('documents', '--repo-root', root); assert.equal(missing.status, 2, missing.stderr); assert.match(missing.stderr, /missing required option/);
+  assert.deepEqual(metadata(root), before);
+  put(root, 'input.json', JSON.stringify(request)); before = metadata(root);
+  const outside = cli('documents', '--repo-root', root, '--input', 'input.json'); assert.equal(outside.status, 1, outside.stderr); assert.match(outside.stderr, /authorized work scope/);
+  assert.deepEqual(metadata(root), before); fs.unlinkSync(join(root, 'input.json'));
+  const written = cli('documents', '--repo-root', root, '--input', path); assert.equal(written.status, 0, written.stderr);
+  const output = JSON.parse(written.stdout);
+  assert.deepEqual(Object.keys(output), ['ok', 'id', 'created', 'preserved']);
+  assert.deepEqual(output, { ok: true, id: pending.id, created: DOCUMENT_PATHS, preserved: [] });
+  finishGovernance(root); assert.equal(state.verifyComplete(root).ok, true);
+});

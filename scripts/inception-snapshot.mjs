@@ -1,52 +1,61 @@
 // Full application observations. Local workflow/Git areas are bound before traversal;
 // evidence is consumed separately through exact references, never discovered here.
+// The walk and Git status share one excluded set, computed once per observation:
+// reserved areas, recognized scaffold lease directories, and the approved contract exclusions.
+// Structurally recognized lease directories, live or dead, are excluded by exact path
+// for every observer; every other lock-like path remains inventory. Recognition runs
+// once before the walk and again after it: any change is a transient refusal.
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { validatePath, validateSnapshotScope, validateGit } from './inception-protocol.mjs';
 
-import { withProjectScaffoldLock } from './project-scaffold.mjs';
-const ACTIVE_ROOTS = new Set();
+import { withProjectScaffoldLock, recognizeProjectScaffoldLeases } from './project-scaffold.mjs';
+// Serialization only: holding the lease never changes what an observation excludes.
 export function withApplicationSnapshotLease(root, action) {
-  return withProjectScaffoldLock({ hubRoot: root }, lease => {
-    ACTIVE_ROOTS.add(root);
-    try { return action(lease); } finally { ACTIVE_ROOTS.delete(root); }
-  });
+  return withProjectScaffoldLock({ hubRoot: root }, action);
 }
 const RESERVED = ['.apex/inception', '.apex/work', '.git'];
 const absentGit = () => ({ present: false, branch: null, head: null, status: [] });
 const identity = stat => `${stat.dev}:${stat.ino}`;
 const within = (path, root) => root === '.' || path === root || path.startsWith(`${root}/`);
 function statOrNull(path) { try { return fs.lstatSync(path); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } }
-export function observeSnapshotGit(root) {
-  const activeLease = ACTIVE_ROOTS.has(root);
-  const run = args => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
+function excludedPaths(leases, exclusions) {
+  return [...new Set([...RESERVED, ...leases.map(lease => lease.name), ...exclusions.map(e => e.path)])].sort();
+}
+// Inherited pathspec modes would reinterpret or disable the exclude magic.
+const PATHSPEC_ENV = ['GIT_LITERAL_PATHSPECS', 'GIT_GLOB_PATHSPECS', 'GIT_NOGLOB_PATHSPECS', 'GIT_ICASE_PATHSPECS'];
+export function observeSnapshotGit(root, excluded) {
+  const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
+  for (const key of PATHSPEC_ENV) delete env[key];
+  const run = args => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', env });
   const probe = run(['rev-parse', '--show-toplevel']);
   if (probe.error && probe.error.code !== 'ENOENT') throw probe.error;
   if (probe.status !== 0 || fs.realpathSync(probe.stdout.trim()) !== fs.realpathSync(root)) return absentGit();
   const branch = run(['symbolic-ref', '--quiet', '--short', 'HEAD']);
   const head = run(['rev-parse', '--verify', '--quiet', 'HEAD']);
-  const excluded = [...RESERVED, ...(activeLease ? ['.steepy-project-scaffold.lock'] : [])];
-  const status = run(['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.', ...excluded.map(p => `:(exclude)${p}`)]);
+  const status = run(['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.', ...excluded.map(p => `:(exclude,literal)${p}`)]);
   if (status.error || status.status !== 0) throw new Error('Git provenance observation failed');
   return validateGit({ present: true, branch: branch.status === 0 ? branch.stdout.trim() : null, head: head.status === 0 ? head.stdout.trim() : null, status: status.stdout.split('\0').filter(Boolean).sort() });
 }
 export function observeApplication(repoRoot, { contract = null, roots = ['.'], exclusions = [], git } = {}) {
   validateSnapshotScope({ roots, exclusions });
   const root = resolve(repoRoot);
-  const activeLease = ACTIVE_ROOTS.has(root);
   const rootStat = fs.lstatSync(root);
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('snapshot root must be a physical directory');
-  const reserved = [...RESERVED, ...(activeLease ? ['.steepy-project-scaffold.lock'] : [])];
+  const leases = recognizeProjectScaffoldLeases(root);
+  const excluded = excludedPaths(leases, exclusions);
+  // Only reserved areas skip physical aliases. A lease directory is excluded by its
+  // exact path alone, so a symlink to it anywhere else remains an error.
   const excludedIdentities = new Set();
-  for (const path of reserved) {
+  for (const path of RESERVED) {
     const absolute = join(root, path);
     if (statOrNull(absolute)) excludedIdentities.add(identity(fs.statSync(absolute)));
   }
   const files = new Map(); const visited = new Set();
   function walk(path) {
-    if (reserved.some(p => within(path, p)) || exclusions.some(e => within(path, e.path))) return;
+    if (excluded.some(p => within(path, p))) return;
     const absolute = path === '.' ? root : join(root, path);
     const stat = fs.lstatSync(absolute);
     // Resolve only for the physical exclusion check; no descendant is enumerated.
@@ -83,7 +92,9 @@ export function observeApplication(repoRoot, { contract = null, roots = ['.'], e
     }
     walk(scope);
   }
-  return { contract, roots: [...roots], exclusions: structuredClone(exclusions), files: [...files.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0), git: git === undefined ? observeSnapshotGit(root, { activeLease }) : validateGit(git) };
+  const observedGit = git === undefined ? observeSnapshotGit(root, excluded) : validateGit(git);
+  if (JSON.stringify(recognizeProjectScaffoldLeases(root)) !== JSON.stringify(leases)) throw new Error('recognized lease directories changed during observation');
+  return { contract, roots: [...roots], exclusions: structuredClone(exclusions), files: [...files.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0), git: observedGit };
 }
 export function applicationIdentity(snapshot) {
   return createHash('sha256').update(JSON.stringify({ roots: snapshot.roots, exclusions: snapshot.exclusions, files: snapshot.files })).digest('hex');
