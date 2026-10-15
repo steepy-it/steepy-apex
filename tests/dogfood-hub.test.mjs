@@ -802,3 +802,14 @@ test('conventions.md Versioning & release records the Claude directory payload r
   assert.match(section, /reviewer holds?/);
   assert.doesNotMatch(section, /\.png\b/i);
 });
+
+test('stable docs, skills and hub state no legacy compatibility', () => {
+  const tracked = spawnSync('git', ['ls-files', '-z', '--', '.apex', 'skills', 'docs'], { cwd: repoRoot, encoding: 'utf8' });
+  assert.equal(tracked.status, 0, tracked.stderr);
+  const files = tracked.stdout.split('\0').filter(Boolean);
+  assert.ok(files.length > 0);
+  const hits = files
+    .flatMap((path) => readFileSync(join(repoRoot, path), 'utf8').split('\n')
+      .flatMap((line, index) => (/\blegacy\b/i.test(line) ? [`${path}:${index + 1}`] : [])));
+  assert.deepEqual(hits, []);
+});
