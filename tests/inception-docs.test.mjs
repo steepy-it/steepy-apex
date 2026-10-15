@@ -259,7 +259,8 @@ test('pre-merge rules agree across skills and guides', () => {
   assert.match(inception, /Git status leaves out the same reserved areas, recognized scaffold leases and approved exclusions/i);
   assert.match(inception, /recognized scaffold lease is not divergence/i);
   assert.doesNotMatch(inception, /with only reserved protocol areas excluded/i);
-  assert.match(inception, /Before approval the helper inventories `\.` excluding only the reserved protocol areas and recognized scaffold leases; Gitignore is not the inventory rule/i);
+  assert.match(inception, /Before approval the helper inventories `\.` excluding only the reserved protocol areas, recognized scaffold leases and the exclusions bound at `start`; Gitignore is not the inventory rule/i);
+  assert.match(inception, /contract's exclusions replace the start ones/i);
   assert.match(inception, /new decision document[\s\S]*only in the approval phase/i);
   const discovery = norm(read('skills', 'discovery', 'SKILL.md'));
   assert.match(discovery, /does not cover every registered decision document/i);

@@ -47,7 +47,7 @@ human provenance and runs authorized effects. The separate collector executes ap
 |---|---|
 | `node <engine-root>/scripts/inception-state.mjs classify --repo-root . [--maturity suitable\|mature]` | Read fixed entry paths. |
 | `node <engine-root>/scripts/inception-state.mjs inspect --repo-root .` | Read schema, phase, actions and exact refs. |
-| `node <engine-root>/scripts/inception-state.mjs start --repo-root . --harness <slug> --capabilities <csv> --git-commits allowed\|forbidden` | Create one v2 run; never replace an existing run. |
+| `node <engine-root>/scripts/inception-state.mjs start --repo-root . --harness <slug> --capabilities <csv> --git-commits allowed\|forbidden [--exclusions <json>]` | Create one v2 run with its pre-approval exclusions; never replace an existing run. |
 | `node <engine-root>/scripts/inception-state.mjs resume-check --repo-root .` | Read-only verification of approval, refs, baseline, effects and pending work. |
 | `node <engine-root>/scripts/inception-state.mjs unit begin --repo-root . --id <id> --input <json> [--previous-unit <id>]` | Persist the sole writer, before snapshot, exact inputs/outputs and allowed paths. |
 | `node <engine-root>/scripts/inception-state.mjs unit finish --repo-root . --id <id> [--evidence <path>]...` | Validate complete reports, freeze immutable outputs and observe the diff. No success boolean. |
@@ -195,12 +195,31 @@ Act on the `row` field:
 
 **Start:** declare actual `shell`, `network`, `browser`, `subagents`, `question-tool`, `headless`
 capabilities. Ask once whether local commits are allowed or forbidden, unless already authorized;
-without Git the helper records none. Remote operations retain their own exact scope. Then start.
-This executable illustration uses shell only and forbids commits; adapt it to the confirmed policy:
+without Git the helper records none. Remote operations retain their own exact scope.
+
+Before approval the helper inventories the whole repository, so declare at start the dependency,
+cache and generated directories that already exist, such as `node_modules`, `.venv` or a build
+output. Look at the repository's real directories; there is no preset list. Each entry is
+`{"path", "kind", "reason"}` with kind `dependencies`, `cache` or `generated` and a literal path,
+never a glob. Never exclude manifests, lockfiles, configuration or migrations. Ask the user to
+confirm the list, then pass it as one strict JSON array with `--exclusions`; omit the option when
+nothing qualifies. `start` observes the repository once before writing anything: a symlink, hard
+link or special file outside the exclusions refuses the start and names the path. Add that path
+only when it is dependency, cache or generated material; otherwise stop and ask the user. These
+exclusions hold until approval, when the contract's roots and exclusions replace them.
+
+Then start. This executable illustration uses shell only and forbids commits; adapt it to the
+confirmed policy:
 
 <!-- example:start -->
 ```bash
 node <engine-root>/scripts/inception-state.mjs start --repo-root . --harness codex --capabilities shell --git-commits forbidden
+```
+
+With installed dependencies, add the confirmed exclusions:
+
+```bash
+node <engine-root>/scripts/inception-state.mjs start --repo-root . --harness codex --capabilities shell --git-commits forbidden --exclusions '[{"path":"node_modules","kind":"dependencies","reason":"Installed packages; package.json and the lockfile stay inventoried"}]'
 ```
 
 **Resume:** use `inspect`, `.apex/inception/run.json`, and only the exact refs it binds; no directory
@@ -346,8 +365,10 @@ evidenceRequired, required boolean and applicable command/procedures are explici
 exact justified exclusions (dependencies/cache/generated; literal paths, never globs), tools/resources, and coverage for every
 approved decision/component, current or future. Do not exclude pertinent manifests, lockfiles,
 configuration or migrations to conceal failure. Before approval the helper inventories `.`
-excluding only the reserved protocol areas and recognized scaffold leases; Gitignore is not the
-inventory rule. The recorded Git status
+excluding only the reserved protocol areas, recognized scaffold leases and the exclusions bound at
+`start`; Gitignore is not the inventory rule. From approval the contract's exclusions replace the
+start ones: repeat every start exclusion that still applies, or approval refuses on the first
+symlink or hard link it meets. The recorded Git status
 leaves out the same reserved areas, recognized scaffold leases and approved exclusions as the
 inventory, tracked or untracked; branch and HEAD stay compared.
 

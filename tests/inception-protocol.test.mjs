@@ -33,7 +33,7 @@ test('v2 constructor is explicit, frozen, canonical and versioned', () => {
   assert.equal(d.schema, 'steepy-inception-run/v2');
   assert.equal(d.revision, 1);
   assert.equal(d.nextRecord, 1);
-  assert.deepEqual(Object.keys(d), ['schema', 'runId', 'revision', 'phase', 'status', 'harness', 'git', 'nextRecord', 'approvalEntry', 'approvals', 'checkpoints', 'resumeNotes', 'units', 'activeUnit', 'effects', 'cycles', 'currentCycle', 'verificationSession', 'baseline', 'blocks', 'pending', 'publications', 'completion', 'history']);
+  assert.deepEqual(Object.keys(d), ['schema', 'runId', 'revision', 'phase', 'status', 'harness', 'git', 'preapprovalExclusions', 'nextRecord', 'approvalEntry', 'approvals', 'checkpoints', 'resumeNotes', 'units', 'activeUnit', 'effects', 'cycles', 'currentCycle', 'verificationSession', 'baseline', 'blocks', 'pending', 'publications', 'completion', 'history']);
   assert.ok(Object.isFrozen(d.units));
   roundtrip(d, protocol.parseRunDescriptorV2, protocol.serializeRunDescriptorV2);
 });

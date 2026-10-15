@@ -26,7 +26,7 @@ import { parseArgs } from 'node:util';
 
 import { assertSafeLine, assertSafeRelPath } from './sanitize.mjs';
 import { writeAllSync } from './write-all.mjs';
-import { RUN_CHILDREN_V2, ABANDON_INTENT_SCHEMA_V2, ABANDON_SCHEMA_V2, ABANDON_RECEIPT_SCHEMA_V2, parseAbandonRecordV2, serializeAbandonRecordV2, RUN_SCHEMA_V2, createRunDescriptorV2, parseRunDescriptorV2, serializeRunDescriptorV2, validateId, validatePath, validateRef, preparePublication, publicationRef, publicationStagingDirectory, readPublicationFile, stagePublicationTargets, verifyPublicationTargets, parseStrictJson as parseV2Json, parseInceptionRecord, serializeInceptionRecord, parseVerificationContract, validateText, validateEnvironment, validateManualInput, CAPTURE_SCHEMA_V2, parseCaptureReceipt, serializeCaptureReceipt, publicationFileRef, renderVerificationReport } from './inception-protocol.mjs';
+import { RUN_CHILDREN_V2, validateSnapshotScope, ABANDON_INTENT_SCHEMA_V2, ABANDON_SCHEMA_V2, ABANDON_RECEIPT_SCHEMA_V2, parseAbandonRecordV2, serializeAbandonRecordV2, RUN_SCHEMA_V2, createRunDescriptorV2, parseRunDescriptorV2, serializeRunDescriptorV2, validateId, validatePath, validateRef, preparePublication, publicationRef, publicationStagingDirectory, readPublicationFile, stagePublicationTargets, verifyPublicationTargets, parseStrictJson as parseV2Json, parseInceptionRecord, serializeInceptionRecord, parseVerificationContract, validateText, validateEnvironment, validateManualInput, CAPTURE_SCHEMA_V2, parseCaptureReceipt, serializeCaptureReceipt, publicationFileRef, renderVerificationReport } from './inception-protocol.mjs';
 import { observeApplication, applicationIdentity, applicationChanges, withApplicationSnapshotLease } from './inception-snapshot.mjs';
 import { withProjectScaffoldLock } from './project-scaffold.mjs';
 import { verifyGovernance as verifyCanonicalGovernance } from './inception-governance.mjs';
@@ -494,6 +494,7 @@ function startRunUnlocked(repoRoot, {
   harnessName,
   capabilities = [],
   gitCommits,
+  exclusions = [],
   now = new Date(),
   randomHex = randomBytes(4).toString('hex'),
   replaceFile = replaceFileAtomic,
@@ -507,6 +508,7 @@ function startRunUnlocked(repoRoot, {
   for (const name of capabilities) {
     if (!CAPABILITIES.includes(name)) throw usage(`unknown capability: ${JSON.stringify(name)}`);
   }
+  try { validateSnapshotScope({ roots: ['.'], exclusions }); } catch (error) { throw refuse(`--exclusions: ${message(error)}`); }
 
   const apexExists = realDirectory(root, '.apex');
   if (apexExists && lstatOrNull(join(root, HUB_INDEX_PATH)) !== null) {
@@ -534,12 +536,17 @@ function startRunUnlocked(repoRoot, {
     : { present: false, branch: null, commits: 'none' };
   let descriptor;
   try {
-    descriptor = createRunDescriptor({ runId: runIdFor(now, randomHex), harnessName, capabilities, git });
+    descriptor = createRunDescriptor({ runId: runIdFor(now, randomHex), harnessName, capabilities, git, preapprovalExclusions: exclusions });
   } catch (error) {
     throw refuse(`cannot create the run descriptor: ${message(error)}`);
   }
 
   if (preflight) return;
+  // Every later pre-approval command observes this scope, so prove it observable
+  // before the first write: a run that cannot be inventoried is never created.
+  try { observeApplication(root, { exclusions }); } catch (error) {
+    throw refuse(`cannot observe the application: ${message(error)}; declare exact dependency, cache or generated paths with --exclusions, never manifests, lockfiles, configuration or migrations`);
+  }
   if (!apexExists) createDirectory(root, '.apex');
   if (!areaExists) createDirectory(root, INCEPTION_AREA);
   if (!gitignoreExists) {
@@ -563,11 +570,17 @@ function parseCapabilities(csv) {
   return names;
 }
 
+// A strict JSON array of {path, kind, reason}; startRun validates the entries.
+function parseExclusions(json) {
+  try { return parseV2Json(json, '--exclusions'); } catch (error) { throw usage(message(error)); }
+}
+
 function startCommand(root, values) {
   const result = startRun(root, {
     harnessName: values.harness,
     capabilities: values.capabilities,
     gitCommits: values['git-commits'],
+    exclusions: values.exclusions,
   });
   return { ok: true, fields: result };
 }
@@ -1239,7 +1252,7 @@ function observeRunApplication(root, descriptor) {
     const { record: approval, contract } = readApprovalV2(root, descriptor, approvalRef, { historical: true });
     return observeApplication(root, { contract: approval.body.contract, roots: contract.roots, exclusions: contract.exclusions });
   }
-  return observeApplication(root);
+  return observeApplication(root, { exclusions: descriptor.preapprovalExclusions });
 }
 function assertBaseline(root, descriptor, observed) {
   if (descriptor.baseline === null) return;
@@ -2218,10 +2231,10 @@ const COMMANDS = Object.freeze({
     run: classifyCommand,
   },
   start: {
-    options: { 'repo-root': REPO_ROOT_OPTION, harness: STRING_OPTION, capabilities: STRING_OPTION, 'git-commits': STRING_OPTION },
+    options: { 'repo-root': REPO_ROOT_OPTION, harness: STRING_OPTION, capabilities: STRING_OPTION, 'git-commits': STRING_OPTION, exclusions: STRING_OPTION },
     required: ['harness', 'capabilities', 'git-commits'],
     enums: { 'git-commits': GIT_COMMITS_CHOICES },
-    parsers: { capabilities: parseCapabilities },
+    parsers: { capabilities: parseCapabilities, exclusions: parseExclusions },
     run: startCommand,
   },
   transition: {

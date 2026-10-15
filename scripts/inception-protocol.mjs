@@ -381,7 +381,7 @@ function validateDescriptorAllocations(descriptor) {
 
 export function validateRunDescriptorV2(v, options = {}) {
   shape(v, {
-    schema: enumeration(RUN_SCHEMA_V2), runId, revision: positive, phase, status: enumeration('active', 'blocked', 'complete'), harness, git: runGit, nextRecord: positive,
+    schema: enumeration(RUN_SCHEMA_V2), runId, revision: positive, phase, status: enumeration('active', 'blocked', 'complete'), harness, git: runGit, preapprovalExclusions: exclusions, nextRecord: positive,
     approvalEntry: nullable(nonnegative), approvals: list(familyRef('approvals'), { key: r => r.path }), checkpoints: list(familyRef('checkpoints'), { key: r => r.path }), resumeNotes: list(familyRef('resume-notes', 'md'), { key: r => r.path }),
     units: list(unit, { key: u => u.id }), activeUnit: nullable(validateId), effects: list(familyRef('effects'), { key: r => r.path }), cycles: list(cycleRef, { key: r => r.path }), currentCycle: nullable(cycleRef), verificationSession: nullable(sessionRef), baseline: nullable(snapshotRef),
     blocks: list((b, w) => shape(b, { id: validateId, reason: text, evidence: refs }, w), { key: b => b.id }),
@@ -433,11 +433,13 @@ export function validateRunDescriptorV2(v, options = {}) {
   return v;
 }
 
-export function createRunDescriptorV2({ runId: id, harnessName, capabilities = [], git }) {
+// Before approval the whole repository is observed except these exact start exclusions;
+// the approved contract's roots and exclusions replace them from approval onwards.
+export function createRunDescriptorV2({ runId: id, harnessName, capabilities = [], git, preapprovalExclusions = [] }) {
   list(enumeration(...CAPABILITIES), { key: c => c })(capabilities, 'capabilities');
   return parseRunDescriptorV2(serializeRunDescriptorV2({
     schema: RUN_SCHEMA_V2, runId: id, revision: 1, phase: 'reconnaissance', status: 'active', harness: { name: harnessName, capabilities: Object.fromEntries(CAPABILITIES.map(c => [c, capabilities.includes(c)])) },
-    git: { present: git?.present, branch: git?.branch, commits: git?.commits }, nextRecord: 1, approvalEntry: null, approvals: [], checkpoints: [], resumeNotes: [], units: [], activeUnit: null, effects: [], cycles: [], currentCycle: null, verificationSession: null, baseline: null, blocks: [], pending: null, publications: [], completion: null, history: [],
+    git: { present: git?.present, branch: git?.branch, commits: git?.commits }, preapprovalExclusions: structuredClone(preapprovalExclusions), nextRecord: 1, approvalEntry: null, approvals: [], checkpoints: [], resumeNotes: [], units: [], activeUnit: null, effects: [], cycles: [], currentCycle: null, verificationSession: null, baseline: null, blocks: [], pending: null, publications: [], completion: null, history: [],
   }));
 }
 
