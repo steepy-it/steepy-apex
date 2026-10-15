@@ -49,6 +49,10 @@ bodies here. Otherwise do not mention the inception source; absent, active or bl
 unsupported run format leave ordinary discovery available with the user's selected scope. Never
 migrate or restart a run.
 
+When the user chooses the inception source, run Step 2a right after this step, before Step 2. Its
+gate accepts the stable hub documents only exactly as `init` certified them, so any write-back to
+`conventions.md`, a standard or `glossary.md` before the gate ends the source.
+
 ### Step 2 — Per-surface iterative loop
 
 For each surface selected in Step 1, run this loop:
@@ -131,8 +135,9 @@ For each surface selected in Step 1, run this loop:
 
 ### Step 2a — Inception source (complete run only)
 
-Run this step only when the user chose the inception source in Step 1. It turns the decisions of a
-completed inception run into hub text. Read by exact path only: never list `.apex/inception/` or a
+Run this step only when the user chose the inception source in Step 1. It runs right after Step 1
+and before Step 2; the run then continues with Step 2 for the selected surfaces. It turns the
+decisions of a completed inception run into hub text. Read by exact path only: never list `.apex/inception/` or a
 directory under it. A stop in this step ends only the inception source; Step 3 and Step 4 still run.
 
 1. **Verify before reading.** Before reading any source approval, document, summary, or report
@@ -192,8 +197,10 @@ directory under it. A stop in this step ends only the inception source; Step 3 a
    preview, additive and diff-gated as in Step 2.5.
 6. **Decision outcomes.** Every register decision ends accepted (written) or rejected with a reason.
    Record the outcomes in `[REPORT_FILE]` under `## Decision outcomes`, one line per decision:
-   `DR-n — accepted` or `DR-n — rejected: <reason>`. Re-runs follow the new-or-drifted rule of Step
-   2.4: a decision already written, unchanged, is not asked again and is recorded as accepted.
+   `DR-n — accepted` or `DR-n — rejected: <reason>`. The import is one-time. Once a run writes to
+   `conventions.md`, a standard or `glossary.md`, those documents no longer match what `init`
+   certified, so a later run's gate refuses the source with `governance output drift`: report it
+   and continue with ordinary discovery.
 
 ### Step 3 — Coherence gate
 

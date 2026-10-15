@@ -93,8 +93,9 @@ only the current conductor ledger schema and identify unsupported records as inv
 - Hard links: every path under the area is excluded whatever its link count; a stable file
   that shares an inode with an area file stays stable content; the helper refuses area
   files with more than one link.
-- Discovery's inception source: a `complete` run only, read at the exact bound paths. Every
-  decision is approved. Three promotion rules:
+- Discovery's inception source: a `complete` run only, read at the exact bound paths, verified
+  before the run writes any hub document, and imported once: a later write-back makes the
+  certified documents drift. Every decision is approved. Three promotion rules:
   - Approved and verified (`verified`) → may be written as an existing component or rule.
   - Approved but unverified (`unverified`) → written as a design choice, not an existing
     component.

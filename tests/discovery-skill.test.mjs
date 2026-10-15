@@ -380,6 +380,9 @@ test('discovery inception source (SC11): Step 1 offers only a v2 complete candid
   assert.match(step1, /candidate.*not.*verified/i);
   assert.match(step1, /unsupported run format.*ordinary discovery/i);
   assert.doesNotMatch(step1, /documents\[\]|verification\.path/);
+  // Init certifies the stable documents byte for byte, so the gate must precede any write-back.
+  assert.match(step1, /chooses the inception source, run Step 2a right after this step, before Step 2/);
+  assert.match(step1, /exactly as `init` certified them/);
 });
 
 test('discovery inception source (SC11): Step 2a sits between Step 2 and Step 3 and runs only on the user\'s choice', () => {
@@ -390,6 +393,7 @@ test('discovery inception source (SC11): Step 2a sits between Step 2 and Step 3 
   assert.ok(step2 !== -1 && step2a > step2 && step3 > step2a, 'Step 2a must sit between Step 2 and Step 3');
   const section = flat(sectionBetween(text, STEP_2A, '### Step 3'));
   assert.match(section, /Run this step only when the user chose the inception source in Step 1\./);
+  assert.match(section, /It runs right after Step 1 and before Step 2/);
   assert.match(section, /never list `\.apex\/inception\/`/, 'Step 2a must never list the area');
   assert.match(section, /A stop in this step ends only the inception source/);
 });
@@ -503,7 +507,9 @@ test('discovery inception source (SC12): every decision ends accepted or rejecte
     section,
     /Record the outcomes in `\[REPORT_FILE\]` under `## Decision outcomes`, one line per decision: `DR-n — accepted` or `DR-n — rejected: <reason>`\./,
   );
-  assert.match(section, /Re-runs follow the new-or-drifted rule of Step 2\.4/);
+  assert.doesNotMatch(section, /Re-runs follow the new-or-drifted rule/);
+  assert.match(section, /The import is one-time\./);
+  assert.match(section, /later run's gate refuses the source with `governance output drift`.*ordinary discovery/);
   const step4 = flat(sectionBetween(text, '### Step 4', '## Model Selection'));
   assert.match(step4, /inception source[^]*`## Decision outcomes`/, 'Step 4 must report the inception decision outcomes');
 });

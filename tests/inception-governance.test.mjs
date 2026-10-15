@@ -390,6 +390,13 @@ for (const scope of ['narrow-roots', 'excluded-root', 'existing-provider']) {
 // receipt fixes their mode; a refusal happens before any write.
 const DOCUMENT_PATHS = documents().map(d => d.path).sort();
 // Applies only the provider plan; the stable documents stay with `documents`.
+// CR4: discovery's inception source is one-time because its own write-back drifts the certificate.
+test('CR4 a discovery write-back to a certified document ends the source with governance output drift', t => {
+  const root = fixture(t); const request = input(root); prepareGovernance(root, request); apply(root, request); finishGovernance(root);
+  assert.equal(state.verifyComplete(root).ok, true);
+  fs.appendFileSync(join(root, '.apex/conventions.md'), '- Accepted discovery rule.\n');
+  assert.match(state.verifyComplete(root).reason, /\.apex\/conventions\.md governance output drift/);
+});
 function applyProviders(root, request) {
   const plan = planProjectScaffold({ hubRoot: root, model: request.projectModel });
   assert.equal(plan.conflicts.length, 0);
