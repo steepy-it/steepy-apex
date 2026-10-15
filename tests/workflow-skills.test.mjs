@@ -2345,8 +2345,9 @@ test('new-surface uses the full active Project planner and keeps unbound prepara
     assert.ok(text.includes(path), `new-surface must name ${path}`);
   }
   assert.match(text, /plans all four[^.]*before the first[^.]*write/i);
-  // Repair updates an untouched earlier rendering instead of claiming to preserve it.
-  assert.match(text, /earlier canonical rendering is\s+stale:[^.]*updates it to\s+the current rendering\s+without a conflict question/i);
+  // An adapter that is not the current rendering is a customized conflict resolved only by replace.
+  assert.match(text, /not the current canonical rendering[^.]*`customized` conflict[\s\S]*explicit `replace`/i);
+  assert.doesNotMatch(text, /\bstale\b/i);
   assert.match(text, /created,\s+updated,\s+or\s+preserved/i);
   assert.doesNotMatch(text, /repair\s+preserves existing artifacts/i);
 });

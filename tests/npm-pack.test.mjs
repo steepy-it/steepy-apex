@@ -150,10 +150,8 @@ test('npm tarball includes the portable scaffold runtime, v1 sources, and canoni
     'templates/surface-agent-claude.md',
     'templates/surface-agent-codex.toml',
     'templates/surface-agent-opencode.md',
-    'templates/prior/v1.0/surface-agent-claude.md',
-    'templates/prior/v1.0/surface-agent-codex.toml',
-    'templates/prior/v1.0/surface-agent-opencode.md',
   ], 'portable scaffold payload');
+  assert.equal(paths.some((p) => p.startsWith('templates/prior/')), false, 'tarball must not include templates/prior/');
 });
 
 test('npm pack dry-run leaves no repository tarball behind', () => {

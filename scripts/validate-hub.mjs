@@ -17,7 +17,6 @@ import {
   countActiveClaudeImports,
   normalizeProjectModel,
   parseProjectInstructions,
-  priorCanonicalRelease,
   renderProjectArtifact,
 } from './project-scaffold.mjs';
 import { RUN_DESCRIPTOR_PATH, ABANDON_INTENT_PATH, inspectAbandon, parseRunDescriptor, nextStepFor } from './inception-state.mjs';
@@ -462,19 +461,6 @@ function renderSurfaceAdapter(adapter, model, surface, templatesDir) {
   }), templatesDir);
 }
 
-// The release label of the pinned prior canonical rendering that `text` equals
-// byte for byte, or null. Uses the same single-surface model as renderSurfaceAdapter.
-function priorSurfaceAdapterRelease(adapter, model, surface, text, templatesDir) {
-  return priorCanonicalRelease(`${surface.agent}-${adapter}`, text, normalizedProject({
-    ...model,
-    surfaces: [surface],
-  }), templatesDir);
-}
-
-function staleAdapterMessage(agent, adapter, path, release) {
-  return `${agent} ${adapter} adapter at ${path} is the ${release} rendering; init repair updates it to the current rendering`;
-}
-
 function classifyManaged(text, artifactId, expectedContent) {
   const related = [...text.matchAll(new RegExp(`steepy:managed:${artifactId}:v([^:\\s>]+):(start|end)`, 'gu'))];
   if (related.some((match) => match[1] !== PORTABLE_VERSION)) return { reason: 'unknown-version' };
@@ -546,7 +532,7 @@ function preparatoryTriadState(hubRoot, indexText, generatedCandidates, candidat
     path: displayNativePath(file),
     content: candidateResults.get(file)?.text,
   })).filter(({ content }) => content !== undefined && generatedMarkers(content).length > 0);
-  if (generatedFiles.length === 0) return { present: false, exact: false, stale: [] };
+  if (generatedFiles.length === 0) return { present: false, exact: false };
 
   const expected = new Map();
   const triads = [];
@@ -577,7 +563,7 @@ function preparatoryTriadState(hubRoot, indexText, generatedCandidates, candidat
       for (const adapter of ['claude', 'codex', 'opencode']) {
         const extension = adapter === 'codex' ? 'toml' : 'md';
         const path = `.${adapter}/agents/${agent}.${extension}`;
-        entries.push({ path, adapter, agent, model, surface });
+        entries.push({ path });
         expected.set(path, renderSurfaceAdapter(adapter, model, surface, templatesDir));
       }
     } catch {
@@ -587,21 +573,11 @@ function preparatoryTriadState(hubRoot, indexText, generatedCandidates, candidat
     triads.push(entries);
   }
 
-  // A routed adapter is exact when it equals the current rendering, or when its
-  // bytes equal a pinned prior canonical rendering; the latter is recorded as stale.
-  const stale = [];
-  const isExactOrStale = ({ path, adapter, agent, model, surface }) => {
-    const text = reader.read(path).text;
-    if (text === expected.get(path)) return true;
-    if (typeof text !== 'string') return false;
-    const release = priorSurfaceAdapterRelease(adapter, model, surface, text, templatesDir);
-    if (release === null) return false;
-    stale.push({ agent, adapter, path, release });
-    return true;
-  };
+  // A routed adapter is exact only when it equals the current rendering.
+  const isExact = ({ path }) => reader.read(path).text === expected.get(path);
   const candidatePathsAreCanonical = generatedFiles.every(({ path }) => expected.has(path));
   const routedTriadsAreExact = triads.length === rows.length
-    && triads.every((entries) => entries.every(isExactOrStale));
+    && triads.every((entries) => entries.every(isExact));
   const expectedCandidateCount = triads.reduce((count, entries) => count + entries.length, 0);
   return {
     present: true,
@@ -609,7 +585,6 @@ function preparatoryTriadState(hubRoot, indexText, generatedCandidates, candidat
       && candidatePathsAreCanonical
       && routedTriadsAreExact
       && generatedFiles.length === expectedCandidateCount,
-    stale,
   };
 }
 
@@ -728,7 +703,6 @@ function reachableMarkdownFiles(reader, indexPath) {
 function validatePortableV1(hubRoot, indexText, reader, templatesDir) {
   const violations = [];
   const error = (msg) => violations.push({ level: 'error', msg: `portable-v1: ${msg}` });
-  const warn = (msg) => violations.push({ level: 'warn', msg: `portable-v1: ${msg}` });
   const rootCandidates = ['AGENTS.md', 'CLAUDE.md'];
   const generatedCandidates = ['.agents', '.claude', '.codex', '.opencode']
     .flatMap((provider) => walkProviderFiles(
@@ -756,19 +730,14 @@ function validatePortableV1(hubRoot, indexText, reader, templatesDir) {
       .test(rootEvidenceResults.get(file)?.text ?? '')
   ));
   const preparatory = hasRootEvidence
-    ? { present: false, exact: false, stale: [] }
+    ? { present: false, exact: false }
     : preparatoryTriadState(hubRoot, indexText, generatedCandidates, candidateResults, reader, templatesDir);
   // New-surface may prepare an exact, complete triad before project identity exists.
   // Only that whole producer-rendered set is compatible; any root/bootstrap signal
   // or any partial/drifted/mixed triad activates the ordinary closed v1 contract.
   const hasPortableEvidence = hasRootEvidence || (preparatory.present && !preparatory.exact);
   if (!hasPortableEvidence) {
-    if (preparatory.exact) {
-      for (const { agent, adapter, path, release } of preparatory.stale) {
-        warn(staleAdapterMessage(agent, adapter, path, release));
-      }
-      return violations;
-    }
+    if (preparatory.exact) return violations;
     const hasUnsupportedArtifacts = reader.inspect('CLAUDE.md', { reportUnsafe: false }).state !== 'missing'
       || walkProviderFiles(reader, join('.claude', 'agents'), (file) => file.endsWith('.md')).length > 0
       || walkProviderFiles(reader, join('.claude', 'skills'), (file) => basename(file) === 'SKILL.md').length > 0;
@@ -948,11 +917,7 @@ function validatePortableV1(hubRoot, indexText, reader, templatesDir) {
       const reason = modelSurface
         ? classifyGenerated(content, artifactId, renderSurfaceAdapter(adapter, model, modelSurface, templatesDir))
         : classifyGenerated(content, artifactId, normalizedLf(content));
-      const release = reason === 'customized' && modelSurface
-        ? priorSurfaceAdapterRelease(adapter, model, modelSurface, content, templatesDir)
-        : null;
-      if (release) warn(staleAdapterMessage(row.agent, adapter, path, release));
-      else if (reason) error(`${row.agent} ${adapter} adapter at ${path} is ${reason}`);
+      if (reason) error(`${row.agent} ${adapter} adapter at ${path} is ${reason}`);
     }
   }
 

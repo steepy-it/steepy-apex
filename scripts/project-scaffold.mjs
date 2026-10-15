@@ -244,26 +244,6 @@ function readTemplate(templatesDir, name) {
   return decodeTemplate(readFileSync(join(templatesDir, name)), name);
 }
 
-// Closed registry of prior canonical adapter templates, keyed by adapter kind.
-// A released generated template that changes keeps its `v1` provenance; its
-// released source is kept under `templates/prior/` and pinned by digest here.
-// An observed adapter whose bytes exactly equal a pinned prior rendering is
-// `stale`; any other byte is `customized`. There is no fuzzy matching, and the
-// prior sources are only compared against, never rendered as output.
-const PRIOR_CANONICAL_TEMPLATES = deepFreeze({
-  claude: [{ releases: 'v1.0.0-v1.0.6', template: 'prior/v1.0/surface-agent-claude.md',
-    sha256: '2bcbe06e50cc842e01c0e4a7a57420795847946599bc0ac688dbb4954f5cd4ff' }],
-  codex: [{ releases: 'v1.0.0-v1.0.6', template: 'prior/v1.0/surface-agent-codex.toml',
-    sha256: 'b69fe9f276853c0c607f69d1445d18e8dcf6db0f62be74bd3cc7d2a6eb980c0b' }],
-  opencode: [{ releases: 'v1.0.0-v1.0.6', template: 'prior/v1.0/surface-agent-opencode.md',
-    sha256: '663a2149cf58c18c2793b8c3aafe29ae408ddb66d068d10d11809f9b45db33a5' }],
-});
-
-function priorRegistryKey(artifactId) {
-  const adapter = adapterIdentity(artifactId)?.adapter;
-  return adapter !== undefined && Object.hasOwn(PRIOR_CANONICAL_TEMPLATES, adapter) ? adapter : null;
-}
-
 function surfaceForArtifact(artifactId, model) {
   return model.surfaces.find((surface) => (
     artifactId === `${surface.agent}-claude`
@@ -288,25 +268,6 @@ export function renderProjectArtifact(artifactId, normalized, templatesDir = DEF
   const model = normalizedModel(normalized);
   const [templateName, surface] = templateForArtifact(artifactId, model);
   return renderTemplate(readTemplate(templatesDir, templateName), renderVars(model, surface));
-}
-
-// Returns the release label of the pinned prior canonical template whose rendering
-// equals `text` byte for byte, or null. Non-adapter artifacts never consult the registry.
-export function priorCanonicalRelease(artifactId, text, normalized, templatesDir = DEFAULT_TEMPLATES_DIR) {
-  const key = priorRegistryKey(artifactId);
-  if (key === null) return null;
-  const model = normalizedModel(normalized);
-  const [, surface] = templateForArtifact(artifactId, model);
-  for (const { releases, template, sha256 } of PRIOR_CANONICAL_TEMPLATES[key]) {
-    const bytes = readFileSync(join(templatesDir, template));
-    if (digest(bytes) !== sha256) {
-      throw new Error(`prior canonical template ${template} does not match its pinned digest`);
-    }
-    if (renderTemplate(decodeTemplate(bytes, template), renderVars(model, surface)) === text) {
-      return releases;
-    }
-  }
-  return null;
 }
 
 // Recover the exact public Project identity stored in the managed AGENTS.md block.
@@ -658,7 +619,7 @@ function expectedGeneratedMarkerId(artifact, model) {
   return artifact.artifactId;
 }
 
-function classifyGenerated(observed, artifact, model, templatesDir) {
+function classifyGenerated(observed, artifact, model) {
   if (observed.text === artifact.content) {
     return { priorState: 'current', reason: null, replacement: null };
   }
@@ -678,14 +639,11 @@ function classifyGenerated(observed, artifact, model, templatesDir) {
         : 'wrong-target';
       return { priorState: 'malformed', reason, replacement: artifact.content };
     }
-    if (priorCanonicalRelease(artifact.artifactId, observed.text, model, templatesDir) !== null) {
-      return { priorState: 'stale', reason: null, replacement: artifact.content };
-    }
   }
   return { priorState: 'customized', reason: 'customized', replacement: artifact.content };
 }
 
-function classifyInternal({ hubRoot, artifact, normalizedModel: model, templatesDir = DEFAULT_TEMPLATES_DIR }) {
+function classifyInternal({ hubRoot, artifact, normalizedModel: model }) {
   const observed = readObserved(hubRoot, artifact.path);
   if (!observed.exists) {
     return deepFreeze({ priorState: 'absent', priorDigest: null, reason: null, replacement: artifact.content });
@@ -696,7 +654,7 @@ function classifyInternal({ hubRoot, artifact, normalizedModel: model, templates
   }
   const classified = artifact.type === 'mixed'
     ? classifyMixed(observed, artifact, model)
-    : classifyGenerated(observed, artifact, model, templatesDir);
+    : classifyGenerated(observed, artifact, model);
   return deepFreeze({ priorDigest, ...classified });
 }
 
@@ -847,10 +805,10 @@ function assertResolutionSet(resolutions, offered) {
   }
 }
 
-function planArtifacts({ hubRoot, normalized, artifacts, includeOrphans, templatesDir }) {
+function planArtifacts({ hubRoot, normalized, artifacts, includeOrphans }) {
   const candidates = [];
   for (const artifact of artifacts) {
-    const classification = classifyInternal({ hubRoot, artifact, normalizedModel: normalized, templatesDir });
+    const classification = classifyInternal({ hubRoot, artifact, normalizedModel: normalized });
     if (classification.priorState === 'current') continue;
     if (classification.reason) {
       candidates.push({
@@ -918,7 +876,6 @@ export function planProjectScaffold({ hubRoot, model, templatesDir = DEFAULT_TEM
     normalized,
     artifacts,
     includeOrphans: true,
-    templatesDir,
   });
 }
 
@@ -931,7 +888,6 @@ export function planRootInstructions({ hubRoot, model, templatesDir = DEFAULT_TE
     normalized,
     artifacts: rootInstructionArtifacts(normalized, templatesDir),
     includeOrphans: false,
-    templatesDir,
   });
 }
 
@@ -993,7 +949,7 @@ const ROOT_OPERATION_ORDER = new Map([
   ['claude-bootstrap-stub', 3],
 ]);
 const ADAPTER_ORDER = new Map([['claude', 0], ['codex', 1], ['opencode', 2]]);
-const PRIOR_STATES = new Set(['absent', 'unmarked', 'customized', 'malformed', 'stale']);
+const PRIOR_STATES = new Set(['absent', 'unmarked', 'customized', 'malformed']);
 const CONFLICT_REASONS = new Set([
   'unmanaged-import', 'customized', 'malformed-markers', 'unknown-version', 'duplicate',
   'wrong-target', 'surface-mismatch', 'orphan', 'symlink', 'unsafe-path',
@@ -1203,10 +1159,6 @@ function validateOperationContract(operation, index) {
       throw new TypeError(`${label}.priorDigest must be a SHA-256 digest`);
     }
     if (operation.kind === 'create') throw new TypeError(`${label} has incoherent replacement kind`);
-  }
-  if (operation.priorState === 'stale'
-      && (operation.kind !== 'replace-generated' || priorRegistryKey(operation.artifactId) === null)) {
-    throw new TypeError(`${label} has incoherent stale provenance`);
   }
 
   if (operation.artifactId === 'project-instructions') {

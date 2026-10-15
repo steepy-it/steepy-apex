@@ -233,7 +233,7 @@ test('specialist adapters route by surface and cite no standard path', () => {
   assert.equal(descriptions.opencode.size, 5, 'OpenCode descriptions must be distinct');
 
   const release = readFileSync(join(repoRoot, 'RELEASE.md'), 'utf8');
-  assert.match(release, /Upgrade note for existing hubs \(first release after 1\.0\.6\)[\s\S]*v1\.0\.0-v1\.0\.6/);
+  assert.doesNotMatch(release, /Upgrade note for existing hubs/);
 });
 
 test('public dogfood preview cleans its temporary model directory', () => {
@@ -259,10 +259,11 @@ test('stable workflow knowledge is content-locked and manual transport remains m
   const scripts = readStable('.apex', 'standards', 'scripts.md');
   const tests = readStable('.apex', 'standards', 'tests.md');
 
-  assert.match(glossary, /Prior canonical rendering[\s\S]*digest-pinned[\s\S]*stale[\s\S]*customized/i);
-  assert.match(templates, /keeps `v1`[\s\S]*templates\/prior\/[\s\S]*stale, not customized/i);
+  assert.doesNotMatch(glossary, /Prior canonical rendering/);
+  assert.match(templates, /keeps `v1`[\s\S]*`customized` conflict[\s\S]*explicit `replace`[\s\S]*No prior copies[\s\S]*breaking/);
+  assert.doesNotMatch(templates, /templates\/prior/);
   assert.doesNotMatch(templates, /remains unchanged/i);
-  assert.match(scripts, /prior canonical rendering is\s+`stale`[\s\S]*warn/i);
+  assert.doesNotMatch(scripts, /PRIOR_CANONICAL_TEMPLATES|templates\/prior|digest-pinned registry/);
   assert.match(scripts, /standard\/producer mismatch/i);
 
   for (const text of [glossary, conventions, skills, templates, scripts, tests]) {
@@ -283,7 +284,7 @@ test('stable workflow knowledge is content-locked and manual transport remains m
   assert.match(skills, /fail closed on absent IDs[\s\S]*Task-like heading[\s\S]*validated before task parsing/i);
   assert.match(templates, /default-deny boundary[\s\S]*exact work paths[\s\S]*pathless invocation[\s\S]*phase orchestrator interprets the handoff/i);
   assert.match(templates, /do not define phase role maps, lifecycle transitions, envelope grammar/i);
-  assert.match(scripts, /Public scaffold repair[\s\S]*current canonical v1[\s\S]*customization conflicts[\s\S]*no prior-format[\s\S]*exact no-op/i);
+  assert.match(scripts, /Public scaffold repair[\s\S]*current canonical v1[\s\S]*customization conflicts[\s\S]*exact no-op/i);
   assert.match(scripts, /Codex output inherits[\s\S]*model = "inherit"[\s\S]*customization conflict[\s\S]*never an automatic upgrade/i);
   assert.match(templates, /Codex[\s\S]*omit(?:s|ting)? the `model` field[\s\S]*inherit/i);
   assert.match(scripts, /unmarked active Claude import offers `adopt`[\s\S]*preserves every other byte[\s\S]*exact no-op/i);

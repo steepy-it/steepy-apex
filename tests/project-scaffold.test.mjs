@@ -32,7 +32,6 @@ import {
   planRootInstructions,
   planSpecialistScaffold,
   previewProjectScaffold,
-  priorCanonicalRelease,
   recognizeProjectScaffoldLeases,
   renderProjectArtifact,
   validateProjectScaffoldPlan,
@@ -1399,119 +1398,28 @@ test('conflicts have closed provenance, coherent choices, canonical order, uniqu
   }
 });
 
-// Prior canonical adapter sources (v1.0.0-v1.0.6). The engine reads them only to
-// recognize an untouched older rendering as `stale`; they are never rendered as output.
-const PRIOR_V1_0_SHA256 = {
-  'surface-agent-claude.md': '2bcbe06e50cc842e01c0e4a7a57420795847946599bc0ac688dbb4954f5cd4ff',
-  'surface-agent-codex.toml': 'b69fe9f276853c0c607f69d1445d18e8dcf6db0f62be74bd3cc7d2a6eb980c0b',
-  'surface-agent-opencode.md': '663a2149cf58c18c2793b8c3aafe29ae408ddb66d068d10d11809f9b45db33a5',
-};
-
-test('the shipped prior sources are pinned', () => {
-  const priorDir = join(templatesDir, 'prior', 'v1.0');
-  assert.deepEqual(readdirSync(priorDir).sort(), Object.keys(PRIOR_V1_0_SHA256).sort());
-  for (const [name, sha256] of Object.entries(PRIOR_V1_0_SHA256)) {
-    assert.equal(
-      createHash('sha256').update(readFileSync(join(priorDir, name))).digest('hex'),
-      sha256,
-      name,
-    );
-  }
-});
-
-test('the validator admits stale only as a generated update of a registered adapter kind', () => {
+test('the validator rejects a stale plan state', () => {
   const hubRoot = tempHub();
   try {
     const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
-    const withStale = (artifactId, kind = 'replace-generated') => ({
-      ...plan,
-      operations: plan.operations.map((operation) => (
-        operation.artifactId === artifactId
-          ? { ...operation, kind, priorState: 'stale', priorDigest: 'a'.repeat(64) }
-          : operation
-      )),
-    });
-
     for (const artifactId of ['web-agent-claude', 'web-agent-codex', 'web-agent-opencode']) {
-      const stale = withStale(artifactId);
-      assert.equal(validateProjectScaffoldPlan(stale), stale, artifactId);
+      const stale = {
+        ...plan,
+        operations: plan.operations.map((operation) => (
+          operation.artifactId === artifactId
+            ? { ...operation, kind: 'replace-generated', priorState: 'stale', priorDigest: 'a'.repeat(64) }
+            : operation
+        )),
+      };
+      assert.throws(() => validateProjectScaffoldPlan(stale), /priorState is invalid/, artifactId);
     }
-    for (const artifactId of ['project-bootstrap', 'claude-bootstrap-stub']) {
-      assert.throws(() => validateProjectScaffoldPlan(withStale(artifactId)), /stale/i, artifactId);
-    }
-    for (const artifactId of ['project-instructions', 'claude-import']) {
-      assert.throws(
-        () => validateProjectScaffoldPlan(withStale(artifactId, 'replace-managed')),
-        /stale/i,
-        artifactId,
-      );
-    }
-    assert.throws(() => validateProjectScaffoldPlan(withStale('web-agent-claude', 'create')), /incoherent/i);
   } finally {
     rmSync(hubRoot, { recursive: true, force: true });
   }
 });
 
-// Copies `templates/` into a temp directory and writes the next adapter template text,
-// so the engine is proved before the real templates change. Full contents are written
-// (never `.replace` on the old text), so this stays valid after the real templates
-// change. Exactly two copies of this helper exist on purpose: this one and the one in
-// tests/validate-hub.test.mjs. Keep them identical. The caller removes the directory
-// in `finally`.
-function nextTemplatesDir() {
-  const dir = mkdtempSync(join(tmpdir(), 'steepy-next-templates-'));
-  cpSync(templatesDir, dir, { recursive: true });
-  writeFileSync(join(dir, 'surface-agent-claude.md'), [
-    '---',
-    'name: {{agent}}',
-    'description: >-',
-    '  Specialist for the {{surface}} surface. Use it for changes under {{path}}.',
-    'model: {{model}}',
-    '---',
-    '<!-- steepy:generated:{{agent}}-claude:v1 -->',
-    '',
-    '# {{agent}}',
-    '',
-    'You are the specialist agent for the `{{surface}}` surface at `{{path}}`.',
-    '',
-    'Run the `{{projectName}}-bootstrap` skill, then read the standard linked in the `{{surface}}` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
-    '',
-  ].join('\n'));
-  writeFileSync(join(dir, 'surface-agent-opencode.md'), [
-    '---',
-    'description: >-',
-    '  Specialist for the {{surface}} surface. Use it for changes under {{path}}.',
-    'mode: subagent',
-    'model: {{model}}',
-    '---',
-    '<!-- steepy:generated:{{agent}}-opencode:v1 -->',
-    '',
-    '# {{agent}}',
-    '',
-    'You are the specialist agent for the `{{surface}}` surface at `{{path}}`.',
-    '',
-    'Run the `{{projectName}}-bootstrap` skill, then read the standard linked in the `{{surface}}` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
-    '',
-  ].join('\n'));
-  writeFileSync(join(dir, 'surface-agent-codex.toml'), [
-    '# steepy:generated:{{agent}}-codex:v1',
-    '# Project description: {{description}}',
-    '# Surface path: {{path}}',
-    'name = "{{agent}}"',
-    'description = "Specialist agent for {{surface}} work."',
-    'developer_instructions = """',
-    'You are the {{agent}} specialist for the {{surface}} surface.',
-    '',
-    'Run the `{{projectName}}-bootstrap` skill, then read the standard linked in the `{{surface}}` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
-    '"""',
-    '',
-  ].join('\n'));
-  return dir;
-}
-
-// Literal v1.0.0-v1.0.6 adapter renderings for this suite's model(), keyed by path.
-// They are copied here on purpose, rendered once from `git show v1.0.0:templates/<name>`
-// with `model: 'inherit'`, and are never computed from templates/prior/ at test time.
+// Literal v1.0.0-v1.0.6 adapter renderings for this suite's model(), keyed by path:
+// literals copied from the released v1.0.0 templates, rendered once with `model: 'inherit'`.
 const V1_0_ADAPTERS = {
   '.claude/agents/web-agent.md': [
     '---',
@@ -1566,68 +1474,67 @@ const WEB_AGENT_ADAPTERS = [
   ['web-agent-opencode', '.opencode/agents/web-agent.md'],
 ];
 
-// Scaffolds model() with the next templates, then writes the literal v1.0 adapters.
-function seedV1_0Hub(hubRoot, next) {
-  applyProjectScaffold({ hubRoot, plan: planProjectScaffold({ hubRoot, model: model(), templatesDir: next }) });
+// Scaffolds model() with the real templates, then writes the literal v1.0 adapters.
+function seedV1_0Hub(hubRoot) {
+  applyProjectScaffold({ hubRoot, plan: planProjectScaffold({ hubRoot, model: model(), templatesDir }) });
   for (const [path, content] of Object.entries(V1_0_ADAPTERS)) put(hubRoot, path, content);
 }
 
-test('an untouched v1.0.0-v1.0.6 triad is a stale generated update', () => {
-  const next = nextTemplatesDir();
+test('an untouched v1.0.0-v1.0.6 triad is a customized conflict resolved only by replace', () => {
   const hubRoot = tempHub();
   try {
-    seedV1_0Hub(hubRoot, next);
+    seedV1_0Hub(hubRoot);
     const normalized = normalizeProjectModel(model());
 
-    const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir: next });
-    assert.deepEqual(plan.conflicts, []);
-    assert.deepEqual(previewProjectScaffold(plan), WEB_AGENT_ADAPTERS.map(([artifactId, path]) => ({
+    const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+    assert.deepEqual(plan.conflicts, WEB_AGENT_ADAPTERS.map(([artifactId, path]) => ({
+      id: `v1:${artifactId}:customized`,
+      artifactId,
+      path,
+      reason: 'customized',
+      choices: ['replace', 'abort'],
+    })));
+    assert.equal(plan.operations.some((operation) => WEB_AGENT_ADAPTERS.some(([, path]) => path === operation.path)), false);
+    const specialist = {
+      hubRoot,
+      surface: { ...normalized.surfaces[0], projectName: normalized.projectName, description: normalized.description },
+      templatesDir,
+    };
+    assert.throws(() => planSpecialistScaffold(specialist), /specialist scaffold already exists/);
+    const repaired = planSpecialistScaffold({ ...specialist, repair: true });
+    assert.deepEqual(repaired.operations, []);
+    assert.deepEqual(repaired.conflicts, plan.conflicts);
+
+    const resolutions = Object.fromEntries(WEB_AGENT_ADAPTERS.map(([artifactId]) => [`v1:${artifactId}:customized`, 'replace']));
+    const replacing = planProjectScaffold({ hubRoot, model: model({ resolutions }), templatesDir });
+    assert.deepEqual(replacing.conflicts, []);
+    assert.deepEqual(previewProjectScaffold(replacing), WEB_AGENT_ADAPTERS.map(([artifactId, path]) => ({
       id: `v1:op:${artifactId}`,
       kind: 'replace-generated',
       artifactId,
       path,
-      priorState: 'stale',
+      priorState: 'customized',
     })));
-    assert.throws(() => planSpecialistScaffold({
-      hubRoot,
-      surface: { ...normalized.surfaces[0], projectName: normalized.projectName, description: normalized.description },
-      templatesDir: next,
-    }), /specialist scaffold already exists/);
-
-    assert.deepEqual(applyProjectScaffold({ hubRoot, plan }), {
+    assert.deepEqual(applyProjectScaffold({ hubRoot, plan: replacing }), {
       applied: 3,
       paths: WEB_AGENT_ADAPTERS.map(([, path]) => path),
     });
     for (const [artifactId, path] of WEB_AGENT_ADAPTERS) {
       assert.equal(
         readFileSync(join(hubRoot, path), 'utf8'),
-        renderProjectArtifact(artifactId, normalized, next),
+        renderProjectArtifact(artifactId, normalized, templatesDir),
         path,
       );
     }
 
     const before = snapshot(hubRoot);
-    const second = planProjectScaffold({ hubRoot, model: model(), templatesDir: next });
+    const second = planProjectScaffold({ hubRoot, model: model(), templatesDir });
     assert.deepEqual(second.operations, []);
     assert.deepEqual(second.conflicts, []);
     assert.deepEqual(applyProjectScaffold({ hubRoot, plan: second }), { applied: 0, paths: [] });
     assert.deepEqual(snapshot(hubRoot), before);
-
-    assert.equal(
-      priorCanonicalRelease('web-agent-claude', V1_0_ADAPTERS['.claude/agents/web-agent.md'], normalized, next),
-      'v1.0.0-v1.0.6',
-    );
-    assert.equal(
-      priorCanonicalRelease('web-agent-claude', renderProjectArtifact('web-agent-claude', normalized, next), normalized, next),
-      null,
-    );
-    assert.equal(
-      priorCanonicalRelease('project-bootstrap', renderProjectArtifact('project-bootstrap', normalized, next), normalized, next),
-      null,
-    );
   } finally {
     rmSync(hubRoot, { recursive: true, force: true });
-    rmSync(next, { recursive: true, force: true });
   }
 });
 
@@ -1639,14 +1546,13 @@ test('any byte beyond a v1.0 adapter rendering stays customized', () => {
     ['one doubled inner space', rendering.replace('You are the specialist', 'You are  the specialist')],
     ['CRLF line endings', rendering.replaceAll('\n', '\r\n')],
   ];
-  const next = nextTemplatesDir();
   const hubRoot = tempHub();
   try {
-    seedV1_0Hub(hubRoot, next);
+    seedV1_0Hub(hubRoot);
     for (const [name, observed] of cases) {
       assert.notEqual(observed, rendering, name);
       put(hubRoot, path, observed);
-      const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir: next });
+      const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
       assert.deepEqual(plan.conflicts.filter((conflict) => conflict.path === path), [{
         id: 'v1:web-agent-claude:customized',
         artifactId: 'web-agent-claude',
@@ -1658,26 +1564,6 @@ test('any byte beyond a v1.0 adapter rendering stays customized', () => {
     }
   } finally {
     rmSync(hubRoot, { recursive: true, force: true });
-    rmSync(next, { recursive: true, force: true });
-  }
-});
-
-test('prior adapter templates are digest-pinned', () => {
-  const next = nextTemplatesDir();
-  const hubRoot = tempHub();
-  try {
-    const prior = join(next, 'prior', 'v1.0', 'surface-agent-claude.md');
-    writeFileSync(prior, `${readFileSync(prior, 'utf8')}\n`);
-    put(hubRoot, '.claude/agents/web-agent.md', V1_0_ADAPTERS['.claude/agents/web-agent.md']);
-    const before = snapshot(hubRoot);
-    assert.throws(
-      () => planProjectScaffold({ hubRoot, model: model(), templatesDir: next }),
-      /prior canonical template .*pinned digest/i,
-    );
-    assert.deepEqual(snapshot(hubRoot), before);
-  } finally {
-    rmSync(hubRoot, { recursive: true, force: true });
-    rmSync(next, { recursive: true, force: true });
   }
 });
 

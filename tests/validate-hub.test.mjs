@@ -91,67 +91,9 @@ function putPortable(hub, path, content) {
   writeFileSync(join(hub, path), content);
 }
 
-// Copies `templates/` into a temp directory and writes the next adapter template text,
-// so the linter is proved before the real templates change. Full contents are written
-// (never `.replace` on the old text), so this stays valid after the real templates
-// change. Exactly two copies of this helper exist on purpose: this one and the one in
-// tests/project-scaffold.test.mjs. Keep them identical. The caller removes the directory
-// in `finally`.
-function nextTemplatesDir() {
-  const dir = mkdtempSync(join(tmpdir(), 'steepy-next-templates-'));
-  cpSync(templates, dir, { recursive: true });
-  writeFileSync(join(dir, 'surface-agent-claude.md'), [
-    '---',
-    'name: {{agent}}',
-    'description: >-',
-    '  Specialist for the {{surface}} surface. Use it for changes under {{path}}.',
-    'model: {{model}}',
-    '---',
-    '<!-- steepy:generated:{{agent}}-claude:v1 -->',
-    '',
-    '# {{agent}}',
-    '',
-    'You are the specialist agent for the `{{surface}}` surface at `{{path}}`.',
-    '',
-    'Run the `{{projectName}}-bootstrap` skill, then read the standard linked in the `{{surface}}` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
-    '',
-  ].join('\n'));
-  writeFileSync(join(dir, 'surface-agent-opencode.md'), [
-    '---',
-    'description: >-',
-    '  Specialist for the {{surface}} surface. Use it for changes under {{path}}.',
-    'mode: subagent',
-    'model: {{model}}',
-    '---',
-    '<!-- steepy:generated:{{agent}}-opencode:v1 -->',
-    '',
-    '# {{agent}}',
-    '',
-    'You are the specialist agent for the `{{surface}}` surface at `{{path}}`.',
-    '',
-    'Run the `{{projectName}}-bootstrap` skill, then read the standard linked in the `{{surface}}` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
-    '',
-  ].join('\n'));
-  writeFileSync(join(dir, 'surface-agent-codex.toml'), [
-    '# steepy:generated:{{agent}}-codex:v1',
-    '# Project description: {{description}}',
-    '# Surface path: {{path}}',
-    'name = "{{agent}}"',
-    'description = "Specialist agent for {{surface}} work."',
-    'developer_instructions = """',
-    'You are the {{agent}} specialist for the {{surface}} surface.',
-    '',
-    'Run the `{{projectName}}-bootstrap` skill, then read the standard linked in the `{{surface}}` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
-    '"""',
-    '',
-  ].join('\n'));
-  return dir;
-}
-
 // Literal v1.0.0-v1.0.6 adapter renderings for the portable-demo triad that
-// portableHub() writes, keyed by path. Duplicated on purpose: rendered once from
-// `git show v1.0.0:templates/<name>` with `model: 'inherit'`, never computed from
-// templates/prior/ at test time.
+// portableHub() writes, keyed by path: literals copied from the released v1.0.0
+// templates, rendered once with `model: 'inherit'`.
 const V1_0_PORTABLE_DEMO_ADAPTERS = {
   '.claude/agents/web-agent.md': [
     '---',
@@ -201,9 +143,8 @@ const V1_0_PORTABLE_DEMO_ADAPTERS = {
 };
 
 // Literal v1.0.0-v1.0.6 adapter renderings for the unbound preparatory triad
-// (projectName `project`, empty description), keyed by path. Duplicated on purpose:
-// rendered once from `git show v1.0.0:templates/<name>` with `model: 'inherit'`,
-// never computed from templates/prior/ at test time.
+// (projectName `project`, empty description), keyed by path: literals copied from
+// the released v1.0.0 templates, rendered once with `model: 'inherit'`.
 const V1_0_PREPARATORY_ADAPTERS = {
   '.claude/agents/web-agent.md': [
     '---',
@@ -691,18 +632,15 @@ test('portable v1: a full project still fails a modular route even though adapte
   assert.equal(captureMain(['--quiet', hub]).code, 1);
 });
 
-// GC10 warn text for one untouched v1.0.0-v1.0.6 web-agent adapter.
-function staleWarn(adapter, path) {
-  return {
-    level: 'warn',
-    msg: `portable-v1: web-agent ${adapter} adapter at ${path} is the v1.0.0-v1.0.6 rendering; init repair updates it to the current rendering`,
-  };
+// Error text for one untouched v1.0.0-v1.0.6 web-agent adapter in a bound hub.
+function customizedError(adapter, path) {
+  return { level: 'error', msg: `portable-v1: web-agent ${adapter} adapter at ${path} is customized` };
 }
 
-const WEB_AGENT_STALE_WARNS = [
-  staleWarn('claude', '.claude/agents/web-agent.md'),
-  staleWarn('codex', '.codex/agents/web-agent.toml'),
-  staleWarn('opencode', '.opencode/agents/web-agent.md'),
+const WEB_AGENT_CUSTOMIZED_ERRORS = [
+  customizedError('claude', '.claude/agents/web-agent.md'),
+  customizedError('codex', '.codex/agents/web-agent.toml'),
+  customizedError('opencode', '.opencode/agents/web-agent.md'),
 ];
 
 function portableEntries(violations) {
@@ -713,18 +651,14 @@ function putAdapters(hub, adapters) {
   for (const [path, content] of Object.entries(adapters)) putPortable(hub, path, content);
 }
 
-test('portable v1: untouched v1.0 adapters in a bound hub only warn', () => {
-  const next = nextTemplatesDir();
+test('portable v1: untouched v1.0 adapters in a bound hub are a customized error', () => {
   const hub = portableHub();
   try {
     // GC12: write the v1.0 literals explicitly instead of relying on portableHub().
     putAdapters(hub, V1_0_PORTABLE_DEMO_ADAPTERS);
-    const violations = collectViolations(hub, { templatesDir: next });
-    assert.deepEqual(violations.filter((item) => item.level === 'error'), [], JSON.stringify(violations));
-    assert.deepEqual(portableEntries(violations), WEB_AGENT_STALE_WARNS);
+    assert.deepEqual(portableEntries(collectViolations(hub)), WEB_AGENT_CUSTOMIZED_ERRORS);
   } finally {
     rmSync(hub, { recursive: true, force: true });
-    rmSync(next, { recursive: true, force: true });
   }
 });
 
@@ -736,38 +670,37 @@ test('portable v1: any byte beyond a bound v1.0 adapter stays customized', () =>
     ['one doubled inner space', rendering.replace('You are the specialist', 'You are  the specialist')],
     ['CRLF line endings', rendering.replaceAll('\n', '\r\n')],
   ];
-  const next = nextTemplatesDir();
   const hub = portableHub();
   try {
     putAdapters(hub, V1_0_PORTABLE_DEMO_ADAPTERS);
     for (const [name, observed] of cases) {
       assert.notEqual(observed, rendering, name);
       putPortable(hub, path, observed);
-      assert.deepEqual(portableEntries(collectViolations(hub, { templatesDir: next })), [
+      assert.deepEqual(portableEntries(collectViolations(hub)), [
         {
           level: 'error',
           msg: 'portable-v1: web-agent claude adapter at .claude/agents/web-agent.md is customized',
         },
-        ...WEB_AGENT_STALE_WARNS.slice(1),
+        ...WEB_AGENT_CUSTOMIZED_ERRORS.slice(1),
       ], name);
     }
   } finally {
     rmSync(hub, { recursive: true, force: true });
-    rmSync(next, { recursive: true, force: true });
   }
 });
 
-test('portable v1: an untouched v1.0 preparatory triad stays compatible with one warn per adapter', () => {
-  const next = nextTemplatesDir();
+test('portable v1: an untouched v1.0 preparatory triad closes validation', () => {
   const hub = preparatoryHub();
   try {
     putAdapters(hub, V1_0_PREPARATORY_ADAPTERS);
-    const violations = collectViolations(hub, { templatesDir: next });
-    assert.deepEqual(violations.filter((item) => item.level === 'error'), [], JSON.stringify(violations));
-    assert.deepEqual(portableEntries(violations), WEB_AGENT_STALE_WARNS);
+    const violations = collectViolations(hub);
+    assert.ok(
+      violations.some(({ level, msg }) => level === 'error' && msg === 'portable-v1: project instructions at AGENTS.md are missing'),
+      JSON.stringify(violations),
+    );
+    assert.equal(violations.some(({ level }) => level === 'warn'), false, JSON.stringify(violations));
   } finally {
     rmSync(hub, { recursive: true, force: true });
-    rmSync(next, { recursive: true, force: true });
   }
 });
 
@@ -775,12 +708,11 @@ test('portable v1: a drifted v1.0 preparatory adapter closes validation', () => 
   const path = '.claude/agents/web-agent.md';
   const drifted = V1_0_PREPARATORY_ADAPTERS[path].replace('You are the specialist', 'You are  the specialist');
   assert.notEqual(drifted, V1_0_PREPARATORY_ADAPTERS[path]);
-  const next = nextTemplatesDir();
   const hub = preparatoryHub();
   try {
     putAdapters(hub, V1_0_PREPARATORY_ADAPTERS);
     putPortable(hub, path, drifted);
-    const errors = collectViolations(hub, { templatesDir: next }).filter((item) => item.level === 'error');
+    const errors = collectViolations(hub).filter((item) => item.level === 'error');
     assert.ok(errors.length > 0, 'a drifted preparatory adapter fell through');
     assert.ok(
       errors.some(({ msg }) => msg === 'portable-v1: project instructions at AGENTS.md are missing'),
@@ -788,32 +720,26 @@ test('portable v1: a drifted v1.0 preparatory adapter closes validation', () => 
     );
   } finally {
     rmSync(hub, { recursive: true, force: true });
-    rmSync(next, { recursive: true, force: true });
   }
 });
 
 // Reverse direction against the real engine and the packaged templates (no seam):
-// an untouched v1.0.0-v1.0.6 hub stays green everywhere, a drifted one does not.
-test('portable v1: untouched v1.0 adapters warn under the real templates and stay silent when quiet and in the Stop hook', () => {
+// an untouched v1.0.0-v1.0.6 adapter is customized, so the hub fails and the Stop hook blocks.
+test('portable v1: untouched v1.0 adapters error under the real templates, fail quiet, and block the Stop hook', () => {
   const hub = portableHub();
   try {
     putAdapters(hub, V1_0_PORTABLE_DEMO_ADAPTERS);
-    // The adapters and AGENTS.md cite the surface path; it exists so the stale warns are the only warns.
     mkdirSync(join(hub, 'apps', 'web'), { recursive: true });
     const violations = collectViolations(hub);
-    assert.deepEqual(violations.filter((item) => item.level === 'error'), [], JSON.stringify(violations));
-    assert.deepEqual(violations, WEB_AGENT_STALE_WARNS);
+    assert.deepEqual(violations.filter((item) => item.level === 'error'), WEB_AGENT_CUSTOMIZED_ERRORS);
+    assert.deepEqual(violations.filter((item) => item.level === 'warn'), []);
 
-    const loud = captureMain([hub]);
-    assert.equal(loud.code, 0, loud.err);
-    assert.match(loud.out, /OK/);
-    assert.match(loud.err, /warn: portable-v1: web-agent claude adapter at .* is the v1\.0\.0-v1\.0\.6 rendering/);
-    assert.deepEqual(captureMain([hub, '--quiet']), { code: 0, out: '', err: '' });
+    assert.equal(captureMain([hub]).code, 1);
+    assert.equal(captureMain([hub, '--quiet']).code, 1);
 
-    const quiet = spawnSync(process.execPath, [validator, hub, '--quiet'], { encoding: 'utf8' });
-    assert.deepEqual([quiet.status, quiet.stdout, quiet.stderr], [0, '', '']);
     const hook = spawnSync(process.execPath, [stopHook, hub], { encoding: 'utf8', input: '{}' });
-    assert.deepEqual([hook.status, hook.stdout, hook.stderr], [0, '', '']);
+    assert.equal(hook.status, 0, hook.stderr);
+    assert.equal(JSON.parse(hook.stdout).decision, 'block');
   } finally {
     rmSync(hub, { recursive: true, force: true });
   }
@@ -848,51 +774,43 @@ test('portable v1: a drifted bound v1.0 adapter errors under the real templates,
   }
 });
 
-test('portable v1: an untouched v1.0 preparatory triad exits 0 with three warns under the real templates', () => {
+test('portable v1: an untouched v1.0 preparatory triad exits 1 under the real templates', () => {
   const hub = preparatoryHub();
   try {
     putAdapters(hub, V1_0_PREPARATORY_ADAPTERS);
     const result = runValidator(hub);
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /OK/);
-    assert.equal(result.stderr, WEB_AGENT_STALE_WARNS.map(({ msg }) => `  - warn: ${msg}\n`).join(''));
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /portable-v1: project instructions at AGENTS\.md are missing/);
+    assert.doesNotMatch(result.stderr, /warn:/);
   } finally {
     rmSync(hub, { recursive: true, force: true });
   }
 });
 
-test('portable v1: new-surface --repair reports an untouched v1.0 preparatory triad as updated, then preserved', () => {
+test('portable v1: new-surface --repair stops on the customized conflict for an untouched v1.0 preparatory triad', () => {
   const library = preparatoryHub();
   const cli = preparatoryHub();
   const surface = { name: 'web', surfacePath: 'apps/web', agent: 'web-agent', templatesDir: templates, testCmd: 'npm test' };
   try {
     putAdapters(library, V1_0_PREPARATORY_ADAPTERS);
-    const result = scaffold({ ...surface, hubRoot: library, repair: true });
-    assert.deepEqual(
-      [result.created, result.updated, result.preserved],
-      [[], ['claude', 'codex', 'opencode'], ['standard']],
+    assert.throws(
+      () => scaffold({ ...surface, hubRoot: library, repair: true }),
+      /specialist scaffold conflicts: v1:web-agent-claude:customized/,
     );
 
     putAdapters(cli, V1_0_PREPARATORY_ADAPTERS);
+    const indexBefore = readFileSync(join(cli, '.apex', '_INDEX.md'), 'utf8');
     const run = spawnSync(process.execPath, [
       newSurfaceScript, '--name', 'web', '--path', 'apps/web', '--agent', 'web-agent',
       '--test', 'npm test', '--hub', cli, '--repair',
     ], { encoding: 'utf8' });
-    assert.equal(run.status, 0, run.stderr);
-    const lines = run.stdout.split('\n');
-    for (const path of Object.keys(V1_0_PREPARATORY_ADAPTERS)) {
-      assert.ok(lines.some((line) => line.startsWith('updated ') && line.includes(path)),
-        `${path} must be reported as updated:\n${run.stdout}`);
+    assert.equal(run.status, 1, run.stderr);
+    assert.match(run.stderr, /specialist scaffold conflicts: .*v1:web-agent-claude:customized.*choices: replace, abort/);
+    assert.equal(run.stdout, '');
+    for (const [path, content] of Object.entries(V1_0_PREPARATORY_ADAPTERS)) {
+      assert.equal(readFileSync(join(cli, path), 'utf8'), content, path);
     }
-    assert.doesNotMatch(run.stdout, /^created /m);
-    assert.doesNotMatch(run.stdout, /partial surface|nothing to scaffold/);
-    assert.deepEqual(collectViolations(cli), []);
-
-    const rerun = scaffold({ ...surface, hubRoot: cli, repair: true });
-    assert.deepEqual(
-      [rerun.created, rerun.updated, rerun.preserved],
-      [[], [], ['standard', 'claude', 'codex', 'opencode']],
-    );
+    assert.equal(readFileSync(join(cli, '.apex', '_INDEX.md'), 'utf8'), indexBefore);
   } finally {
     rmSync(library, { recursive: true, force: true });
     rmSync(cli, { recursive: true, force: true });
