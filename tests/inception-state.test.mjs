@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import {
   closeSync,
   existsSync,
@@ -33,7 +32,6 @@ import {
   RUN_CHILDREN,
   RUN_DESCRIPTOR_PATH,
   RUN_SCHEMA,
-  RUN_SCHEMA_V1,
   RUN_SCHEMA_V2,
   STATUSES,
   classifyState,
@@ -45,6 +43,7 @@ import {
   serializeRunDescriptor,
   startRun,
 } from '../scripts/inception-state.mjs';
+import { v1RunDescriptor, v1RunDescriptorText } from './helpers/inception-fixture.mjs';
 
 const SCRIPT = realpathSync(fileURLToPath(new URL('../scripts/inception-state.mjs', import.meta.url)));
 const RUN_ID = 'inc-20261007T120000Z-1a2b3c4d';
@@ -56,38 +55,36 @@ const RUN_ID_PATTERN = /^inc-\d{8}T\d{6}Z-[0-9a-f]{8}$/u;
 
 function baseDescriptor(overrides = {}) {
   return {
-    schema: 'steepy-inception-run/v1',
-    runId: RUN_ID,
-    phase: 'reconnaissance',
-    status: 'active',
-    harness: {
-      name: 'claude-code',
-      capabilities: {
-        shell: true, network: true, browser: false, subagents: true, 'question-tool': true, headless: false,
-      },
-    },
-    git: { present: true, branch: 'main', commits: 'allowed' },
-    nextRecord: 1,
-    approvalEntry: null,
-    approvals: [],
-    checkpoints: [],
-    resumeNotes: [],
-    finalCheckpoint: null,
-    verification: null,
-    history: [],
+    ...structuredClone(createRunDescriptorV2({
+      runId: RUN_ID,
+      harnessName: 'claude-code',
+      capabilities: ['shell', 'network', 'subagents', 'question-tool'],
+      git: { present: true, branch: 'main', commits: 'allowed' },
+    })),
     ...overrides,
   };
 }
 
+// An exact-ref fixture: `{ path, bytes, sha256 }`.
+function fixtureRef(path) {
+  return { path, bytes: 1, sha256: 'a'.repeat(64) };
+}
+
 function completeDescriptor() {
+  const cycle = fixtureRef('.apex/inception/verification/cycles/0001.json');
   return baseDescriptor({
     phase: 'complete',
     status: 'complete',
-    nextRecord: 3,
-    checkpoints: ['.apex/inception/checkpoints/0002.json'],
-    finalCheckpoint: '.apex/inception/checkpoints/0002.json',
-    verification: { path: '.apex/inception/verification/results.md', bytes: 12, sha256: 'a'.repeat(64) },
+    nextRecord: 4,
+    cycles: [cycle],
+    currentCycle: cycle,
+    baseline: fixtureRef('.apex/inception/snapshots/0002.json'),
+    completion: fixtureRef('.apex/inception/verification/completions/0003.json'),
   });
+}
+
+function blockedDescriptor() {
+  return baseDescriptor({ status: 'blocked', blocks: [{ id: 'human', reason: 'Human decision needed', evidence: [] }] });
 }
 
 function text(value) {
@@ -111,7 +108,7 @@ test('exports the fixed inception paths, run children, and closed enums', () => 
   assert.equal(RUN_DESCRIPTOR_PATH, '.apex/inception/run.json');
   assert.deepEqual(RUN_CHILDREN, [
     'approvals', 'checkpoints', 'resume-notes', 'project', 'research', 'bootstrap', 'verification',
-    'effects.jsonl', 'snapshots', 'effects', 'reconciliations', 'units', 'run.json',
+    'snapshots', 'effects', 'reconciliations', 'units', 'run.json',
   ]);
   assert.deepEqual(PHASES, [
     'reconnaissance', 'architecture', 'research', 'approval', 'bootstrap', 'verification', 'complete',
@@ -150,7 +147,7 @@ test('serializeRunDescriptor and parseRunDescriptor round-trip a descriptor', ()
   const parsed = parseRunDescriptor(text(completeDescriptor()));
   assert.deepEqual(parsed, completeDescriptor());
   assert.equal(serializeRunDescriptor(parsed), text(completeDescriptor()));
-  assert.ok(Object.isFrozen(parsed.verification));
+  assert.ok(Object.isFrozen(parsed.completion));
 });
 
 test('the descriptor admits the seven phases and three statuses only', () => {
@@ -158,17 +155,17 @@ test('the descriptor admits the seven phases and three statuses only', () => {
     for (const status of ['active', 'blocked']) {
       assert.equal(parseRunDescriptor(text(baseDescriptor({ phase, status }))).phase, phase);
     }
-    assert.throws(() => parseRunDescriptor(text(baseDescriptor({ phase, status: 'complete' }))), /complete/u);
+    assert.throws(() => parseRunDescriptor(text(baseDescriptor({ phase, status: 'complete' }))), /complete phase\/status must go together/u);
   }
   for (const status of ['active', 'blocked']) {
     assert.throws(
       () => parseRunDescriptor(text({ ...completeDescriptor(), status })),
-      /complete/u,
+      /complete phase\/status must go together/u,
     );
   }
   assert.equal(parseRunDescriptor(text(completeDescriptor())).status, 'complete');
-  assert.throws(() => parseRunDescriptor(text(baseDescriptor({ phase: 'design' }))), /phase/u);
-  assert.throws(() => parseRunDescriptor(text(baseDescriptor({ status: 'paused' }))), /status/u);
+  assert.throws(() => parseRunDescriptor(text(baseDescriptor({ phase: 'design' }))), /phase: must be one of/u);
+  assert.throws(() => parseRunDescriptor(text(baseDescriptor({ status: 'paused' }))), /status: must be one of/u);
 });
 
 test('parseRunDescriptor rejects every invalid descriptor shape with a one-line reason', () => {
@@ -180,7 +177,7 @@ test('parseRunDescriptor rejects every invalid descriptor shape with a one-line 
     'missing key': text((({ history, ...rest }) => rest)(base)),
     'extra key': text({ ...base, extra: true }),
     'reordered keys': text(moveKeyToEnd(base, 'schema')),
-    'wrong schema': text({ ...base, schema: 'steepy-inception-run/v2' }),
+    'unsupported v1 schema': v1RunDescriptorText(),
     'malformed runId': text({ ...base, runId: 'inc-2026-1a2b3c4d' }),
     'uppercase runId hex': text({ ...base, runId: 'inc-20261007T120000Z-1A2B3C4D' }),
     'unsafe harness name': text({ ...base, harness: { ...base.harness, name: 'Claude Code' } }),
@@ -197,41 +194,21 @@ test('parseRunDescriptor rejects every invalid descriptor shape with a one-line 
     'fractional nextRecord': text({ ...base, nextRecord: 1.5 }),
     'approvalEntry above approvals': text({ ...base, approvalEntry: 1 }),
     'negative approvalEntry': text({ ...base, approvalEntry: -1 }),
-    'approval outside its directory': text({ ...base, nextRecord: 2, approvals: ['.apex/inception/checkpoints/0001.json'] }),
-    'approval at nextRecord': text({ ...base, nextRecord: 2, approvals: ['.apex/inception/approvals/0002.json'] }),
-    'unpadded record number': text({ ...base, nextRecord: 2, resumeNotes: ['.apex/inception/resume-notes/1.md'] }),
+    'approval outside its directory': text({ ...base, nextRecord: 2, approvals: [fixtureRef('.apex/inception/checkpoints/0001.json')] }),
+    'approval at nextRecord': text({ ...base, nextRecord: 2, approvals: [fixtureRef('.apex/inception/approvals/0002.json')] }),
+    'unpadded record number': text({ ...base, nextRecord: 2, resumeNotes: [fixtureRef('.apex/inception/resume-notes/1.md')] }),
     'records not increasing': text({
       ...base,
       nextRecord: 4,
-      checkpoints: ['.apex/inception/checkpoints/0003.json', '.apex/inception/checkpoints/0002.json'],
+      checkpoints: [fixtureRef('.apex/inception/checkpoints/0003.json'), fixtureRef('.apex/inception/checkpoints/0002.json')],
     }),
-    'finalCheckpoint not a checkpoint': text({
-      ...base, nextRecord: 3, checkpoints: ['.apex/inception/checkpoints/0002.json'],
-      finalCheckpoint: '.apex/inception/checkpoints/0001.json',
+    'complete without completion': text({ ...completeDescriptor(), completion: null }),
+    'completion outside its directory': text({
+      ...completeDescriptor(), completion: fixtureRef('.apex/inception/verification/summaries/0003.json'),
     }),
-    'verification outside its directory': text({
-      ...base, verification: { path: '.apex/inception/project/results.md', bytes: 1, sha256: 'b'.repeat(64) },
+    'completion with a bad digest': text({
+      ...completeDescriptor(), completion: { ...fixtureRef('.apex/inception/verification/completions/0003.json'), sha256: 'B'.repeat(64) },
     }),
-    'verification escaping its directory': text({
-      ...base, verification: { path: '.apex/inception/verification/../../../etc/passwd', bytes: 1, sha256: 'b'.repeat(64) },
-    }),
-    'verification with an empty segment': text({
-      ...base, verification: { path: '.apex/inception/verification//results.md', bytes: 1, sha256: 'b'.repeat(64) },
-    }),
-    'verification with a dot segment': text({
-      ...base, verification: { path: '.apex/inception/verification/./results.md', bytes: 1, sha256: 'b'.repeat(64) },
-    }),
-    'verification with a control character': text({
-      ...base, verification: { path: '.apex/inception/verification/results\n.md', bytes: 1, sha256: 'b'.repeat(64) },
-    }),
-    'verification naming its directory': text({
-      ...base, verification: { path: '.apex/inception/verification/', bytes: 1, sha256: 'b'.repeat(64) },
-    }),
-    'verification with a bad digest': text({
-      ...base, verification: { path: '.apex/inception/verification/results.md', bytes: 1, sha256: 'B'.repeat(64) },
-    }),
-    'complete without finalCheckpoint': text({ ...completeDescriptor(), finalCheckpoint: null }),
-    'complete without verification': text({ ...completeDescriptor(), verification: null }),
     'malformed history entry': text({
       ...base,
       history: [{ at: '2026-10-07T12:00:00.000Z', from: { phase: 'reconnaissance' }, to: { phase: 'architecture', status: 'active' }, reason: 'x' }],
@@ -253,6 +230,10 @@ test('parseRunDescriptor rejects every invalid descriptor shape with a one-line 
       label,
     );
   }
+  assert.throws(
+    () => parseRunDescriptor(invalid['unsupported v1 schema']),
+    /run descriptor schema "steepy-inception-run\/v1" is unsupported; supported: steepy-inception-run\/v2/u,
+  );
 });
 
 // Inserts `entry` (a `"key": value` fragment) right after the first occurrence of `anchor`.
@@ -296,26 +277,25 @@ test('parseRunDescriptor rejects a duplicate key at any level, including an esca
 test('nextStepFor names the next step for each run status', () => {
   assert.equal(
     nextStepFor(parseRunDescriptor(text(completeDescriptor()))),
-    'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
+    'verify-complete before running the init skill, then the discovery skill with the inception source',
   );
   assert.equal(
-    nextStepFor(parseRunDescriptor(text(baseDescriptor({ status: 'blocked' })))),
-    'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
+    nextStepFor(parseRunDescriptor(text(blockedDescriptor()))),
+    'resolve each named human block with block resolve and observe uncertain effects; transition --to active only when all blocks and effects are resolved',
   );
   assert.equal(
     nextStepFor(parseRunDescriptor(text(baseDescriptor({ phase: 'research' })))),
-    'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
+    'resume with the inception skill (phase research)',
   );
 });
 
-test('public descriptor creation is v2 while dispatch preserves raw v1 bytes', () => {
+test('public descriptor creation is v2 and any other schema is unsupported', () => {
   assert.equal(RUN_SCHEMA, RUN_SCHEMA_V2);
   assert.equal(RUN_SCHEMA_V2, 'steepy-inception-run/v2');
   const d = createRunDescriptorV2({ runId: RUN_ID, harnessName: 'codex', capabilities: [], git: { present: false, branch: null, commits: 'none' } });
   assert.equal(parseRunDescriptor(serializeRunDescriptor(d)).schema, RUN_SCHEMA_V2);
-  assert.deepEqual(parseRunDescriptor(text(baseDescriptor())), baseDescriptor());
+  assert.throws(() => parseRunDescriptor(v1RunDescriptorText()), /schema "steepy-inception-run\/v1" is unsupported/);
   assert.throws(() => parseRunDescriptor(text({ ...d, schema: 'steepy-inception-run/v3' })), /schema/);
-  assert.throws(() => parseRunDescriptor(text({ ...baseDescriptor(), revision: 1 })), /keys/);
   assert.throws(() => parseRunDescriptor(text({ ...d, finalCheckpoint: null })), /keys/);
 });
 
@@ -455,14 +435,21 @@ test('inspect is read-only and reports exact format, state, actions and referenc
       assert.equal(result.output.format, d.schema);
       assert.equal(result.output.phase, d.phase);
       assert.equal(result.output.status, d.status);
-      assert.equal(result.output.legacy, d.schema === RUN_SCHEMA_V1);
-      if (result.output.legacy) assert.match(result.output.nextStep, /legacy v1.*inspect.*abandon/);
+      assert.equal(Object.hasOwn(result.output, 'legacy'), false);
       assert.ok(result.output.allowedActions.includes('inspect'));
       assert.deepEqual(result.output.inputPaths, [RUN_DESCRIPTOR_PATH]);
       assert.deepEqual(snapshot(c.repo), before);
       assert.equal(cli(c, 'inspect', '--maturity', 'suitable').status, 2);
     });
   }
+  withCase('inspect-unsupported', c => {
+    writeDescriptor(c, v1RunDescriptor());
+    const before = snapshot(c.repo);
+    const result = cli(c, 'inspect');
+    assert.equal(result.status, 1);
+    assert.match(result.output.error, /run descriptor schema "steepy-inception-run\/v1" is unsupported; supported: steepy-inception-run\/v2/u);
+    assert.deepEqual(snapshot(c.repo), before);
+  });
   withCase('inspect-invalid', c => {
     writeArea(c, text({ ...baseDescriptor(), schema: 'unknown/v9' }));
     const before = snapshot(c.repo);
@@ -479,7 +466,7 @@ function readDescriptor(c) {
 // Decoys hold valid descriptors at non-descriptor paths: reading any of them would change a row.
 function addDecoys(c) {
   writeFile(c, '.apex/inception/project/x.md', text(completeDescriptor()));
-  writeFile(c, '.apex/inception/zzz-run.json', text(baseDescriptor({ status: 'blocked' })));
+  writeFile(c, '.apex/inception/zzz-run.json', text(blockedDescriptor()));
   writeFile(c, '.apex/inception/run.json.bak', text(completeDescriptor()));
 }
 
@@ -510,7 +497,7 @@ const VALID_CLASSIFICATIONS = [
   { label: 'active run', setup(c) { writeDescriptor(c, baseDescriptor()); }, hub: 'absent', run: 'active', rows: ['resume-run'] },
   {
     label: 'blocked run',
-    setup(c) { writeDescriptor(c, baseDescriptor({ status: 'blocked' })); },
+    setup(c) { writeDescriptor(c, blockedDescriptor()); },
     hub: 'absent', run: 'blocked', rows: ['resume-run'],
   },
   { label: 'complete run', setup(c) { writeDescriptor(c, completeDescriptor()); }, hub: 'absent', run: 'complete', rows: ['report-next-steps'] },
@@ -526,7 +513,7 @@ const VALID_CLASSIFICATIONS = [
   },
   {
     label: 'blocked run beside a hub',
-    setup(c) { writeDescriptor(c, baseDescriptor({ status: 'blocked' })); writeHub(c); },
+    setup(c) { writeDescriptor(c, blockedDescriptor()); writeHub(c); },
     hub: 'present', run: 'blocked', rows: ['conflict-run-beside-hub'],
   },
 ];
@@ -638,6 +625,7 @@ const INVALID_CLASSIFICATIONS = [
     },
   },
   { label: 'invalid descriptor beside a hub', setup(c) { writeHub(c); writeArea(c, 'not json'); } },
+  { label: 'unsupported v1 schema', setup: c => writeDescriptor(c, v1RunDescriptor()) },
 ];
 
 test('classify reports invalid-state with exit 1 and leaves every byte and mtime unchanged', () => {
@@ -967,35 +955,12 @@ test('replaceFileAtomic removes its temp file even when closing the temp file fa
   });
 });
 
-// Raw v1 reader/archive fixtures; public active flows below use v2.
+// Shared command-test paths; public active flows below use v2.
 const REGISTER = '.apex/inception/project/decision-register.md';
 const RESULTS = '.apex/inception/verification/results.md';
 
 function transition(c, to, ...extra) {
   return cli(c, 'transition', '--to', to, '--reason', `move to ${to}`, ...extra);
-}
-
-function sha256(bytes) {
-  return createHash('sha256').update(bytes).digest('hex');
-}
-
-function digestOf(c, path) {
-  const bytes = readFileSync(join(c.repo, path));
-  return { path, bytes: bytes.length, sha256: sha256(bytes) };
-}
-
-function intentLine(id, kind = 'install', overrides = {}) {
-  return JSON.stringify({
-    schema: 'steepy-inception-effect/v1', type: 'intent', id, kind, summary: `run ${id}`,
-    authorization: null, phase: 'architecture', at: '2026-10-07T12:00:00.000Z', ...overrides,
-  });
-}
-
-function outcomeLine(id, overrides = {}) {
-  return JSON.stringify({
-    schema: 'steepy-inception-effect/v1', type: 'outcome', id, result: 'succeeded', observed: `observed ${id}`,
-    phase: 'architecture', at: '2026-10-07T12:00:01.000Z', ...overrides,
-  });
 }
 
 const ABANDONED = '.apex/inception/abandoned';
@@ -1008,7 +973,6 @@ function populateRunChildren(c) {
   writeFile(c, '.apex/inception/research/stack.md', '# Stack\n');
   writeFile(c, '.apex/inception/bootstrap/web.md', '# Web\n');
   writeFile(c, '.apex/inception/verification/results.md', '# Results\n');
-  writeFile(c, '.apex/inception/effects.jsonl', '{"type":"intent"}\n');
   writeFile(c, '.apex/inception/.DS_Store', 'finder');
 }
 
@@ -1160,9 +1124,12 @@ test('an invalid descriptor refuses every command without writing', () => {
         symlinkSync(join(c.repo, 'real-apex'), join(c.repo, '.apex'));
       },
     },
+    { label: 'unsupported v1 schema', setup(c) { writeDescriptor(c, v1RunDescriptor()); } },
   ];
   const commands = [
     ['classify', '--maturity', 'suitable'],
+    ['inspect'],
+    ['verify-complete'],
     startArgs(),
     ['transition', '--to', 'architecture', '--reason', 'next'],
     ['transition', '--to', 'blocked', '--reason', 'stop'],
@@ -1196,7 +1163,7 @@ test('an invalid descriptor refuses every command without writing', () => {
 // link counts, and mtimes.
 
 
-// Active flow fixtures use public v2 start; legacy fixtures above and below remain raw.
+// Active flow fixtures use public v2 start; the fixtures above and below write descriptor JSON directly.
 const stateV2 = await import('../scripts/inception-state.mjs');
 function fixtureV2() {
   const root = mkdtempSync(join(tmpdir(), 'steepy-inception-publication-'));
@@ -2158,7 +2125,7 @@ test('v2 terminal reservation resumes exact publication after interruption and r
     } finally { rmSync(root, { recursive: true, force: true }); }
   }
 });
-test('v2 verification CLI rejects legacy and uses exact summarize/complete inputs', () => {
+test('v2 verification CLI rejects an unsupported run format and uses exact summarize/complete inputs', () => {
   const root = verificationFixtureV2(); const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args, '--repo-root', root], { encoding: 'utf8' });
   try {
     observePageV2(root); const options = completeOptionsV2(root); const limits = `${INCEPTION_AREA}/limits.json`; writeFileSync(join(root, limits), '[]');
@@ -2167,7 +2134,7 @@ test('v2 verification CLI rejects legacy and uses exact summarize/complete input
     assert.equal(run('transition', '--to', 'complete', '--reason', 'Verified', '--cycle', options.cycle, '--checkpoint', options.checkpoint).status, 0);
     const before = snapshot(root); const result = run('verify-complete'); assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(result.stdout).ok, true); assert.deepEqual(snapshot(root), before);
   } finally { rmSync(root, { recursive: true, force: true }); }
-  withCase('legacy-verify-complete', c => { writeDescriptor(c, baseDescriptor()); const before = snapshot(c.repo); const result = cli(c, 'verify-complete'); assert.equal(result.status, 1); assert.match(result.output.reason, /legacy/); assert.deepEqual(snapshot(c.repo), before); });
+  withCase('legacy-verify-complete', c => { writeDescriptor(c, v1RunDescriptor()); const before = snapshot(c.repo); const result = cli(c, 'verify-complete'); assert.equal(result.status, 1); assert.match(result.output.reason, /run descriptor schema "steepy-inception-run\/v1" is unsupported; supported: steepy-inception-run\/v2/u); assert.equal(result.output.inputPaths, undefined); assert.deepEqual(snapshot(c.repo), before); });
 });
 
 test('v2 terminal recovery rechecks application and proof bytes before publishing reserved targets', () => {
@@ -2313,9 +2280,9 @@ const archiveBoundaries = [
   ...RUN_CHILDREN.flatMap(name => [['before-move', name], ['after-move', name]]),
   ['before-receipt'], ['before-receipt-reservation'], ['after-receipt-reservation'], ['after-receipt'], ['before-complete'], ['after-complete'],
 ];
-for (const version of [1, 2]) for (const [point, name] of archiveBoundaries) {
-  test(`C7 v${version}: fresh process recovers ${point} ${name ?? ''}`, () => withCase('abandon-crash', c => {
-    const descriptor = version === 1 ? baseDescriptor() : createRunDescriptorV2({ runId: RUN_ID, harnessName: 'codex', git: { present: false, branch: null, commits: 'none' } });
+for (const [point, name] of archiveBoundaries) {
+  test(`C7: fresh process recovers ${point} ${name ?? ''}`, () => withCase('abandon-crash', c => {
+    const descriptor = createRunDescriptorV2({ runId: RUN_ID, harnessName: 'codex', git: { present: false, branch: null, commits: 'none' } });
     writeDescriptor(c, descriptor);
     for (const child of RUN_CHILDREN.filter(n => n !== 'run.json')) writeFile(c, `${INCEPTION_AREA}/${child}${child.includes('.') ? '' : '/opaque.bin'}`, 'Retain exact bytes\n');
     const before = files(c.repo); const archive = `${ABANDONED}/${RUN_ID}`;
@@ -2347,7 +2314,7 @@ for (const scenario of ['both', 'neither', 'different-inode', 'changed-descripto
     if (scenario === 'both') mkdirSync(target);
     if (scenario === 'neither') renameSync(source, join(c.repo, 'retained-project'));
     if (scenario === 'different-inode') { renameSync(source, join(c.repo, 'retained-project')); mkdirSync(source); }
-    if (scenario === 'changed-descriptor') writeFile(c, RUN_DESCRIPTOR_PATH, text(baseDescriptor({ status: 'blocked' })));
+    if (scenario === 'changed-descriptor') writeFile(c, RUN_DESCRIPTOR_PATH, text(blockedDescriptor()));
     if (scenario === 'foreign-file') writeFile(c, `${archive}/foreign.bin`, 'Foreign');
     if (scenario === 'foreign-staging') writeFile(c, `${archive}/receipt.json.foreign.staging/0001.tmp`, 'Foreign');
     if (scenario === 'symlink') { renameSync(source, join(c.repo, 'retained-project')); symlinkSync(join(c.repo, 'retained-project'), source); }
@@ -2500,7 +2467,7 @@ test('C8 noncapture closure requires explicit unit-correlated stopped-writer obs
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('public v2 cutover rejects every legacy mutator before writer acquisition or new files', () => {
+test('every command refuses an unsupported run format before writer acquisition or new files', () => {
   const input = `${INCEPTION_AREA}/project/input.json`;
   const commands = [
     ['transition', '--to', 'architecture', '--reason', 'Next'], ['transition', '--to', 'complete', '--reason', 'Done', '--cycle', `${INCEPTION_AREA}/verification/cycles/0001.json`, '--checkpoint', `${INCEPTION_AREA}/checkpoints/0002.json`],
@@ -2509,36 +2476,24 @@ test('public v2 cutover rejects every legacy mutator before writer acquisition o
     ['block', 'resolve', '--id', 'human', '--statement', 'Accepted', '--evidence', input], ['publish', 'resume', '--reservation', 'old'],
     ['effect', 'intent', '--id', 'remote', '--input', input], ['effect', 'outcome', '--id', 'remote', '--input', input], ['effect', 'reconcile', '--id', 'remote', '--input', input],
     ['checkpoint', 'create', '--label', 'Full'], ['verification', 'begin', '--environment', input, '--reason', 'Ready'], ['verification', 'resume', '--cycle', `${INCEPTION_AREA}/verification/cycles/0001.json`], ['verification', 'attest', '--cycle', `${INCEPTION_AREA}/verification/cycles/0001.json`, '--input', input], ['verification', 'summarize', '--cycle', `${INCEPTION_AREA}/verification/cycles/0001.json`, '--limits', input],
+    ['classify'], ['inspect'], ['abandon', '--reason', 'Archive'], ['verify-approval'], ['checkpoint', 'verify'], ['effect', 'status'],
   ];
-  for (const legacy of [baseDescriptor(), baseDescriptor({status:'blocked'}), completeDescriptor()]) withCase('v1-read-only', c => {
-    writeDescriptor(c, legacy); writeFile(c, input, '{}');
-    // A live writer lease makes the pre-lease legacy refusal observable.
+  const unsupported = /run descriptor schema "steepy-inception-run\/v1" is unsupported/;
+  for (const status of ['active', 'blocked', 'complete']) withCase('v1-read-only', c => {
+    writeDescriptor(c, v1RunDescriptor(status)); writeFile(c, input, '{}');
+    // A live writer lease makes the pre-lease refusal observable.
     const lock = join(c.repo, '.steepy-project-scaffold.lock'); mkdirSync(lock);
     writeFileSync(join(lock, 'foreign.txt'), 'Keep this writer namespace');
     for (const args of commands) {
       const before = snapshot(c.repo); const result = cli(c, ...args);
-      assert.equal(result.status, 1, args.join(' ')); assert.match(result.output.error, /legacy/i, args.join(' '));
+      assert.equal(result.status, 1, args.join(' ')); assert.match(result.output.error, unsupported, args.join(' '));
       assert.deepEqual(snapshot(c.repo), before, args.join(' '));
     }
     const before = snapshot(c.repo); const verified = cli(c, 'verify-complete');
-    assert.equal(verified.status, 1); assert.match(verified.output.reason, /legacy/); assert.equal(verified.output.inputPaths, undefined);
+    assert.equal(verified.status, 1); assert.match(verified.output.reason, unsupported); assert.equal(verified.output.inputPaths, undefined);
     assert.equal(cli(c, ...startArgs()).status, 1); assert.deepEqual(snapshot(c.repo), before);
   });
 });
-test('raw legacy readers retain approval, checkpoint and effect verification without migration', () => withCase('legacy-readers', c => {
-  const approval = `${INCEPTION_AREA}/approvals/0001.json`; const checkpointPath = `${INCEPTION_AREA}/checkpoints/0002.json`;
-  writeFile(c, REGISTER, 'Approved legacy decisions'); writeFile(c, 'app.js', 'Legacy application');
-  writeFile(c, approval, text({ schema: 'steepy-inception-approval/v1', runId: RUN_ID, record: 1, at: '2026-10-07T12:00:00.000Z', statement: 'Approved', documents: [digestOf(c, REGISTER)] }));
-  writeFile(c, checkpointPath, text({ schema: 'steepy-inception-checkpoint/v1', runId: RUN_ID, record: 2, at: '2026-10-07T12:00:00.000Z', label: 'Final', phase: 'verification', files: [digestOf(c, 'app.js')], git: { present: false } }));
-  writeFile(c, `${INCEPTION_AREA}/effects.jsonl`, `${intentLine('legacy-install')}\n${outcomeLine('legacy-install')}\n`);
-  writeDescriptor(c, baseDescriptor({ phase: 'verification', git: { present: false, branch: null, commits: 'none' }, nextRecord: 3, approvals: [approval], checkpoints: [checkpointPath] }));
-  const before = snapshot(c.repo);
-  for (const args of [['inspect'], ['classify'], ['verify-approval'], ['checkpoint', 'verify'], ['effect', 'status']]) { const result = cli(c,...args); assert.equal(result.status,0,JSON.stringify(result.output)); }
-  assert.deepEqual(snapshot(c.repo),before);
-  writeFile(c,'app.js','Drift'); assert.equal(cli(c,'checkpoint','verify').status,1);
-  writeFile(c,REGISTER,'Drift'); assert.equal(cli(c,'verify-approval').status,1);
-}));
-
 test('C8 unit begin transports explicit retry lineage and rejects nonexistent predecessors', () => {
   const root = fixtureV2();
   try {

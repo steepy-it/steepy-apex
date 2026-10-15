@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { fixture, area, check, contract, command, governanceInput, script, moduleURL } from './helpers/inception-fixture.mjs';
+import { fixture, area, check, contract, command, governanceInput, script, moduleURL, v1RunDescriptorText } from './helpers/inception-fixture.mjs';
 import { parseRunDescriptorV2, serializeRunDescriptorV2 } from '../scripts/inception-protocol.mjs';
 import { planProjectScaffold } from '../scripts/project-scaffold.mjs';
 import { GOVERNANCE_PENDING, GOVERNANCE_RECEIPT } from '../scripts/inception-governance.mjs';
@@ -253,26 +253,16 @@ for (const boundary of ['after-reserve', 'before-bind', 'after-bind']) test(`M11
   const before = f.snapshot(); f.cli('publish', 'resume', '--reservation', 'terminal'); f.cli('resume-check'); assert.deepEqual(f.snapshot(), before);
 });
 
-function legacy(status) {
-  return { schema: 'steepy-inception-run/v1', runId: 'inc-20261007T120000Z-1a2b3c4d', phase: status === 'complete' ? 'complete' : 'reconnaissance', status,
-    harness: { name: 'codex', capabilities: { shell: true, network: false, browser: false, subagents: false, 'question-tool': false, headless: false } }, git: { present: false, branch: null, commits: 'none' }, nextRecord: status === 'complete' ? 3 : 1, approvalEntry: null, approvals: [], checkpoints: status === 'complete' ? [`${area}/checkpoints/0002.json`] : [], resumeNotes: [], finalCheckpoint: status === 'complete' ? `${area}/checkpoints/0002.json` : null, verification: status === 'complete' ? { path: `${area}/verification/results.md`, bytes: 12, sha256: 'a'.repeat(64) } : null, history: [] };
-}
-for (const status of ['active', 'blocked', 'complete']) for (const [boundary, child] of [['after-mkdir', null], ['after-move', 'project'], ['after-move', 'run.json']]) test(`M12/M13 legacy ${status} archive at ${boundary} ${child ?? ''} preserves raw bytes`, t => {
-  const f = fixture(t, { start: false }); f.json(`${area}/run.json`, legacy(status));
-  f.put(`${area}/project/opaque.md`, 'Historical private report'); f.put(`${area}/foreign.txt`, 'Unowned file');
-  const raw = fs.readFileSync(join(f.root, `${area}/run.json`));
-  f.audit(['inspect'], { forbiddenReads: [`${area}/project`] }); f.cli('classify'); f.refuse('verify-complete');
-  f.run('validate-hub', [f.root]); assert.equal(f.run('stop-hook', [f.root]).stdout, '');
-  const before = f.snapshot(); f.refuse('resume-note', '--next', 'Must not upgrade'); assert.deepEqual(f.snapshot(), before);
-  f.crash('inception-state', `api.abandonRun(root,{reason:'Archive legacy',fault:(event,detail)=>{if(event===${JSON.stringify(boundary)}&&(${JSON.stringify(child)}===null||detail?.name===${JSON.stringify(child)}))process.exit(73)}});`);
-  assert.equal(f.cli('classify').row, 'resume-abandon');
-  f.refuse('start', '--harness', 'codex', '--capabilities', 'shell', '--git-commits', 'allowed');
-  f.audit(['abandon', '--resume'], { forbiddenLists: [area], allowedLists: [`${area}/abandoned/${legacy(status).runId}`], forbiddenReads: [`${area}/project/opaque.md`, `${area}/abandoned/${legacy(status).runId}/project/opaque.md`] });
-  const archive = `${area}/abandoned/${legacy(status).runId}`;
-  assert.deepEqual(fs.readFileSync(join(f.root, archive, 'run.json')), raw);
-  assert.equal(fs.readFileSync(join(f.root, `${area}/foreign.txt`), 'utf8'), 'Unowned file');
-  assert.equal(fs.existsSync(join(f.root, area, 'run.json')), false);
-  const finished = f.snapshot(); f.cli('abandon', '--resume'); assert.deepEqual(f.snapshot(), finished);
+test('M13 an unsupported v1 run format is refused by every command without mutation', t => {
+  for (const status of ['active', 'blocked', 'complete']) {
+    const f = fixture(t, { start: false }); f.put(`${area}/run.json`, v1RunDescriptorText(status));
+    f.put(`${area}/project/opaque.md`, 'Historical private report'); f.put(`${area}/foreign.txt`, 'Unowned file');
+    const before = f.snapshot();
+    f.refuse('inspect'); f.refuse('classify'); f.refuse('verify-complete'); f.refuse('abandon', '--reason', 'Archive');
+    f.refuse('resume-note', '--next', 'Must not upgrade'); f.refuse('start', '--harness', 'codex', '--capabilities', 'shell', '--git-commits', 'allowed');
+    f.run('validate-hub', [f.root], 1); assert.equal(JSON.parse(f.run('stop-hook', [f.root]).stdout).decision, 'block');
+    assert.deepEqual(f.snapshot(), before, status);
+  }
 });
 
 for (const descriptor of ['{"schema":"unknown"}', '{"schema":']) test('M13 unknown or corrupt descriptors fail closed without mutation', t => {

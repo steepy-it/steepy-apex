@@ -142,7 +142,7 @@
 - **Decision register** — the `DR-n` table in the inception project documents; each row
   is one decision with its reason. Discovery walks it row by row.
 - **Effect log** — the append-only record of an inception run's outside effects: an
-  intent before, an outcome after; v2 uses immutable exact-ref records rather than v1 JSONL lines. Distinct from the Gear-4 workflow event log.
+  intent before, an outcome after, each an immutable exact-ref record. Distinct from the Gear-4 workflow event log.
 - **Checkpoint** — an immutable record of an inception run: complete application snapshot digests plus separate Git
   provenance at that moment; never a handpicked file list in v2. Distinct from the autopilot "non-blocking checkpoint" wording
   for a collapsed gate.

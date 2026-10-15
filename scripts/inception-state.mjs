@@ -48,24 +48,11 @@ export const PHASES = Object.freeze([
 ]);
 export const STATUSES = Object.freeze(['active', 'blocked', 'complete']);
 export const CAPABILITIES = Object.freeze(['shell', 'network', 'browser', 'subagents', 'question-tool', 'headless']);
-export const GIT_COMMIT_POLICIES = Object.freeze(['allowed', 'forbidden', 'none']);
 
-export const RUN_SCHEMA_V1 = 'steepy-inception-run/v1';
-// Public creation is v2; v1 remains a read/archive format.
 export const RUN_SCHEMA = RUN_SCHEMA_V2;
 
-const RUN_ID_PATTERN = /^inc-\d{8}T\d{6}Z-[0-9a-f]{8}$/u;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/u;
-const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
-const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const MAX_LINE_CHARACTERS = 1000;
-
-const RUN_KEYS = Object.freeze([
-  'schema', 'runId', 'phase', 'status', 'harness', 'git', 'nextRecord', 'approvalEntry', 'approvals',
-  'checkpoints', 'resumeNotes', 'finalCheckpoint', 'verification', 'history',
-]);
-const HISTORY_KEYS = Object.freeze(['at', 'from', 'to', 'reason']);
-const STATE_KEYS = Object.freeze(['phase', 'status']);
 
 // One record counter is shared by approvals, checkpoints, and resume notes.
 const RECORD_KINDS = Object.freeze({
@@ -73,7 +60,6 @@ const RECORD_KINDS = Object.freeze({
   checkpoints: Object.freeze({ directory: `${INCEPTION_AREA}/checkpoints/`, extension: '.json' }),
   resumeNotes: Object.freeze({ directory: `${RESUME_NOTES_DIR}/`, extension: '.md' }),
 });
-const VERIFICATION_PREFIX = `${INCEPTION_AREA}/verification/`;
 const PROJECT_PREFIX = `${INCEPTION_AREA}/project/`;
 export const DECISION_REGISTER_PATH = `${PROJECT_PREFIX}decision-register.md`;
 
@@ -95,15 +81,6 @@ function expectKeys(value, keys, where) {
   if (actual.length !== keys.length || actual.some((key, index) => key !== keys[index])) {
     fail(`${where} must have exactly the keys ${keys.join(', ')} in that order`);
   }
-}
-
-function expectOneOf(value, allowed, where) {
-  if (!allowed.includes(value)) fail(`${where} must be one of ${allowed.join(' | ')}`);
-}
-
-function isTimestamp(value) {
-  return typeof value === 'string' && TIMESTAMP_PATTERN.test(value)
-    && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 
 // Single-line text (HC5): `assertSafeLine` plus 1..1000 characters.
@@ -132,19 +109,6 @@ function isAreaPathUnder(value, prefix) {
 function recordPath(kind, number) {
   const { directory, extension } = RECORD_KINDS[kind];
   return `${directory}${String(number).padStart(4, '0')}${extension}`;
-}
-
-function recordNumber(kind, value, where) {
-  const { directory, extension } = RECORD_KINDS[kind];
-  if (typeof value !== 'string' || !value.startsWith(directory) || !value.endsWith(extension)) {
-    fail(`${where} must be a path under ${directory}`);
-  }
-  const digits = value.slice(directory.length, value.length - extension.length);
-  const number = /^\d+$/u.test(digits) ? Number(digits) : Number.NaN;
-  if (!Number.isSafeInteger(number) || number < 1 || recordPath(kind, number) !== value) {
-    fail(`${where} must name a zero-padded record number`);
-  }
-  return number;
 }
 
 // Throws when any object in already-valid JSON text repeats a key. `JSON.parse` keeps the last
@@ -188,104 +152,21 @@ function parseStrictJson(text, where) {
   return value;
 }
 
-function deepFreeze(value) {
-  if (value !== null && typeof value === 'object') {
-    for (const child of Object.values(value)) deepFreeze(child);
-    Object.freeze(value);
-  }
-  return value;
-}
-
 // ---------------------------------------------------------------------------
 // Run descriptor (HC3)
 // ---------------------------------------------------------------------------
 
-function validateRecordList(descriptor, kind) {
-  const list = descriptor[kind];
-  if (!Array.isArray(list)) fail(`${kind} must be an array`);
-  let previous = 0;
-  list.forEach((entry, index) => {
-    const number = recordNumber(kind, entry, `${kind}[${index}]`);
-    if (number >= descriptor.nextRecord) fail(`${kind}[${index}] must be below nextRecord`);
-    if (number <= previous) fail(`${kind} must be strictly increasing`);
-    previous = number;
-  });
-}
-
-function validateState(state, where) {
-  expectKeys(state, STATE_KEYS, where);
-  expectOneOf(state.phase, PHASES, `${where}.phase`);
-  expectOneOf(state.status, STATUSES, `${where}.status`);
-}
-
-function validateRunDescriptor(d) {
-  expectKeys(d, RUN_KEYS, 'run descriptor');
-  if (d.schema !== RUN_SCHEMA_V1) fail(`schema must be ${RUN_SCHEMA_V1}`);
-  if (typeof d.runId !== 'string' || !RUN_ID_PATTERN.test(d.runId)) fail('runId is malformed');
-  expectOneOf(d.phase, PHASES, 'phase');
-  expectOneOf(d.status, STATUSES, 'status');
-  if ((d.phase === 'complete') !== (d.status === 'complete')) {
-    fail('phase complete and status complete must go together');
-  }
-
-  expectKeys(d.harness, ['name', 'capabilities'], 'harness');
-  if (typeof d.harness.name !== 'string' || !SLUG_PATTERN.test(d.harness.name)) {
-    fail('harness.name must be a safe slug');
-  }
-  expectKeys(d.harness.capabilities, CAPABILITIES, 'harness.capabilities');
-  for (const name of CAPABILITIES) {
-    if (typeof d.harness.capabilities[name] !== 'boolean') fail(`harness.capabilities.${name} must be a boolean`);
-  }
-
-  expectKeys(d.git, ['present', 'branch', 'commits'], 'git');
-  if (typeof d.git.present !== 'boolean') fail('git.present must be a boolean');
-  if (d.git.branch !== null && typeof d.git.branch !== 'string') fail('git.branch must be a string or null');
-  expectOneOf(d.git.commits, GIT_COMMIT_POLICIES, 'git.commits');
-  if ((d.git.commits === 'none') === d.git.present) fail('git.commits is none exactly when Git is absent');
-
-  if (!Number.isSafeInteger(d.nextRecord) || d.nextRecord < 1) fail('nextRecord must be a safe integer >= 1');
-  for (const kind of Object.keys(RECORD_KINDS)) validateRecordList(d, kind);
-  if (d.approvalEntry !== null
-    && (!Number.isSafeInteger(d.approvalEntry) || d.approvalEntry < 0 || d.approvalEntry > d.approvals.length)) {
-    fail('approvalEntry must be null or an integer in 0..approvals.length');
-  }
-  if (d.finalCheckpoint !== null && !d.checkpoints.includes(d.finalCheckpoint)) {
-    fail('finalCheckpoint must be null or a recorded checkpoint');
-  }
-  if (d.verification !== null) {
-    expectKeys(d.verification, ['path', 'bytes', 'sha256'], 'verification');
-    const { path, bytes, sha256 } = d.verification;
-    if (!isAreaPathUnder(path, VERIFICATION_PREFIX)) fail(`verification.path must be a safe path under ${VERIFICATION_PREFIX}`);
-    if (!Number.isSafeInteger(bytes) || bytes < 0) fail('verification.bytes must be a safe integer >= 0');
-    if (typeof sha256 !== 'string' || !SHA256_PATTERN.test(sha256)) fail('verification.sha256 must be lowercase hex');
-  }
-  if (d.status === 'complete' && (d.finalCheckpoint === null || d.verification === null)) {
-    fail('a complete run must bind finalCheckpoint and verification');
-  }
-
-  if (!Array.isArray(d.history)) fail('history must be an array');
-  d.history.forEach((entry, index) => {
-    const where = `history[${index}]`;
-    expectKeys(entry, HISTORY_KEYS, where);
-    if (!isTimestamp(entry.at)) fail(`${where}.at must be an ISO timestamp`);
-    validateState(entry.from, `${where}.from`);
-    validateState(entry.to, `${where}.to`);
-    if (!isSafeText(entry.reason)) fail(`${where}.reason must be single-line text`);
-  });
-}
-
 export function parseRunDescriptor(text) {
   if (typeof text !== 'string') fail('run descriptor must be text');
   const value = parseStrictJson(text, 'run descriptor');
-  if (value?.schema === RUN_SCHEMA_V2) return parseRunDescriptorV2(text);
-  if (value?.schema !== RUN_SCHEMA_V1) fail('run descriptor schema is unsupported');
-  validateRunDescriptor(value);
-  return deepFreeze(value);
+  if (value?.schema !== RUN_SCHEMA_V2) {
+    fail(`run descriptor schema ${JSON.stringify(value?.schema ?? null)} is unsupported; supported: ${RUN_SCHEMA_V2}`);
+  }
+  return parseRunDescriptorV2(text);
 }
 
 export function serializeRunDescriptor(descriptor) {
-  if (descriptor?.schema === RUN_SCHEMA_V2) return serializeRunDescriptorV2(descriptor);
-  return `${JSON.stringify(descriptor, null, 2)}\n`;
+  return serializeRunDescriptorV2(descriptor);
 }
 
 // `capabilities` lists the enabled capability names; every other capability is recorded false.
@@ -294,7 +175,6 @@ export function createRunDescriptor(options) {
 }
 
 export function nextStepFor(descriptor) {
-  if (descriptor.schema === RUN_SCHEMA_V1) return 'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available';
   if (descriptor.pending) return `publish resume --reservation ${descriptor.pending.id}; do not rerun the application operation`;
   if (descriptor.status === 'complete') return 'verify-complete before running the init skill, then the discovery skill with the inception source';
   if (descriptor.activeUnit !== null) return `observe unit ${descriptor.activeUnit}; unit finish, reconcile, or close-incomplete only after writer stop`;
@@ -361,17 +241,6 @@ function forEachChunk(fd, visit) {
   while ((count = readSync(fd, buffer, 0, buffer.length, null)) > 0) visit(buffer.subarray(0, count));
 }
 
-// Streams the bytes: `bytes` plus the lowercase hex `sha256` (HC4).
-function digestFd(fd) {
-  const hash = createHash('sha256');
-  let bytes = 0;
-  forEachChunk(fd, (chunk) => {
-    hash.update(chunk);
-    bytes += chunk.length;
-  });
-  return { bytes, sha256: hash.digest('hex') };
-}
-
 // Reads an area file that must be an ordinary, non-symlink file with exactly one link (PD3c).
 function readAreaFile(root, relative) {
   const absolute = join(root, relative);
@@ -388,41 +257,6 @@ function readAreaFile(root, relative) {
   } finally {
     closeSync(fd);
   }
-}
-
-// Observes one file without throwing on what it finds. `missing`: the file or a parent directory
-// is absent. `unsafe` (with a reason): a parent is not a real directory, or the file is not an
-// ordinary non-symlink file (with exactly one link when `singleLink`). Otherwise `present` with
-// the file's size and digest. Area files need `singleLink` (PD3c); application files take any
-// link count.
-function inspectFile(root, relative, { singleLink }) {
-  const segments = relative.split('/');
-  for (let index = 1; index < segments.length; index += 1) {
-    const parent = segments.slice(0, index).join('/');
-    const stat = lstatOrNull(join(root, parent));
-    if (stat === null) return { state: 'missing' };
-    if (stat.isSymbolicLink() || !stat.isDirectory()) return { state: 'unsafe', reason: `${parent} is not a real directory` };
-  }
-  const absolute = join(root, relative);
-  const stat = lstatOrNull(absolute);
-  if (stat === null) return { state: 'missing' };
-  if (!stat.isFile()) return { state: 'unsafe', reason: `${relative} is not an ordinary file` };
-  if (singleLink && stat.nlink !== 1) return { state: 'unsafe', reason: `${relative} has more than one hard link` };
-  const fd = openObserved(absolute, stat);
-  if (fd === null) return { state: 'unsafe', reason: `${relative} changed while it was read` };
-  try {
-    return { state: 'present', ...digestFd(fd) };
-  } finally {
-    closeSync(fd);
-  }
-}
-
-// The `{ path, bytes, sha256 }` digest of a file that must be present and safe; refuses otherwise.
-function digestFile(root, relative, { singleLink }) {
-  const observed = inspectFile(root, relative, { singleLink });
-  if (observed.state === 'missing') throw refuse(`${relative} does not exist`);
-  if (observed.state === 'unsafe') throw refuse(observed.reason);
-  return { path: relative, bytes: observed.bytes, sha256: observed.sha256 };
 }
 
 function message(error) {
@@ -518,24 +352,18 @@ function classifyCommand(root, values) {
 }
 
 // Version inspection reads the descriptor only; it neither discovers nor opens its refs.
-const LEGACY_ACTIONS = Object.freeze(['classify', 'inspect', 'verify-approval', 'checkpoint verify', 'effect status', 'abandon']);
-// Inspect exposes the same legacy read/archive policy used by command admission.
 function inspectCommand(root) {
-  const descriptor = loadDescriptor(root, { allowV2: true });
-  const legacy = descriptor.schema === RUN_SCHEMA_V1;
+  const descriptor = loadDescriptor(root);
   const inputPaths = new Set([RUN_DESCRIPTOR_PATH]);
   const collect = value => {
     if (value === null || typeof value !== 'object') return;
     if (typeof value.path === 'string' && Object.hasOwn(value, 'bytes') && Object.hasOwn(value, 'sha256')) inputPaths.add(value.path);
     for (const child of Object.values(value)) collect(child);
   };
-  if (legacy) {
-    for (const key of ['approvals', 'checkpoints', 'resumeNotes']) for (const path of descriptor[key]) inputPaths.add(path);
-  }
   collect(descriptor);
   return { ok: true, fields: {
-    format: descriptor.schema, legacy, runId: descriptor.runId, phase: descriptor.phase, status: descriptor.status,
-    allowedActions: legacy ? [...LEGACY_ACTIONS] : ['classify', 'inspect', 'resume-check', 'verify-approval', 'checkpoint verify', 'effect status', 'verify-complete', ...(descriptor.pending ? ['publish resume'] : descriptor.status === 'complete' ? ['resume-note', 'abandon'] : descriptor.activeUnit ? ['unit finish', 'unit reconcile', 'unit close-incomplete', 'effect intent', 'effect outcome', 'effect reconcile', 'block resolve'] : ['unit begin', 'block resolve', 'transition', 'approve', 'checkpoint create', 'verification begin', 'verification resume', 'verification status', 'verification attest', 'verification summarize', 'resume-note', 'abandon'])],
+    format: descriptor.schema, runId: descriptor.runId, phase: descriptor.phase, status: descriptor.status,
+    allowedActions: ['classify', 'inspect', 'resume-check', 'verify-approval', 'checkpoint verify', 'effect status', 'verify-complete', ...(descriptor.pending ? ['publish resume'] : descriptor.status === 'complete' ? ['resume-note', 'abandon'] : descriptor.activeUnit ? ['unit finish', 'unit reconcile', 'unit close-incomplete', 'effect intent', 'effect outcome', 'effect reconcile', 'block resolve'] : ['unit begin', 'block resolve', 'transition', 'approve', 'checkpoint create', 'verification begin', 'verification resume', 'verification status', 'verification attest', 'verification summarize', 'resume-note', 'abandon'])],
     inputPaths: [...inputPaths], nextStep: nextStepFor(descriptor),
   } };
 }
@@ -614,14 +442,10 @@ function writeDescriptor(root, descriptor, replaceFile) {
   replaceFile(join(root, RUN_DESCRIPTOR_PATH), bytes);
 }
 
-function loadDescriptor(root, { allowV2 = false } = {}) {
+function loadDescriptor(root) {
   const observed = observeRun(root);
   if (observed.run === 'none') throw refuse(`no inception run: ${RUN_DESCRIPTOR_PATH} does not exist`);
   if (observed.run === 'invalid') throw refuse(observed.error);
-  // Legacy readers must not mistake v2 Ref objects for v1 path strings.
-  if (!allowV2 && observed.descriptor.schema === RUN_SCHEMA_V2) {
-    throw refuse('v2 operation is not yet supported by this legacy command');
-  }
   return observed.descriptor;
 }
 
@@ -835,18 +659,6 @@ function assertAreaPath(value, option, prefix = `${INCEPTION_AREA}/`) {
   return value;
 }
 
-// An existing area file: every directory on the way is real, the file is ordinary with one link.
-function assertAreaFile(root, relative) {
-  const segments = relative.split('/');
-  for (let index = 1; index < segments.length; index += 1) {
-    if (!realDirectory(root, segments.slice(0, index).join('/'))) throw refuse(`${relative} does not exist`);
-  }
-  const stat = lstatOrNull(join(root, relative));
-  if (stat === null) throw refuse(`${relative} does not exist`);
-  if (!stat.isFile()) throw refuse(`${relative} is not an ordinary file`);
-  if (stat.nlink !== 1) throw refuse(`${relative} has more than one hard link`);
-}
-
 function renderResumeNote({ number, descriptor, next, needs, note }) {
   return [
     `# Inception resume note ${String(number).padStart(4, '0')}`,
@@ -889,88 +701,6 @@ function resumeNoteCommand(root, values) {
 // approve and verify-approval (HC12)
 // ---------------------------------------------------------------------------
 
-export const APPROVAL_SCHEMA = 'steepy-inception-approval/v1';
-const APPROVAL_KEYS = Object.freeze(['schema', 'runId', 'record', 'at', 'statement', 'documents']);
-const DIGEST_KEYS = Object.freeze(['path', 'bytes', 'sha256']);
-const MAX_STATEMENT_CHARACTERS = 8000;
-const STATEMENT_FORBIDDEN = /[\x00-\x08\x0B-\x1F\x7F]/u;
-
-// `--statement` (HC5): 1..8000 characters; newline and tab are the only control characters.
-function isStatement(value) {
-  if (typeof value !== 'string' || STATEMENT_FORBIDDEN.test(value)) return false;
-  const length = [...value].length;
-  return length >= 1 && length <= MAX_STATEMENT_CHARACTERS;
-}
-
-function validateDigestList(list, where, isPath) {
-  if (!Array.isArray(list) || list.length === 0) fail(`${where} must be a non-empty array`);
-  list.forEach((entry, index) => {
-    const at = `${where}[${index}]`;
-    expectKeys(entry, DIGEST_KEYS, at);
-    if (!isPath(entry.path)) fail(`${at}.path is not an allowed path`);
-    if (!Number.isSafeInteger(entry.bytes) || entry.bytes < 0) fail(`${at}.bytes must be a safe integer >= 0`);
-    if (typeof entry.sha256 !== 'string' || !SHA256_PATTERN.test(entry.sha256)) fail(`${at}.sha256 must be lowercase hex`);
-    if (index > 0 && !(list[index - 1].path < entry.path)) fail(`${where} must be sorted by path without duplicates`);
-  });
-}
-
-function parseApprovalRecord(text, { runId, number }) {
-  const value = parseStrictJson(text, 'approval record');
-  expectKeys(value, APPROVAL_KEYS, 'approval record');
-  if (value.schema !== APPROVAL_SCHEMA) fail(`schema must be ${APPROVAL_SCHEMA}`);
-  if (value.runId !== runId) fail(`runId must be ${runId}`);
-  if (value.record !== number) fail(`record must be ${number}`);
-  if (!isTimestamp(value.at)) fail('at must be an ISO timestamp');
-  if (!isStatement(value.statement)) fail('statement is not a valid statement');
-  validateDigestList(value.documents, 'documents', (path) => isAreaPathUnder(path, PROJECT_PREFIX));
-  if (!value.documents.some((entry) => entry.path === DECISION_REGISTER_PATH)) fail(`documents must include ${DECISION_REGISTER_PATH}`);
-  return value;
-}
-
-// Reads and validates a bound record; any problem with the record itself is a refusal.
-function readRecord(root, descriptor, kind, path, parse) {
-  const number = recordNumber(kind, path, path);
-  assertAreaFile(root, path);
-  const text = decodeAreaText(readAreaFile(root, path), path);
-  try {
-    return parse(text, { runId: descriptor.runId, number });
-  } catch (error) {
-    throw refuse(`${path} is invalid: ${message(error)}`);
-  }
-}
-
-// The latest bound record of `kind`, or the requested one, which must be bound.
-function selectBoundRecord(descriptor, kind, requested, option) {
-  const noun = kind === 'approvals' ? 'approval' : 'checkpoint';
-  const bound = descriptor[kind];
-  if (bound.length === 0) throw refuse(`no ${noun} is recorded`);
-  if (requested === undefined) return bound.at(-1);
-  assertAreaPath(requested, option, RECORD_KINDS[kind].directory);
-  if (!bound.includes(requested)) throw refuse(`${option} ${requested} is not a recorded ${noun}`);
-  return requested;
-}
-
-function approvalDivergences(root, record) {
-  const divergences = [];
-  for (const document of record.documents) {
-    const observed = inspectFile(root, document.path, { singleLink: true });
-    if (observed.state !== 'present') divergences.push({ path: document.path, kind: observed.state });
-    else if (observed.bytes !== document.bytes || observed.sha256 !== document.sha256) {
-      divergences.push({ path: document.path, kind: 'changed' });
-    }
-  }
-  return divergences;
-}
-
-function verifyApprovalRecord(root, descriptor, path) {
-  const record = readRecord(root, descriptor, 'approvals', path, parseApprovalRecord);
-  return { record, divergences: approvalDivergences(root, record) };
-}
-
-function describeDivergences(divergences) {
-  return divergences.map(({ path, kind }) => (path === undefined ? kind : `${path} ${kind}`)).join(', ');
-}
-
 // The helper stores the statement it is given; a record is not proof that a human approved.
 export function approveRun(repoRoot, { statement, documents = [], contract, reservation, expectedRevision, fault } = {}) {
   const root = resolveRepoRoot(repoRoot); v2Descriptor(root);
@@ -978,19 +708,12 @@ export function approveRun(repoRoot, { statement, documents = [], contract, rese
 }
 
 function approveCommand(root, values) {
-  if (loadDescriptor(root, { allowV2: true }).schema === RUN_SCHEMA_V2 && values.contract === undefined) throw usage('--contract is required for v2 approval');
+  if (values.contract === undefined) throw usage('--contract is required for approval');
   return { ok: true, fields: approveRun(root, { statement: values.statement, documents: values.document, contract: values.contract }) };
 }
 
 function verifyApprovalCommand(root, values) {
-  if (loadDescriptor(root, { allowV2: true }).schema === RUN_SCHEMA_V2) return { ok: true, fields: verifyApprovalV2(root, { approval: values.approval }) };
-  const descriptor = loadDescriptor(root);
-  const approval = selectBoundRecord(descriptor, 'approvals', values.approval, '--approval');
-  const { record, divergences } = verifyApprovalRecord(root, descriptor, approval);
-  if (divergences.length > 0) {
-    return { ok: false, fields: { approval, divergences }, error: `${approval} diverges: ${describeDivergences(divergences)}` };
-  }
-  return { ok: true, fields: { approval, documents: record.documents } };
+  return { ok: true, fields: verifyApprovalV2(root, { approval: values.approval }) };
 }
 
 // HC9 gate for approval -> bootstrap: a new approval since entering approval, and it is clean.
@@ -1000,254 +723,31 @@ function verifyApprovalCommand(root, values) {
 // effect intent, outcome, status (HC13)
 // ---------------------------------------------------------------------------
 
-export const EFFECT_LOG_PATH = `${INCEPTION_AREA}/effects.jsonl`;
-export const EFFECT_SCHEMA = 'steepy-inception-effect/v1';
-export const EFFECT_KINDS = Object.freeze(['install', 'generator', 'migration', 'external-resource', 'deploy', 'commit', 'remote']);
-export const EFFECT_RESULTS = Object.freeze(['succeeded', 'failed']);
-// Remote operations and deploys are always authorized per operation (D11).
-const AUTHORIZED_KINDS = Object.freeze(['remote', 'deploy']);
-const EFFECT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
-const INTENT_KEYS = Object.freeze(['schema', 'type', 'id', 'kind', 'summary', 'authorization', 'phase', 'at']);
-const OUTCOME_KEYS = Object.freeze(['schema', 'type', 'id', 'result', 'observed', 'phase', 'at']);
-
-function isEffectId(value) {
-  return typeof value === 'string' && EFFECT_ID_PATTERN.test(value);
-}
-
-function parseEffectLine(text) {
-  const value = parseStrictJson(text, 'effect line');
-  if (!isPlainObject(value)) fail('an effect line must be an object');
-  if (value.type === 'intent') {
-    expectKeys(value, INTENT_KEYS, 'intent');
-    expectOneOf(value.kind, EFFECT_KINDS, 'kind');
-    if (!isSafeText(value.summary)) fail('summary must be single-line text');
-    if (value.authorization !== null && !isSafeText(value.authorization)) fail('authorization must be null or single-line text');
-    if (AUTHORIZED_KINDS.includes(value.kind) && value.authorization === null) fail(`a ${value.kind} intent needs an authorization`);
-  } else if (value.type === 'outcome') {
-    expectKeys(value, OUTCOME_KEYS, 'outcome');
-    expectOneOf(value.result, EFFECT_RESULTS, 'result');
-    if (!isSafeText(value.observed)) fail('observed must be single-line text');
-  } else {
-    fail('type must be intent or outcome');
-  }
-  if (value.schema !== EFFECT_SCHEMA) fail(`schema must be ${EFFECT_SCHEMA}`);
-  if (!isEffectId(value.id)) fail('id is malformed');
-  expectOneOf(value.phase, PHASES, 'phase');
-  if (!isTimestamp(value.at)) fail('at must be an ISO timestamp');
-  // Only the helper writes the log, always as compact `JSON.stringify` text: any other spelling
-  // (whitespace, a carriage return) means the log was edited elsewhere.
-  if (JSON.stringify(value) !== text) fail('an effect line must be compact JSON');
-  return value;
-}
-
-// Parses the whole log strictly (HC13): every line is one intent or outcome object ending in
-// `\n`, an outcome follows its intent, and each id has at most one of each. An absent log is
-// empty. Returns the parsed size and the effects in intent order.
-function readEffectLog(root) {
-  if (lstatOrNull(join(root, EFFECT_LOG_PATH)) === null) return { exists: false, size: 0, effects: new Map() };
-  const bytes = readAreaFile(root, EFFECT_LOG_PATH);
-  const effects = new Map();
-  let start = 0;
-  let line = 0;
-  while (start < bytes.length) {
-    line += 1;
-    const end = bytes.indexOf(0x0a, start);
-    const malformed = () => refuse(`effect log is malformed at line ${line}`);
-    if (end === -1) throw malformed();
-    let entry;
-    try {
-      entry = parseEffectLine(UTF8.decode(bytes.subarray(start, end)));
-    } catch {
-      throw malformed();
-    }
-    const known = effects.get(entry.id);
-    if (entry.type === 'intent') {
-      if (known !== undefined) throw malformed();
-      effects.set(entry.id, { id: entry.id, kind: entry.kind, result: null });
-    } else {
-      if (known === undefined || known.result !== null) throw malformed();
-      known.result = entry.result;
-    }
-    start = end + 1;
-  }
-  return { exists: true, size: bytes.length, effects };
-}
-
-// Appends one line to the log that was just parsed: an absent log is created exclusively, an
-// existing one is opened append-only, never through a symlink, and must still be the parsed file.
-
-
-function effectStatus(log) {
-  const effects = [...log.effects.values()].map(({ id, kind, result }) => (
-    result === null ? { id, kind, state: 'uncertain' } : { id, kind, state: 'concluded', result }
-  ));
-  return { effects, uncertain: effects.filter((effect) => effect.state === 'uncertain').length };
-}
-
-
-
-
-
-
-
-
-
 function effectIntentCommand(root, values) {
-  if (!values.input) throw refuse('v2 effect requires --input; legacy effect flags are unsupported');
+  if (!values.input) throw refuse('effect intent requires --input');
   return { ok: true, fields: recordEffectIntent(root, { id: values.id, input: v2Input(root, values.input) }) };
 }
 
 function effectOutcomeCommand(root, values) {
-  if (!values.input) throw refuse('v2 effect requires --input; legacy effect flags are unsupported');
+  if (!values.input) throw refuse('effect outcome requires --input');
   return { ok: true, fields: recordEffectOutcome(root, { id: values.id, input: v2Input(root, values.input) }) };
 }
 
 function effectStatusCommand(root) {
-  if (loadDescriptor(root, { allowV2: true }).schema === RUN_SCHEMA_V2) return { ok: true, fields: effectStatusV2(root) };
-  loadDescriptor(root);
-  return { ok: true, fields: effectStatus(readEffectLog(root)) };
+  return { ok: true, fields: effectStatusV2(root) };
 }
 
 // ---------------------------------------------------------------------------
 // checkpoint create and verify (HC10, HC14)
 // ---------------------------------------------------------------------------
 
-export const CHECKPOINT_SCHEMA = 'steepy-inception-checkpoint/v1';
-const CHECKPOINT_KEYS = Object.freeze(['schema', 'runId', 'record', 'at', 'label', 'phase', 'files', 'git']);
-const GIT_STATE_KEYS = Object.freeze(['present', 'branch', 'head', 'status']);
-const HEAD_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
-const MAX_APPLICATION_PATH_BYTES = 4096;
-
-// Application paths (HC5). `assertSafeRelPath`'s character set would refuse ordinary names such
-// as `app/[id]/page.tsx`, so this validator only refuses what is never a project file path. The
-// area check ignores case, so a case-insensitive filesystem cannot alias a run file.
-function applicationPathProblem(value) {
-  if (typeof value !== 'string' || value.length === 0) return 'must be a non-empty path';
-  if (Buffer.byteLength(value, 'utf8') > MAX_APPLICATION_PATH_BYTES) return `must be at most ${MAX_APPLICATION_PATH_BYTES} UTF-8 bytes`;
-  if (/[\x00-\x1F\x7F]/u.test(value)) return 'must not contain a control character';
-  if (value.startsWith('/')) return 'must be relative';
-  if (value.includes('\\')) return 'must not contain a backslash';
-  if (value.endsWith('/')) return 'must not end with /';
-  if (value.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')) {
-    return 'must not contain an empty, . or .. segment';
-  }
-  const folded = value.toLowerCase();
-  if (folded === INCEPTION_AREA || folded.startsWith(`${INCEPTION_AREA}/`)) return `must not be under ${INCEPTION_AREA}/`;
-  return null;
-}
-
-function isApplicationPath(value) {
-  return applicationPathProblem(value) === null;
-}
-
-
-
-// Branch, HEAD, and sorted porcelain status (HC10), or `{ present: false }` without Git.
-// `--no-optional-locks` keeps `git status` from refreshing the index, so verifying never writes.
-function observeGitState(root, env, lease) {
-  const { present, branch } = observeGit(root, env);
-  if (!present) return { present: false };
-  const head = runGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD'], env);
-  if (head.error) throw refuse(`git could not be run: ${head.error.message}`);
-  const status = runGit(root, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all'], env);
-  if (status.error) throw refuse(`git could not be run: ${status.error.message}`);
-  if (status.status !== 0) throw refuse(`git status failed: ${status.stderr.trim().split('\n')[0]}`);
-  return {
-    present: true,
-    branch,
-    head: head.status === 0 ? head.stdout.trim() : null,
-    status: status.stdout.split('\0').filter((entry) => entry !== ''
-      && !(ACTIVE_INCEPTION_LEASES.get(lease) === root && entry === '?? .steepy-project-scaffold.lock/owner.json')).sort(),
-  };
-}
-
-function validateGitState(git) {
-  if (isPlainObject(git) && git.present === false) {
-    expectKeys(git, ['present'], 'git');
-    return;
-  }
-  expectKeys(git, GIT_STATE_KEYS, 'git');
-  if (git.present !== true) fail('git.present must be a boolean');
-  if (git.branch !== null && (typeof git.branch !== 'string' || git.branch === '')) fail('git.branch must be a non-empty string or null');
-  if (git.head !== null && (typeof git.head !== 'string' || !HEAD_PATTERN.test(git.head))) fail('git.head must be a commit id or null');
-  if (!Array.isArray(git.status)) fail('git.status must be an array');
-  git.status.forEach((entry, index) => {
-    if (typeof entry !== 'string' || entry === '') fail(`git.status[${index}] must be a non-empty string`);
-    if (index > 0 && git.status[index - 1] > entry) fail('git.status must be sorted');
-  });
-}
-
-function parseCheckpointRecord(text, { runId, number }) {
-  const value = parseStrictJson(text, 'checkpoint record');
-  expectKeys(value, CHECKPOINT_KEYS, 'checkpoint record');
-  if (value.schema !== CHECKPOINT_SCHEMA) fail(`schema must be ${CHECKPOINT_SCHEMA}`);
-  if (value.runId !== runId) fail(`runId must be ${runId}`);
-  if (value.record !== number) fail(`record must be ${number}`);
-  if (!isTimestamp(value.at)) fail('at must be an ISO timestamp');
-  if (!isSafeText(value.label)) fail('label must be single-line text');
-  expectOneOf(value.phase, PHASES, 'phase');
-  validateDigestList(value.files, 'files', isApplicationPath);
-  validateGitState(value.git);
-  return value;
-}
-
-// The `--files-from` list: an area file, strict UTF-8, one application path per line, blank
-// lines ignored.
-
-
-function sameStrings(left, right) {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-// Every divergence between a checkpoint record and the current files and Git state (HC14).
-function checkpointDivergences(root, record, env) {
-  const divergences = [];
-  for (const file of record.files) {
-    const observed = inspectFile(root, file.path, { singleLink: false });
-    if (observed.state === 'missing') divergences.push({ kind: 'file-missing', path: file.path });
-    else if (observed.state === 'unsafe') divergences.push({ kind: 'file-unsafe', path: file.path });
-    else if (observed.bytes !== file.bytes || observed.sha256 !== file.sha256) {
-      divergences.push({
-        kind: 'file-changed',
-        path: file.path,
-        expected: { bytes: file.bytes, sha256: file.sha256 },
-        observed: { bytes: observed.bytes, sha256: observed.sha256 },
-      });
-    }
-  }
-  const git = observeGitState(root, env);
-  if (git.present !== record.git.present) {
-    divergences.push({ kind: 'git-presence', expected: record.git.present, observed: git.present });
-  } else if (git.present) {
-    if (git.branch !== record.git.branch) divergences.push({ kind: 'branch', expected: record.git.branch, observed: git.branch });
-    if (git.head !== record.git.head) divergences.push({ kind: 'head', expected: record.git.head, observed: git.head });
-    if (!sameStrings(git.status, record.git.status)) divergences.push({ kind: 'status', expected: record.git.status, observed: git.status });
-  }
-  return divergences;
-}
-
-function verifyCheckpointRecord(root, descriptor, path, env) {
-  const record = readRecord(root, descriptor, 'checkpoints', path, parseCheckpointRecord);
-  return { record, divergences: checkpointDivergences(root, record, env) };
-}
-
-
-
-
-
 function checkpointCreateCommand(root, values) {
   return { ok: true, fields: createCheckpoint(root, { label: values.label, files: values.file, filesFrom: values['files-from'] }) };
 }
 
 function checkpointVerifyCommand(root, values) {
-  if (loadDescriptor(root, { allowV2: true }).schema === RUN_SCHEMA_V2) { const result = verifyCheckpointV2(root, values.checkpoint); return { ok: result.ok, fields: result, error: result.ok ? undefined : 'checkpoint drift' }; }
-  const descriptor = loadDescriptor(root);
-  const checkpoint = selectBoundRecord(descriptor, 'checkpoints', values.checkpoint, '--checkpoint');
-  const { divergences } = verifyCheckpointRecord(root, descriptor, checkpoint, process.env);
-  if (divergences.length > 0) {
-    return { ok: false, fields: { checkpoint, divergences }, error: `${checkpoint} diverges: ${describeDivergences(divergences)}` };
-  }
-  return { ok: true, fields: { checkpoint } };
+  const result = verifyCheckpointV2(root, values.checkpoint);
+  return { ok: result.ok, fields: result, error: result.ok ? undefined : 'checkpoint drift' };
 }
 
 // HC9 gate for verification -> complete. `--checkpoint` is the last recorded checkpoint and
@@ -1384,8 +884,8 @@ function abandonRunUnlocked(repoRoot, { reason, resume = false, now = new Date()
     if (intent.status === 'complete') return { archive: observed.archive };
   } else {
     if (observed?.intent.status === 'prepared') throw refuse('pending abandon intent: use --resume');
-    const descriptor = loadDescriptor(root, { allowV2: true });
-    if (descriptor.schema === RUN_SCHEMA_V2 && descriptor.activeUnit !== null) throw refuse(`activeUnit ${descriptor.activeUnit} excludes the abandon writer; close or reconcile that unit first`);
+    const descriptor = loadDescriptor(root);
+    if (descriptor.activeUnit !== null) throw refuse(`activeUnit ${descriptor.activeUnit} excludes the abandon writer; close or reconcile that unit first`);
     const archive = `${ABANDONED_DIR}/${descriptor.runId}`;
     if (archiveEntry(root, archive)) throw refuse(`${archive} exists without this operation intent`);
     const children = RUN_CHILDREN.flatMap(name => {
@@ -1471,18 +971,10 @@ function abandonCommand(root, values) {
 // ---------------------------------------------------------------------------
 
 // Start and archive preflight before acquiring a lease, then repeat under lock.
-const ACTIVE_INCEPTION_LEASES = new WeakMap();
 function withInceptionLease(repoRoot, options, operation) {
   const root = resolveRepoRoot(repoRoot);
   operation(root, options, true);
-  return withProjectScaffoldLock({ hubRoot: root }, lease => {
-    // This exemption applies only to legacy v1 Git provenance (observeGitState).
-    // V2 application snapshots recognize the lease family structurally in
-    // inception-snapshot.mjs.
-    ACTIVE_INCEPTION_LEASES.set(lease, root);
-    try { return operation(root, options, false, lease); }
-    finally { ACTIVE_INCEPTION_LEASES.delete(lease); }
-  });
+  return withProjectScaffoldLock({ hubRoot: root }, () => operation(root, options, false));
 }
 
 function assertV2Options({ reservation, expectedRevision, fault }) {
@@ -1491,9 +983,7 @@ function assertV2Options({ reservation, expectedRevision, fault }) {
   if (fault !== undefined && typeof fault !== 'function') throw refuse('fault must be a synchronous API hook');
 }
 function v2Descriptor(root) {
-  const descriptor = loadDescriptor(root, { allowV2: true });
-  if (descriptor.schema !== RUN_SCHEMA_V2) throw refuse('legacy descriptor: this operation requires v2');
-  return descriptor;
+  return loadDescriptor(root);
 }
 function withV2SnapshotLease(root, observed, action) {
   const currentDescriptor = () => {
@@ -1512,7 +1002,7 @@ function withV2SnapshotLease(root, observed, action) {
 function withV2Mutation(repoRoot, options, action) {
   assertV2Options(options);
   const root = resolveRepoRoot(repoRoot);
-  const observed = v2Descriptor(root); // Form/legacy validation precedes the lease.
+  const observed = v2Descriptor(root); // Form validation precedes the lease.
   const expectedRevision = options.expectedRevision ?? observed.revision;
   return withV2SnapshotLease(root, observed, descriptor => {
     if (descriptor.runId !== observed.runId || descriptor.revision !== expectedRevision) throw refuse('incompatible descriptor revision');
@@ -2701,6 +2191,11 @@ const REPO_ROOT_OPTION = Object.freeze({ type: 'string' });
 const STRING_OPTION = Object.freeze({ type: 'string' });
 const GIT_COMMITS_CHOICES = Object.freeze(['allowed', 'forbidden']);
 
+// Commands that handle a missing or unsupported descriptor themselves: start needs no run,
+// classify reports invalid-state, abandon --resume runs after run.json has moved, and
+// verify-complete returns its read-only { ok: false, reason } refusal.
+const ADMISSION_EXEMPT = Object.freeze(['start', 'classify', 'abandon', 'verify-complete']);
+
 const COMMANDS = Object.freeze({
   block: { subcommands: {
     resolve: { options: { 'repo-root': REPO_ROOT_OPTION, id: STRING_OPTION, statement: STRING_OPTION, evidence: { type: 'string', multiple: true } }, required: ['id', 'statement', 'evidence'], enums: {}, run: (root, values) => ({ ok: true, fields: resolveBlock(root, { id: values.id, statement: values.statement, evidence: values.evidence }) }) },
@@ -2921,8 +2416,7 @@ export function main(argv = process.argv.slice(2)) {
     const values = parseCommandArgs(argv, resolved.spec, resolved.positionals);
     const root = resolveRepoRoot(values['repo-root']);
     // Admission precedes command-specific input reads, writer leases and files.
-    // verify-complete returns its read-only legacy refusal in the C6 shape.
-    if (!['start', 'verify-complete', ...LEGACY_ACTIONS].includes(command)) v2Descriptor(root);
+    if (!ADMISSION_EXEMPT.includes(command)) v2Descriptor(root);
     result = resolved.spec.run(root, values);
     exitCode = result.ok ? 0 : 1;
   } catch (error) {

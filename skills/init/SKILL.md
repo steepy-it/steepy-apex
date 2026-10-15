@@ -85,8 +85,8 @@ Check for `.apex/_INDEX.md` before generating anything:
 
 Before changing any files, check only the exact `.apex/inception/run.json` descriptor when it exists.
 A descriptor with schema `steepy-inception-run/v2` and phase/status `complete` is eligible for the
-first post-complete governance receipt in Step 3; a legacy run is never certified or migrated.
-Never list `.apex/inception/` or read its document bodies for init.
+first post-complete governance receipt in Step 3; an unsupported run format is never certified or
+migrated. Never list `.apex/inception/` or read its document bodies for init.
 
 Check the exact canonical `.apex/init-provenance.pending.json` and `.apex/init-provenance.json`
 paths before a fresh `verify-complete` gate: a pending receipt intentionally makes that gate red.
@@ -184,9 +184,9 @@ node <engine-root>/scripts/inception-state.mjs verify-complete --repo-root <repo
 ```
 
 Require exit 0 and `ok: true`, retaining the returned `runId` and exact `completion` Ref. A failure
-(legacy, tamper, application-drift, or any other refusal) stops certification and writes; do not silently
-turn a failed certified init into ordinary init. Ordinary init/repair without this first-post-complete
-case keeps the existing interview, preview and conflict procedure.
+(unsupported run format, tamper, application-drift, or any other refusal) stops certification and
+writes; do not silently turn a failed certified init into ordinary init. Ordinary init/repair
+without this first-post-complete case keeps the existing interview, preview and conflict procedure.
 
 Render all stable hub documents now, before Step 3 apply and Step 4 hub writes, from the engine
 templates and authoritative confirmed interview record. The document set is exactly `.apex/_INDEX.md`,

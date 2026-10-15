@@ -48,7 +48,7 @@ Run these through the packaged skill, in new sessions where indicated. They supp
 | application drift after complete/init | Inception source rejects only this import; ordinary discovery remains available. No old-decision fallback, reopening or bootstrap replay. Foreign provider files and unmanaged root edits remain visible. |
 | final abandon interrupted after descriptor move | `abandon --resume` uses canonical intention/child identities, preserves the intact archive, ends with a receipt, and never restarts automatically. Repeating it is a verified no-op. |
 
-Include publication interruptions before/after staging, ordered target prefixes and final descriptor replacement; foreign/divergent targets must stop without overwrite. A legacy v1 fixture remains readable and archivable but cannot mutate, migrate or satisfy v2 source verification. Collector exit 0 with a red approved command is capture success, never a passing check.
+Include publication interruptions before/after staging, ordered target prefixes and final descriptor replacement; foreign/divergent targets must stop without overwrite. A v1 descriptor fixture is refused by every command, `abandon` and `verify-complete` included, and leaves the whole root unchanged. Collector exit 0 with a red approved command is capture success, never a passing check.
 
 ## Copy validation
 

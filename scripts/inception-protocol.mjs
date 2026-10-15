@@ -19,7 +19,7 @@ const CAPABILITIES = ['shell', 'network', 'browser', 'subagents', 'question-tool
 const EFFECT_KINDS = ['install', 'generator', 'migration', 'external-resource', 'deploy', 'commit', 'remote'];
 export const RUN_CHILDREN_V2 = Object.freeze([
   'approvals', 'checkpoints', 'resume-notes', 'project', 'research', 'bootstrap', 'verification',
-  'effects.jsonl', 'snapshots', 'effects', 'reconciliations', 'units', 'run.json',
+  'snapshots', 'effects', 'reconciliations', 'units', 'run.json',
 ]);
 
 const fail = (where, reason) => { throw new Error(`${where}: ${reason}`); };

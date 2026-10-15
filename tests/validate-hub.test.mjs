@@ -3210,22 +3210,24 @@ test('a root instruction link to a present run descriptor beside a hub index sta
 // run descriptor makes validation exit 0 with the run's phase and next step;
 // an unsafe or unparseable one is an error naming `.apex/inception/run.json`.
 import { createRunDescriptor, parseRunDescriptor, serializeRunDescriptor } from '../scripts/inception-state.mjs';
+import { v1RunDescriptorText } from './helpers/inception-fixture.mjs';
 
 const PRE_HUB_RUN_ID = 'inc-20261007T120000Z-1a2b3c4d';
+const preHubRef = path => ({ path, bytes: 1, sha256: 'a'.repeat(64) });
+const PRE_HUB_CYCLE = preHubRef('.apex/inception/verification/cycles/0001.json');
 const PRE_HUB_COMPLETE = {
   phase: 'complete',
   status: 'complete',
-  nextRecord: 2,
-  checkpoints: ['.apex/inception/checkpoints/0001.json'],
-  finalCheckpoint: '.apex/inception/checkpoints/0001.json',
-  verification: { path: '.apex/inception/verification/results.md', bytes: 12, sha256: 'a'.repeat(64) },
+  nextRecord: 4,
+  cycles: [PRE_HUB_CYCLE],
+  currentCycle: PRE_HUB_CYCLE,
+  baseline: preHubRef('.apex/inception/snapshots/0002.json'),
+  completion: preHubRef('.apex/inception/verification/completions/0003.json'),
 };
 
+// Raw JSON, so an invalid override never throws while the fixture is built.
 function preHubDescriptor(changes = {}) {
-  // Dedicated raw legacy descriptor, independent of public v2 creation.
-  const initial = { schema: 'steepy-inception-run/v1', runId: PRE_HUB_RUN_ID, phase: 'reconnaissance', status: 'active', harness: { name: 'claude-code', capabilities: { shell: true, network: false, browser: false, subagents: true, 'question-tool': false, headless: false } }, git: { present: false, branch: null, commits: 'none' }, nextRecord: 1, approvalEntry: null, approvals: [], checkpoints: [], resumeNotes: [], finalCheckpoint: null, verification: null, history: [] };
-
-  return serializeRunDescriptor({ ...initial, ...changes });
+  return `${JSON.stringify({ ...createRunDescriptor({ runId: PRE_HUB_RUN_ID, harnessName: 'claude-code', capabilities: ['shell', 'subagents'], git: { present: false, branch: null, commits: 'none' } }), ...changes }, null, 2)}\n`;
 }
 
 // A valid descriptor's bytes; parsing here keeps a fixture bug from posing as
@@ -3276,7 +3278,7 @@ test('pre-hub: an area-only .apex with a valid descriptor exits 0 with the run p
     assert.equal(cli.stdout, preHubLine(
       'reconnaissance',
       'active',
-      'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
+      'resume with the inception skill (phase reconnaissance)',
     ));
     assert.equal(cli.stderr, '');
     const quiet = runQuietValidator(repo);
@@ -3288,35 +3290,21 @@ test('pre-hub: an area-only .apex with a valid descriptor exits 0 with the run p
   }
 });
 
-test('pre-hub: a legacy complete run names inspect or abandon without importing its source', () => {
-  const repo = preHubRoot('complete', validPreHubDescriptor(PRE_HUB_COMPLETE));
+const PRE_HUB_V1_ERROR = 'inception run descriptor .apex/inception/run.json cannot be parsed: run descriptor schema "steepy-inception-run/v1" is unsupported; supported: steepy-inception-run/v2';
+
+test('pre-hub: a v1 descriptor is an unsupported run format error', () => {
+  const repo = preHubRoot('complete', v1RunDescriptorText('complete'));
   try {
-    assert.deepEqual(collectViolations(repo), []);
-    const cli = runValidator(repo);
-    assert.equal(cli.status, 0, cli.stderr);
-    assert.equal(cli.stdout, preHubLine(
-      'complete',
-      'complete',
-      'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
-    ));
-    assert.equal(cli.stderr, '');
+    assertPreHubError(repo, PRE_HUB_V1_ERROR);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test('pre-hub: a legacy blocked run names only legacy recovery', () => {
-  const repo = preHubRoot('blocked', validPreHubDescriptor({ phase: 'research', status: 'blocked' }));
+test('pre-hub: a blocked v1 descriptor is an unsupported run format error', () => {
+  const repo = preHubRoot('blocked', v1RunDescriptorText('blocked'));
   try {
-    assert.deepEqual(collectViolations(repo), []);
-    const cli = runValidator(repo);
-    assert.equal(cli.status, 0, cli.stderr);
-    assert.equal(cli.stdout, preHubLine(
-      'research',
-      'blocked',
-      'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
-    ));
-    assert.equal(cli.stderr, '');
+    assertPreHubError(repo, PRE_HUB_V1_ERROR);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -3332,7 +3320,7 @@ test('pre-hub: an unparseable descriptor is one error naming .apex/inception/run
     );
     assertPreHubError(
       invalidState,
-      'inception run descriptor .apex/inception/run.json cannot be parsed: phase complete and status complete must go together',
+      'inception run descriptor .apex/inception/run.json cannot be parsed: run descriptor v2: complete phase/status must go together',
     );
   } finally {
     rmSync(invalidJson, { recursive: true, force: true });
@@ -3472,7 +3460,7 @@ test('pre-hub: other inception area files are never read, whether the descriptor
     assert.equal(green.stdout, preHubLine(
       'reconnaissance',
       'active',
-      'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
+      'resume with the inception skill (phase reconnaissance)',
     ));
     assert.equal(green.stderr, '');
 
@@ -3526,6 +3514,7 @@ test('pre-hub: preHubInceptionStatus reports a valid run and is null outside the
   const withIndex = preHubRoot('status-index', validPreHubDescriptor());
   const invalid = preHubRoot('status-invalid', '{\n');
   const linked = preHubRoot('status-linked', validPreHubDescriptor());
+  const unsupported = preHubRoot('status-v1', v1RunDescriptorText('active'));
   try {
     writeFileSync(join(withIndex, '.apex', '_INDEX.md'), '# Index\n');
     linkSync(join(linked, '.apex', 'inception', 'run.json'), join(linked, 'outside.json'));
@@ -3534,25 +3523,25 @@ test('pre-hub: preHubInceptionStatus reports a valid run and is null outside the
       runId: PRE_HUB_RUN_ID,
       phase: 'reconnaissance',
       status: 'active',
-      nextStep: 'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
+      nextStep: 'resume with the inception skill (phase reconnaissance)',
     });
     assert.deepEqual(preHubInceptionStatus(blocked), {
       runId: PRE_HUB_RUN_ID,
       phase: 'approval',
       status: 'blocked',
-      nextStep: 'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
+      nextStep: 'resolve each named human block with block resolve and observe uncertain effects; transition --to active only when all blocks and effects are resolved',
     });
     assert.deepEqual(preHubInceptionStatus(complete), {
       runId: PRE_HUB_RUN_ID,
       phase: 'complete',
       status: 'complete',
-      nextStep: 'legacy v1 run: inspect or abandon explicitly; no migration or v2 verification is available',
+      nextStep: 'verify-complete before running the init skill, then the discovery skill with the inception source',
     });
-    for (const repo of [noApex, noDescriptor, withIndex, invalid, linked, join(noApex, 'absent')]) {
+    for (const repo of [noApex, noDescriptor, withIndex, invalid, linked, unsupported, join(noApex, 'absent')]) {
       assert.equal(preHubInceptionStatus(repo), null, repo);
     }
   } finally {
-    for (const repo of [active, blocked, complete, noApex, noDescriptor, withIndex, invalid, linked]) {
+    for (const repo of [active, blocked, complete, noApex, noDescriptor, withIndex, invalid, linked, unsupported]) {
       rmSync(repo, { recursive: true, force: true });
     }
   }

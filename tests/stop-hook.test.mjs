@@ -181,6 +181,7 @@ test('a case alias into the inception area emits a Stop-hook block without consu
 // The hook stays silent for a valid run descriptor and blocks on an unparseable
 // one. Each temporary root is resolved with realpathSync and removed in `finally`.
 import { createRunDescriptor, serializeRunDescriptor } from '../scripts/inception-state.mjs';
+import { v1RunDescriptorText } from './helpers/inception-fixture.mjs';
 
 function preHubRepo(suffix, descriptorBytes) {
   const repo = realpathSync(mkdtempSync(join(tmpdir(), `steepy-stop-prehub-${suffix}-`)));
@@ -245,13 +246,16 @@ test('C7 Stop hook admits a pending archive without a descriptor, then restores 
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
-test('pre-hub hook accepts raw legacy active, blocked and complete without treating them as v2 sources', () => {
+test('pre-hub hook blocks an unsupported v1 run format', () => {
   for (const status of ['active', 'blocked', 'complete']) {
-    const initial = createRunDescriptor({ runId: 'inc-20261007T120000Z-1a2b3c4d', harnessName: 'codex', git: { present: false, branch: null, commits: 'none' } });
-    const raw = { schema: 'steepy-inception-run/v1', runId: initial.runId, phase: status === 'complete' ? 'complete' : 'research', status, harness: initial.harness, git: initial.git, nextRecord: 2, approvalEntry: null, approvals: [], checkpoints: status === 'complete' ? ['.apex/inception/checkpoints/0001.json'] : [], resumeNotes: [], finalCheckpoint: status === 'complete' ? '.apex/inception/checkpoints/0001.json' : null, verification: status === 'complete' ? { path: '.apex/inception/verification/results.md', bytes: 1, sha256: 'a'.repeat(64) } : null, history: [] };
-    const repo = preHubRepo(`legacy-${status}`, serializeRunDescriptor(raw));
-    try { const result = run([repo], '{}', 2_000); assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, ''); }
-    finally { rmSync(repo, { recursive: true, force: true }); }
+    const repo = preHubRepo(`v1-${status}`, v1RunDescriptorText(status));
+    try {
+      const result = run([repo], '{}', 2_000);
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout);
+      assert.equal(payload.decision, 'block');
+      assert.match(payload.reason, /schema "steepy-inception-run\/v1" is unsupported/);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
   }
 });
 
@@ -261,8 +265,8 @@ test('pre-hub hook v2 status matrix stays silent while unknown schema blocks', (
   const cycle = ref('.apex/inception/verification/cycles/0001.json');
   const complete = { ...initial, phase: 'complete', status: 'complete', nextRecord: 4, cycles: [cycle], currentCycle: cycle, baseline: ref('.apex/inception/snapshots/0002.json'), completion: ref('.apex/inception/verification/completions/0003.json') };
   for (const descriptor of [initial, { ...initial, status: 'blocked', blocks: [{ id: 'human', reason: 'Human decision needed', evidence: [] }] }, complete, { ...initial, schema: 'unknown/v99' }]) {
-    const repo = preHubRepo('v2-matrix', serializeRunDescriptor(descriptor));
-    try { const result = run([repo], '{}', 2_000); assert.equal(result.status, 0, result.stderr); if (descriptor.schema === 'unknown/v99') assert.match(JSON.parse(result.stdout).reason, /schema is unsupported/); else assert.equal(result.stdout, ''); }
+    const repo = preHubRepo('v2-matrix', `${JSON.stringify(descriptor, null, 2)}\n`);
+    try { const result = run([repo], '{}', 2_000); assert.equal(result.status, 0, result.stderr); if (descriptor.schema === 'unknown/v99') assert.match(JSON.parse(result.stdout).reason, /schema "unknown\/v99" is unsupported; supported: steepy-inception-run\/v2/); else assert.equal(result.stdout, ''); }
     finally { rmSync(repo, { recursive: true, force: true }); }
   }
 });

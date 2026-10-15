@@ -25,8 +25,9 @@ autopilot mode: a human answers its questions and approves the project.
   to the `init` skill after completion.
 - One run per repository, at `.apex/inception/run.json`. Only the helper mutates the descriptor,
   effect records, frozen evidence, snapshots, approvals, checkpoints and completion. Never edit
-  these records or adopt an unbound file as evidence. New runs use v2; v1 remains readable and
-  archivable without migration, mutation, or automatic restart.
+  these records or adopt an unbound file as evidence. Runs use the v2 descriptor; any other schema
+  is an unsupported run format that every helper command refuses, with no migration, archive or
+  automatic restart.
 - The first run write is `.apex/inception/.gitignore`, written by `start`. Never create or edit the
   root `.gitignore` for this area; an approved application generator may change it as an observed
   application effect.
@@ -211,8 +212,9 @@ notes only explain state established by the descriptor and evidence. Run this be
 node <engine-root>/scripts/inception-state.mjs resume-check --repo-root .
 ```
 
-1. If v1, preserve it: inspect/read-only checks or explicit abandon are available, but no migration,
-   new unit, note, approval, or completion. Explain legacy refusal.
+1. If the descriptor is an unsupported run format, every helper command refuses it, `abandon`
+   included: stop, explain the unsupported run format, and leave its bytes untouched; nothing
+   migrates, archives or deletes it.
 2. If pending publication exists, use its exact reservation with `publish resume` and recheck. It
    publishes reserved bytes only. For an active unit, follow Persisted work units and recovery;
    do not dispatch another writer or treat absence of a child response as stopped-writer evidence.

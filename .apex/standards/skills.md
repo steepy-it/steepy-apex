@@ -132,7 +132,7 @@
   Review requires set equality between plan task IDs and result-index IDs.
 
 ## Anti-patterns
-- Inception follows conventions.md → "Inception (pre-hub)": persist unit before work, recover exact refs/publications without replay, approve the control contract, collect automatic/manual/both evidence and rerun all required checks after fixes. Complete/source import requires verified evidence and application; legacy runs never migrate.
+- Inception follows conventions.md → "Inception (pre-hub)": persist unit before work, recover exact refs/publications without replay, approve the control contract, collect automatic/manual/both evidence and rerun all required checks after fixes. Complete/source import requires verified evidence and application; an unsupported run format is refused, never migrated or archived.
 - Specs and plans live only under `.apex/work/` (gitignored local artifacts) — never register
   them in `_INDEX.md` or create a specs/plans sub-index.
 - Never omit `model:` when dispatching a subagent — an omitted model inherits the expensive

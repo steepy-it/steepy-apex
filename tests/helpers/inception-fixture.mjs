@@ -14,6 +14,12 @@ export function check(id, type = 'manual', extra = {}) {
   return { id, required: true, type, subject: id, procedure: `Verify ${id}`, expected: 'Works', evidenceRequired: 'Recorded observation', automatic: type === 'manual' ? null : command('process.stdout.write("checked")'), manual: type === 'automatic' ? null : { procedure: `Open ${id}`, acceptance: 'Works' }, reuse: { policy: 'snapshot', automatic: null, manual: null }, ...extra };
 }
 export const contract = (checks = [check('app')], extra = {}) => ({ schema: 'steepy-inception-checks/v2', roots: ['.'], exclusions: [], environment, checks, coverage: [{ id: 'app', component: 'Application', checks: checks.filter(c => c.required).map(c => c.id), status: 'current' }, { id: 'later', component: 'Future delivery', checks: [], status: 'future' }], ...extra });
+// A raw v1 run descriptor: the unsupported run format every command refuses.
+export function v1RunDescriptor(status = 'active') {
+  return { schema: 'steepy-inception-run/v1', runId: 'inc-20261007T120000Z-1a2b3c4d', phase: status === 'complete' ? 'complete' : 'reconnaissance', status,
+    harness: { name: 'codex', capabilities: { shell: true, network: false, browser: false, subagents: false, 'question-tool': false, headless: false } }, git: { present: false, branch: null, commits: 'none' }, nextRecord: status === 'complete' ? 3 : 1, approvalEntry: null, approvals: [], checkpoints: status === 'complete' ? [`${area}/checkpoints/0002.json`] : [], resumeNotes: [], finalCheckpoint: status === 'complete' ? `${area}/checkpoints/0002.json` : null, verification: status === 'complete' ? { path: `${area}/verification/results.md`, bytes: 12, sha256: 'a'.repeat(64) } : null, history: [] };
+}
+export const v1RunDescriptorText = status => `${JSON.stringify(v1RunDescriptor(status), null, 2)}\n`;
 export const script = name => fileURLToPath(new URL(`../../scripts/${name}.mjs`, import.meta.url));
 export const moduleURL = name => new URL(`../../scripts/${name}.mjs`, import.meta.url).href;
 export function physicalSnapshot(root) {

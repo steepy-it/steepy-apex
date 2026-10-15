@@ -378,7 +378,7 @@ test('discovery inception source (SC11): Step 1 offers only a v2 complete candid
   assert.match(step1, /offer the \*\*inception source\*\*/);
   assert.match(step1, /Read only that one file.*never list `\.apex\/inception\/`/);
   assert.match(step1, /candidate.*not.*verified/i);
-  assert.match(step1, /legacy.*ordinary discovery/i);
+  assert.match(step1, /unsupported run format.*ordinary discovery/i);
   assert.doesNotMatch(step1, /documents\[\]|verification\.path/);
 });
 
@@ -402,7 +402,7 @@ test('discovery inception source (SC11): complete gate precedes source body read
   assert.ok(gate >= 0 && read > gate, 'verify-complete must come before document body reads');
   assert.match(section, /Before reading.*approval.*document.*summary.*report.*run:/i);
   assert.match(section, /`ok: true`.*`runId`.*`completion`.*`inputPaths`.*`checks`.*`coverage`/);
-  assert.match(section, /legacy.*tamper.*application-drift/);
+  assert.match(section, /unsupported run format.*tamper.*application-drift/);
   assert.match(section, /ordinary discovery.*surfaces already selected/i);
   assert.match(section, /Never.*design choices/i);
   assert.match(section, /complete run.*immutable/i);

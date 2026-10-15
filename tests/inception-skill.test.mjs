@@ -98,7 +98,7 @@ test('entry remains portable, human-led, pre-hub and outside the workflow chain'
   }
 });
 
-test('helper table covers v2 recovery, unit, effect, verification and terminal commands without legacy mutation flags', () => {
+test('helper table covers v2 recovery, unit, effect, verification and terminal commands without retired mutation flags', () => {
   const helper = sectionBetween(skill, '## Helper commands', '## Procedure');
   for (const command of ['inspect', 'unit begin', 'unit finish', 'unit reconcile', 'unit close-incomplete', 'publish resume', 'resume-check', 'block resolve', 'effect intent', 'effect outcome', 'effect reconcile', 'verification begin', 'verification resume', 'verification attest', 'verification status', 'verification summarize', 'verify-complete']) assert.ok(helper.includes(`inception-state.mjs ${command} --repo-root .`), command);
   assert.match(helper, /--previous-unit <id>/);
@@ -107,9 +107,9 @@ test('helper table covers v2 recovery, unit, effect, verification and terminal c
   assert.match(helper, /Exit `0`/); assert.match(helper, /Exit `1`/); assert.match(helper, /Exit `2`/);
 });
 
-test('resume authority is descriptor refs and resume-check, with three approval cases and legacy refusal', () => {
+test('resume authority is descriptor refs and resume-check, with three approval cases and unsupported run format refusal', () => {
   const s = section('### Step 1');
-  for (const pattern of [/resume-check/, /before any new writer/, /absent/, /valid/, /divergent/, /verification resume/, /publish resume/, /last note is not authority/, /v1/, /Never repeat a concluded or uncertain effect/]) assert.match(s, pattern);
+  for (const pattern of [/resume-check/, /before any new writer/, /absent/, /valid/, /divergent/, /verification resume/, /publish resume/, /last note is not authority/, /unsupported run format/, /Never repeat a concluded or uncertain effect/]) assert.match(s, pattern);
   assert.doesNotMatch(s, /latest resume note:.*exact paths it lists/);
 });
 

@@ -45,8 +45,9 @@ If `.apex/inception/run.json` exists, its `schema` is `steepy-inception-run/v2`,
 is `complete` (with phase `complete`), also offer the **inception source**: import decisions only
 if Step 2a verifies that completed delivery. Read only that one file to check this, and never list
 `.apex/inception/`. This is a candidate offer, not a verified source; do not load approval or document
-bodies here. Otherwise do not mention the inception source; absent, active, blocked or legacy runs
-leave ordinary discovery available with the user's selected scope. Never migrate or restart a run.
+bodies here. Otherwise do not mention the inception source; absent, active or blocked runs and an
+unsupported run format leave ordinary discovery available with the user's selected scope. Never
+migrate or restart a run.
 
 ### Step 2 — Per-surface iterative loop
 
@@ -151,7 +152,7 @@ directory under it. A stop in this step ends only the inception source; Step 3 a
    `.apex/inception/project/decision-register.md` is not among the returned `inputPaths`.
 
    On nonzero exit, `ok: false`, malformed output, or missing fields, stop only the inception source
-   and report the returned reason (legacy, tamper, application-drift, uncovered decision, or another verification failure).
+   and report the returned reason (unsupported run format, tamper, application-drift, uncovered decision, or another verification failure).
    No source bodies are loaded and no source decisions are promoted. Never downgrade rejected
    source decisions into old design choices. Ordinary discovery remains available for the current
    code and surfaces already selected in Step 1; the per-surface interview and Steps 3–4 continue.

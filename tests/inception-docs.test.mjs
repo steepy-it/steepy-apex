@@ -162,7 +162,6 @@ test('inception guide covers the flow, helper, harnesses, and limits', () => {
   assert.match(guide, /`verified`[\s\S]*`unverified`[\s\S]*`future`/);
   assert.match(guide, /`--option=<value>`/);
   assert.match(guide, /symlinked ancestor directory[\s\S]*named twice/i);
-  assert.match(guide, /legacy[\s\S]*effect log is malformed at line <n>/i);
   assert.match(guide, /canonical[\s\S]*key order/i);
   assert.match(guide, /missing `_INDEX\.md`/);
   assert.match(guide, /no preset (application )?stack/i);
@@ -234,7 +233,7 @@ test('v2 post-complete docs preserve the original init plan and reject source dr
   assert.match(guide, /original validated plan[\s\S]*public.*apply[\s\S]*not.*replan/i);
   assert.match(guide, /managed block[\s\S]*prefix[\s\S]*suffix/i);
   assert.match(guide, /application drift[\s\S]*ordinary discovery[\s\S]*no.*fallback/i);
-  assert.match(guide, /v1[\s\S]*read-only[\s\S]*archiv[\s\S]*no migration/i);
+  assert.match(guide, /unsupported run format[\s\S]*refuses[\s\S]*No tool migrates, archives, deletes/);
   const architecture = read('docs', 'architecture.md');
   for (const module of ['inception-protocol.mjs', 'inception-snapshot.mjs', 'capture-inception-evidence.mjs', 'inception-governance.mjs']) assert.ok(architecture.includes(`| \`${module}\` |`));
   const protocolRow = architecture.split('\n').find(line => line.startsWith('| `inception-protocol.mjs` |'));
