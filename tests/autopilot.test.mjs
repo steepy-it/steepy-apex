@@ -743,7 +743,7 @@ describe('autopilot conductor loop', () => {
       assert.equal(autopilot.phaseCompleted(text, 'plan'), false);
     });
 
-    it('derives phase from the validated actor while rejecting a contradictory redundant phase', () => {
+    it('derives phase from the validated actor and never accepts a child phase field', () => {
       const runId = '11111111-1111-4111-8111-111111111111';
       const spawned = `2026-08-10T10:00:00.000Z — CONDUCTOR — SPAWNED — run-id=${runId} phase=plan attempt=1 display-name=steepy-topic-plan-a1-11111111 readable=phase-1-attempt-1.log raw=phase-1-attempt-1.raw.jsonl session=pending`;
       const documented = `2026-08-10T10:00:01.000Z — plan — DONE — run-id=${runId} attempt=1 plan.md`;
@@ -2622,6 +2622,21 @@ if (process.argv[2] === '--version') {
       assert.equal(halted.length, 1);
       assert.match(halted[0], /without recording its completion marker/);
       assert.equal(linesWith(statusOf(run), ' — PHASE_ACCEPTED — ').length, 0);
+    } finally {
+      rmSync(run.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a child completion marker carrying phase= is not correlated', async () => {
+    const run = makeRun();
+    try {
+      const { code } = await drive(run, { FAKE_HARNESS_MODE_PLAN: 'done', FAKE_HARNESS_MARKER_PHASE: '1' });
+      assert.equal(code, 1);
+      const halted = linesWith(statusOf(run), ' — HALTED — ');
+      assert.equal(halted.length, 1);
+      assert.match(halted[0], /without recording its completion marker/);
+      assert.equal(linesWith(statusOf(run), ' — PHASE_ACCEPTED — ').length, 0);
+      assert.match(statusOf(run), / — plan — DONE — run-id=[0-9a-f-]+ phase=plan attempt=1 /);
     } finally {
       rmSync(run.dir, { recursive: true, force: true });
     }

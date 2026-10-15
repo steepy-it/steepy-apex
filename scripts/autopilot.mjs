@@ -466,7 +466,7 @@ function spawnedIdentity(event) {
   return { runId: fields['run-id'], phase: fields.phase, attempt };
 }
 
-function correlatedIdentity(note, actorPhase) {
+function correlatedIdentity(note, actorPhase, { child = false } = {}) {
   const fields = {};
   for (const match of String(note ?? '').matchAll(/(?:^|\s)(run-id|phase|attempt)=([^\s]+)/g)) {
     fields[match[1]] = match[2];
@@ -477,10 +477,11 @@ function correlatedIdentity(note, actorPhase) {
     || !Number.isSafeInteger(attempt)
     || attempt < 1
   ) return null;
-  // The status actor is already validated as the phase. Current chain skills
-  // therefore echo only run-id + attempt; an optional redundant phase remains
-  // accepted only when it agrees, preserving old structured status evidence.
+  // A child marker's actor is its phase, so it carries only run-id and attempt;
+  // any phase= field makes it uncorrelated. Conductor records keep their own
+  // phase= field, which must agree.
   if (!PHASES.includes(actorPhase)) return null;
+  if (child && fields.phase !== undefined) return null;
   if (fields.phase !== undefined && fields.phase !== actorPhase) return null;
   return { runId: fields['run-id'], phase: actorPhase, attempt };
 }
@@ -497,7 +498,7 @@ function statusWorkflowFields(record) {
     ? correlatedIdentity(record.note, notedPhase)
     : null;
   const phaseIdentity = PHASES.includes(record.actor)
-    ? correlatedIdentity(record.note, record.actor)
+    ? correlatedIdentity(record.note, record.actor, { child: true })
     : null;
   const identity = spawn ?? conductorIdentity ?? phaseIdentity;
   const baseline = record.actor === 'CONDUCTOR' && record.event === 'BASELINE'
@@ -681,7 +682,7 @@ function childCompleted(statusText, phase, identity) {
     return spawn?.runId === identity.runId && spawn.phase === phase && spawn.attempt === identity.attempt;
   });
   return spawnIndex !== -1 && records.slice(spawnIndex + 1).some((record) => {
-    const child = correlatedIdentity(record.note, record.actor);
+    const child = correlatedIdentity(record.note, record.actor, { child: true });
     return record.actor === phase && record.event === COMPLETION_EVENT[phase]
       && child?.runId === identity.runId && child.attempt === identity.attempt;
   });

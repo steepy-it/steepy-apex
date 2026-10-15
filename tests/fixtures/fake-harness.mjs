@@ -26,6 +26,7 @@
 //   FAKE_HARNESS_TELEMETRY        — phase | actor | both | no-usage
 //   FAKE_HARNESS_USAGE_RETRANSMIT — repeat completion events byte-for-byte
 //   FAKE_HARNESS_USAGE_HUGE       — emit large (still source-valid) usage counts
+//   FAKE_HARNESS_MARKER_PHASE     — '1' adds a phase= field to correlated child markers (a retired note shape)
 // Modes:
 //   done     — append the phase's completion marker (review → READY_FOR_PR), exit 0
 //   blocked  — append BLOCKED with a reason, exit 1 (a child that gave up)
@@ -288,7 +289,7 @@ function correlated(note) {
   const attempt = prompt.match(/attempt `(\d+)`/)?.[1];
   // Literal contract shipped by plan/implement/review: the protocol actor is
   // already the phase, so only run-id and attempt are echoed in the note.
-  return runId && attempt ? `run-id=${runId} attempt=${attempt} ${note}` : note;
+  return runId && attempt ? `run-id=${runId}${process.env.FAKE_HARNESS_MARKER_PHASE === '1' ? ` phase=${phase}` : ''} attempt=${attempt} ${note}` : note;
 }
 
 // Stands in for a child that writes a marker it has no business writing — e.g. a
