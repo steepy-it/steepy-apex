@@ -15,8 +15,11 @@
   content/mode application snapshots; `capture-inception-evidence.mjs` runs one approved check and
   seals its output; `inception-governance.mjs` certifies the first `init` after a complete run.
   No tool deletes a run.
-- Snapshots leave the reserved areas, recognized scaffold leases, and approved exclusions out of
-  both the inventory and Git status. Neither Git nor a clean tree is required.
+- Snapshots leave the reserved areas, recognized scaffold leases, and exact exclusions out of
+  both the inventory and Git status: before approval the exclusions bound by `start --exclusions`
+  (for example installed dependencies), from approval the contract's. Application names are
+  literal, so a route like `app/[id]/page.tsx` is an ordinary file. Neither Git nor a clean tree
+  is required.
 - `validate-hub` excludes `.apex/inception/` like `.apex/work/` and rejects stable links into it.
   Before a hub exists, a valid run descriptor makes it exit 0 with the run's phase and next step,
   and the Stop hook stays silent.
@@ -24,8 +27,9 @@
   `documents`, and `finish` certify the first init: only `documents` writes the stable hub
   documents, exact bytes at mode 0644, and init-provenance receipts bind them to the completion.
 - `discovery` offers an inception source for a complete run. Read-only `verify-complete` first
-  checks the evidence and the current application; accepted decisions go only to
-  `conventions.md`, the routed standards, and `glossary.md`.
+  checks the evidence and the current application, before discovery writes anything; accepted
+  decisions go only to `conventions.md`, the routed standards, and `glossary.md`. The import is
+  one-time: a later run sees the certified documents drift and refuses the source.
 - Breaking (released as a minor version by decision): v1.2.0 drops every compatibility path for older formats.
   - Specialist adapters rendered by v1.0.0–v1.0.6 are no longer recognized. An untouched one is a `customized` conflict: a `validate-hub` error that blocks the Stop hook. Run `init` repair, or `new-surface` with `--resolution <id>=replace` in an active hub, and choose `replace`. `templates/prior/` is gone.
   - Autopilot runs started on task-result protocol 1 cannot resume: the conductor halts with an unsupported-protocol reason. Finish such a run manually or start a fresh run. In autopilot, implementer, fix and reviewer responses carry exactly `status`, `artifact`, `signals`; a response with `changed-paths` is malformed. `skills/implement/reviewer-response.schema.json` is removed. Manual drive keeps its four-field grammar and `- Task` bullets. An in-flight protocol-2 run whose retained reviewer or task responses carried `changed-paths` also halts on resume; finish it manually or start a fresh run.
