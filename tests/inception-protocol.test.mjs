@@ -54,8 +54,9 @@ test('strict JSON rejects duplicate escaped keys, malformed UTF-8, extra/missing
 test('shared values reject unsafe IDs, non-exact paths, invalid digests, integers, text and commands', () => {
   for (const id of ['', 'A', '-start', 'x'.repeat(65), 'a/b']) assert.throws(() => protocol.validateId(id));
   assert.equal(protocol.validateId('x'.repeat(64)), 'x'.repeat(64));
-  for (const path of ['/tmp/x', './x', '../x', 'a//b', 'a/./b', 'a/../b', 'a/', 'a\\b', 'a*', 'a?', 'a[0]', 'a\n', '.']) assert.throws(() => protocol.validatePath(path));
-  assert.equal(protocol.validatePath('src/é file.js'), 'src/é file.js');
+  for (const path of ['/tmp/x', './x', '../x', 'a//b', 'a/./b', 'a/../b', 'a/', 'a\\b', 'a\n', '.', `ab/${'é'.repeat(2047)}`]) assert.throws(() => protocol.validatePath(path));
+  // Names are literal, never patterns: framework route syntax is an ordinary path.
+  for (const path of ['src/é file.js', 'app/[id]/page.tsx', 'app/(shop)/[...slug]/page.tsx', 'a*', 'a?', 'a{b}', 'c:d', `a/${'é'.repeat(2047)}`]) assert.equal(protocol.validatePath(path), path);
   for (const value of [{ ...ref(), bytes: -1 }, { ...ref(), sha256: 'A'.repeat(64) }, { ...ref(), path: area + 'abandoned/' + otherRun + '/snapshots/0001.json' }]) assert.throws(() => protocol.validateRef(value, { runId }));
   for (const value of [{ ...app(), mode: 0o100644 }, { ...app(), bytes: 0.5 }]) assert.throws(() => protocol.validateAppEntry(value));
   for (const value of [{ ...command(), args: ['a\0'] }, { ...command(), cwd: '../outside' }, { ...command(), successExitCodes: [] }, { ...command(), successExitCodes: [256] }, { ...command(), shell: true }]) assert.throws(() => protocol.validateCommand(value));

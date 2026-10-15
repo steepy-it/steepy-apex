@@ -73,10 +73,12 @@ const timestamp = (v, w) => {
     && Number.isFinite(Date.parse(v)) && new Date(v).toISOString() === v, w, 'must be an ISO UTC timestamp with milliseconds');
   return v;
 };
+// Names are literal: `app/[id]/page.tsx` is an ordinary application path. No reader
+// expands patterns, and Git receives exclusions only through literal pathspec magic.
 export function validatePath(v, w = 'path') {
   string(v, w); assertSafeLine(v, w);
-  assert(v.length > 0 && !/[\\*?\[\]{}:\x7f-\x9f]/u.test(v)
-    && v.split('/').every(part => part !== '' && part !== '.' && part !== '..'), w, 'must be an exact relative path without aliases or glob syntax');
+  assert(v.length > 0 && Buffer.byteLength(v, 'utf8') <= 4096 && !/[\\\x7f-\x9f]/u.test(v)
+    && v.split('/').every(part => part !== '' && part !== '.' && part !== '..'), w, 'must be an exact relative path of at most 4096 UTF-8 bytes without aliases');
   return v;
 }
 const rootPath = (v, w) => v === '.' ? v : validatePath(v, w);

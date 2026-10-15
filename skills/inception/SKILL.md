@@ -343,7 +343,7 @@ one representative path, deploy scope and limits. Other flows remain future; nev
 a backlog. Write `.apex/inception/project/verification-contract.json` before human approval.
 The contract assigns automatic, manual or both to each check; subject, procedure, expected outcome,
 evidenceRequired, required boolean and applicable command/procedures are explicit. Declare roots,
-exact justified exclusions (dependencies/cache/generated), tools/resources, and coverage for every
+exact justified exclusions (dependencies/cache/generated; literal paths, never globs), tools/resources, and coverage for every
 approved decision/component, current or future. Do not exclude pertinent manifests, lockfiles,
 configuration or migrations to conceal failure. Before approval the helper inventories `.`
 excluding only the reserved protocol areas and recognized scaffold leases; Gitignore is not the
