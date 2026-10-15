@@ -138,7 +138,7 @@ For each surface selected in Step 1, run this loop:
 Run this step only when the user chose the inception source in Step 1. It runs right after Step 1
 and before Step 2; the run then continues with Step 2 for the selected surfaces. It turns the
 decisions of a completed inception run into hub text. Read by exact path only: never list `.apex/inception/` or a
-directory under it. A stop in this step ends only the inception source; Step 3 and Step 4 still run.
+directory under it. A stop in this step ends only the inception source; Step 2, Step 3 and Step 4 still run.
 
 1. **Verify before reading.** Before reading any source approval, document, summary, or report
    body, run:

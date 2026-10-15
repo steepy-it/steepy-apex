@@ -1,7 +1,8 @@
 // Full application observations. Local workflow/Git areas are bound before traversal;
 // evidence is consumed separately through exact references, never discovered here.
 // The walk and Git status share one excluded set, computed once per observation:
-// reserved areas, recognized scaffold lease directories, and the approved contract exclusions.
+// reserved areas, recognized scaffold lease directories, and the exclusions in force
+// (the start exclusions before approval, the approved contract's after).
 // Structurally recognized lease directories, live or dead, are excluded by exact path
 // for every observer; every other lock-like path remains inventory. Recognition runs
 // once before the walk and again after it: any change is a transient refusal.
@@ -21,6 +22,8 @@ const absentGit = () => ({ present: false, branch: null, head: null, status: [] 
 const identity = stat => `${stat.dev}:${stat.ino}`;
 const within = (path, root) => root === '.' || path === root || path.startsWith(`${root}/`);
 function statOrNull(path) { try { return fs.lstatSync(path); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } }
+// Name the rejected path in a refusal so the user can exclude it; escapes keep it one line.
+const named = path => JSON.stringify(path).replace(/[\x7f-\x9f]/gu, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 function excludedPaths(leases, exclusions) {
   return [...new Set([...RESERVED, ...leases.map(lease => lease.name), ...exclusions.map(e => e.path)])].sort();
 }
@@ -61,12 +64,15 @@ export function observeApplication(repoRoot, { contract = null, roots = ['.'], e
     // Resolve only for the physical exclusion check; no descendant is enumerated.
     const physical = stat.isSymbolicLink() ? fs.statSync(absolute) : stat;
     if (excludedIdentities.has(identity(physical))) return;
-    if (path !== '.') validatePath(path, 'application path');
+    if (path !== '.') validatePath(path, `application path ${named(path)}`);
     if (stat.isSymbolicLink()) throw new Error(`${path}: symlink is not an application file`);
     if (stat.isDirectory()) {
       if (visited.has(identity(stat))) return;
       visited.add(identity(stat));
-      const names = fs.readdirSync(absolute, { encoding: 'buffer' }).map(bytes => new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)).sort();
+      const names = fs.readdirSync(absolute, { encoding: 'buffer' }).map(bytes => {
+        try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+        catch { throw new Error(`${path}: holds a name that is not valid UTF-8`); }
+      }).sort();
       for (const name of names) walk(path === '.' ? name : `${path}/${name}`);
       return;
     }

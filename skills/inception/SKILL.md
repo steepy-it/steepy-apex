@@ -75,8 +75,12 @@ human provenance and runs authorized effects. The separate collector executes ap
 | `node <engine-root>/scripts/inception-state.mjs abandon --repo-root . --resume` | Resume only the canonical archive intention, even after descriptor move. |
 
 Every JSON input is an exact coordinator-declared file under the run, strict UTF-8 with all required
-keys (including nulls), no duplicate/unknown keys or aliases. Use shell-quoted `--text=value` for
-free text, particularly text beginning with `-`. Never interpolate human text as shell code.
+keys (including nulls), no duplicate/unknown keys or aliases. The one exception is `start
+--exclusions`, inline because the run does not exist yet: pass it as one single-quoted argument and
+keep `'` out of its reasons. Use shell-quoted `--text=value` for free text, particularly text
+beginning with `-`. Never interpolate human text as shell code. Single-quote every path argument,
+such as `--evidence 'app/[id]/page.tsx'`: brackets, braces, `*` and `?` are literal to the helper,
+but an unquoted shell expands them, and zsh refuses a pattern that matches nothing.
 Capabilities are a comma-separated subset of `shell,network,browser,subagents,question-tool,headless`;
 IDs are lowercase letters/digits/dashes and never reused. Read each one-line JSON response before
 continuing: `ok`, result refs, or `error` (`verify-complete` also gives `reason`).
@@ -199,7 +203,8 @@ without Git the helper records none. Remote operations retain their own exact sc
 
 Before approval the helper inventories the whole repository, so declare at start the dependency,
 cache and generated directories that already exist, such as `node_modules`, `.venv` or a build
-output. Look at the repository's real directories; there is no preset list. Each entry is
+output, and those that work before approval will create, such as dependencies installed to try a
+prototype. They cannot change until approval. Look at the repository's real directories; there is no preset list. Each entry is
 `{"path", "kind", "reason"}` with kind `dependencies`, `cache` or `generated` and a literal path,
 never a glob. Never exclude manifests, lockfiles, configuration or migrations. Ask the user to
 confirm the list, then pass it as one strict JSON array with `--exclusions`; omit the option when
@@ -367,10 +372,11 @@ approved decision/component, current or future. Do not exclude pertinent manifes
 configuration or migrations to conceal failure. Before approval the helper inventories `.`
 excluding only the reserved protocol areas, recognized scaffold leases and the exclusions bound at
 `start`; Gitignore is not the inventory rule. From approval the contract's exclusions replace the
-start ones: repeat every start exclusion that still applies, or approval refuses on the first
-symlink or hard link it meets. The recorded Git status
+start ones: repeat every start exclusion that still applies. An omitted one is inventoried from
+approval on: approval refuses if it holds a symlink or hard link, and otherwise its files silently
+join the approved baseline. The recorded Git status
 leaves out the same reserved areas, recognized scaffold leases and approved exclusions as the
-inventory, tracked or untracked; branch and HEAD stay compared.
+inventory (before approval, the start exclusions), tracked or untracked; branch and HEAD stay compared.
 
 For mutable remote resources use reuse policy reobserve with approved automatic and/or manual
 reobservation procedures; snapshot is suitable for evidence that remains applicable to unchanged
@@ -518,7 +524,9 @@ The general sequence is:
 2. Run only that authorized command/procedure. A remote creation/push/deploy requires explicit
    authorization for that operation; retain existing still-valid authorization in the input.
    Commit policy never authorizes remote operations. Local commits require allowed; none/forbidden
-   means no commit. A dirty tree or absent Git is supported when recorded faithfully.
+   means no commit. Stage exact paths with literal pathspecs, `git add -- ':(literal)<path>'` or
+   `GIT_LITERAL_PATHSPECS=1`: a plain Git pathspec is a pattern, so `app/[id]/page.tsx` would also
+   stage `app/i/page.tsx`. A dirty tree or absent Git is supported when recorded faithfully.
 3. `effect outcome --id <id> --input <exact-outcome-json>` supplies exactly result, observed,
    correlation and evidence (exact path list). Results: succeeded/failed/not-started/partial.
    Helper derives intent/before/after and fixes method. Partial remains uncertain, not replayable.

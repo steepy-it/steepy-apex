@@ -88,6 +88,15 @@ for (const git of [false, true]) {
   });
 }
 
+test('CR2 a start refusal names an unrepresentable application path so it can be excluded', t => {
+  const f = fixture(t, { start: false });
+  f.put('node_modules/dep/a\\b.js', 'Backslash name\n');
+  const refused = start(f, [], 1);
+  assert.match(refused.error, /application path "node_modules\/dep\/a\\\\b\.js"/);
+  assert.equal(fs.existsSync(join(f.root, '.apex')), false);
+  start(f, ['--exclusions', JSON.stringify(DEPENDENCIES)]);
+});
+
 test('CR2 start refuses malformed or non-literal exclusions before any write', t => {
   const f = fixture(t, { start: false });
   const before = f.snapshot();

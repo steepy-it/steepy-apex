@@ -395,7 +395,7 @@ test('discovery inception source (SC11): Step 2a sits between Step 2 and Step 3 
   assert.match(section, /Run this step only when the user chose the inception source in Step 1\./);
   assert.match(section, /It runs right after Step 1 and before Step 2/);
   assert.match(section, /never list `\.apex\/inception\/`/, 'Step 2a must never list the area');
-  assert.match(section, /A stop in this step ends only the inception source/);
+  assert.match(section, /A stop in this step ends only the inception source; Step 2, Step 3 and Step 4 still run\./);
 });
 
 test('discovery inception source (SC11): complete gate precedes source body reads and failures stop only the source', () => {

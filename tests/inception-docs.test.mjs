@@ -261,6 +261,9 @@ test('pre-merge rules agree across skills and guides', () => {
   assert.doesNotMatch(inception, /with only reserved protocol areas excluded/i);
   assert.match(inception, /Before approval the helper inventories `\.` excluding only the reserved protocol areas, recognized scaffold leases and the exclusions bound at `start`; Gitignore is not the inventory rule/i);
   assert.match(inception, /contract's exclusions replace the start ones/i);
+  // Literal to the helper is not literal to the shell or Git: the skill quotes and uses literal pathspecs.
+  assert.match(inception, /Single-quote every path argument/);
+  assert.match(inception, /git add -- ':\(literal\)<path>'/);
   assert.match(inception, /new decision document[\s\S]*only in the approval phase/i);
   const discovery = norm(read('skills', 'discovery', 'SKILL.md'));
   assert.match(discovery, /does not cover every registered decision document/i);
@@ -269,6 +272,7 @@ test('pre-merge rules agree across skills and guides', () => {
   assert.match(guide, /A recognized lease is a repository-root directory/);
   for (const suffix of [/\.stale-<token>/, /\.retired-<token>/, /\.candidate-<pid>-<token>/]) assert.match(guide, suffix);
   assert.match(guide, /Git status uses the same excluded set as the inventory/);
+  assert.match(guide, /the helper never reads a path, exclusion or allowed path as a pattern/);
   assert.match(guide, /covered by the latest approval/);
   assert.match(guide, /inception-governance\.mjs documents/);
   assert.doesNotMatch(guide, /recognized active lease/);
