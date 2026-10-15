@@ -33,7 +33,7 @@ Subagent (reviewer):
     **Review artifact:** [REVIEW_FILE]
     **Issue artifact:** [ISSUE_FILE]
 
-    In autopilot, read and validate the manifest first. In autopilot return exactly status,
+    In autopilot, read and validate the manifest first, then return exactly status,
     artifact, signals; never include `changed-paths` (malformed). Manual drive uses the four-field
     grammar below. Read every `required` input: task brief,
     implementer report, task diff, and owning standard under `.apex/standards/`. Do not preload the
@@ -71,7 +71,7 @@ Subagent (reviewer):
     response. If BLOCKED or NEEDS_CONTEXT, write all detail to [REVIEW_FILE].
 
     For manual drive, return exactly the four unbulleted fields below and nothing else.
-    In autopilot, return only status, artifact, signals, as selected above. Allowed status values are
+    In autopilot, return only status, artifact, signals. Allowed status values are
     APPROVED | ISSUES_FOUND | BLOCKED | NEEDS_CONTEXT. For APPROVED, BLOCKED, or NEEDS_CONTEXT,
     `artifact` is [REVIEW_FILE]; for ISSUES_FOUND it is [ISSUE_FILE]. `signals` contains only short IDs
     such as `review:clean`, `review:critical`, or `none`.

@@ -680,11 +680,6 @@ function renderResumeNote({ number, descriptor, next, needs, note }) {
   ].join('\n');
 }
 
-// reserve the number first, create the record exclusively, then bind it. A crash leaves only a gap
-// or an unbound record, and no record is ever opened for writing again. Every refusal happens
-// before the first write.
-
-
 export function writeResumeNote(repoRoot, { next, needs = [], note, reservation, expectedRevision, unitId, fault } = {}) {
   const root = resolveRepoRoot(repoRoot); v2Descriptor(root);
   assertText(next, '--next');
@@ -716,9 +711,6 @@ function verifyApprovalCommand(root, values) {
   return { ok: true, fields: verifyApprovalV2(root, { approval: values.approval }) };
 }
 
-// HC9 gate for approval -> bootstrap: a new approval since entering approval, and it is clean.
-
-
 // ---------------------------------------------------------------------------
 // effect intent, outcome, status (HC13)
 // ---------------------------------------------------------------------------
@@ -749,11 +741,6 @@ function checkpointVerifyCommand(root, values) {
   const result = verifyCheckpointV2(root, values.checkpoint);
   return { ok: result.ok, fields: result, error: result.ok ? undefined : 'checkpoint drift' };
 }
-
-// HC9 gate for verification -> complete. `--checkpoint` is the last recorded checkpoint and
-// verifies clean, `--verification` is an ordinary single-link file under `verification/`, and no
-// effect is uncertain. Returns the two descriptor bindings; reads only.
-
 
 // ---------------------------------------------------------------------------
 // abandon (C7)

@@ -32,7 +32,7 @@ Subagent (<surface>-agent):
     **Manual fallback inputs:** [BRIEF_FILE], [STANDARD_FILE]
     **Commit authorized this run:** [YES|NO]
 
-    In autopilot, read and validate the manifest first. In autopilot return exactly status,
+    In autopilot, read and validate the manifest first, then return exactly status,
     artifact, signals; never include `changed-paths` (malformed). Manual drive uses the four-field
     grammar below.
     Treat the manifest as authoritative for eager context.
@@ -99,7 +99,7 @@ Subagent (<surface>-agent):
     unattributed), never `discovery:unplanned` merely because the status contains concerns.
 
     For manual drive, return exactly the four unbulleted fields below and nothing else.
-    In autopilot, return only status, artifact, signals, as selected above. Allowed status values are
+    In autopilot, return only status, artifact, signals. Allowed status values are
     DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT. `artifact` is [REPORT_FILE].
     `changed-paths` is a comma-separated sanitized repo-relative list or `none`; `signals` contains
     short IDs such as `tdd:red-green` or `none`. All concern/question/blocker prose stays in the artifact.

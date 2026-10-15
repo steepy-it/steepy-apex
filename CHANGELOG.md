@@ -29,7 +29,7 @@
 - Breaking (released as a minor version by decision): v1.2.0 drops every compatibility path for older formats.
   - Specialist adapters rendered by v1.0.0–v1.0.6 are no longer recognized. An untouched one is a `customized` conflict: a `validate-hub` error that blocks the Stop hook. Run `init` repair, or `new-surface` with `--resolution <id>=replace` in an active hub, and choose `replace`. `templates/prior/` is gone.
   - Autopilot runs started on task-result protocol 1 cannot resume: the conductor halts with an unsupported-protocol reason. Finish such a run manually or start a fresh run. In autopilot, implementer, fix and reviewer responses carry exactly `status`, `artifact`, `signals`; a response with `changed-paths` is malformed. `skills/implement/reviewer-response.schema.json` is removed. Manual drive keeps its four-field grammar and `- Task` bullets. An in-flight protocol-2 run whose retained reviewer or task responses carried `changed-paths` also halts on resume; finish it manually or start a fresh run.
-  - Inception run descriptors with schema `steepy-inception-run/v1` are refused by every command, `abandon` included; no tool migrates, archives or deletes them.
+  - Inception run descriptors with schema `steepy-inception-run/v1` are refused by every command, `abandon` included; no tool migrates, archives or deletes them. Move `.apex/inception/` out of the repository by hand, including `abandon-intent.json` and `abandoned/` left by an earlier archive, then start a fresh run.
   - A child autopilot status note that carries `phase=` no longer completes a phase.
 - The dsh, OpenCode, and Pi adapters, the packaging, and the docs list ten skills.
 - `docs/inception.md` is the user guide; `docs/inception-acceptance.md` defines the native

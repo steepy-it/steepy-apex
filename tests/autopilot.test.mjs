@@ -3364,7 +3364,9 @@ if (process.argv[2] === '--version') {
       writeFileSync(run.statusFile, statusOf(run).replace(/( — CONDUCTOR — TASK_RESULT_PROTOCOL — )version=2$/m, '$1version=3'));
       const before = statusOf(run);
       assert.match(before, /TASK_RESULT_PROTOCOL — version=3/);
-      assertProtocolHalt(run, await drive(run), before);
+      const status = assertProtocolHalt(run, await drive(run), before);
+      assert.ok(status.startsWith(before));
+      assert.equal(status.slice(before.length).trimEnd().split('\n').length, 1, 'only the HALTED line is appended');
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 
@@ -3378,7 +3380,9 @@ if (process.argv[2] === '--version') {
       writeFileSync(path, JSON.stringify(manifest));
       const before = statusOf(run);
       const result = await drive(run);
-      assertProtocolHalt(run, result, before);
+      const status = assertProtocolHalt(run, result, before);
+      assert.ok(status.startsWith(before));
+      assert.equal(status.slice(before.length).trimEnd().split('\n').length, 1, 'only the HALTED line is appended');
       assert.match(result.err, /\.apex\/work\/tasks\/topic\/context\/phase-plan-attempt-1\.json/);
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
@@ -3475,6 +3479,25 @@ if (process.argv[2] === '--version') {
       const before = linesWith(statusOf(run), ' — SPAWNED — ').length;
       assert.equal((await drive(run)).code, 1);
       assert.match(statusOf(run), /resume reviewer evidence rejected/);
+      assert.equal(linesWith(statusOf(run), ' — SPAWNED — ').length, before);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('resume rejects a bullet task-result index despite accepted implementation', async () => {
+    const run = makeRun();
+    try {
+      assert.equal((await drive(run, { FAKE_HARNESS_MODE_REVIEW: 'fail' })).code, 1);
+      assert.match(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
+      const indexPath = join(run.taskDir, 'task-result-index.md');
+      const block = /^<!-- steepy-task-results: v2 -->\n[\s\S]*?\n<!-- \/steepy-task-results -->\n/m;
+      const original = readFileSync(indexPath, 'utf8');
+      assert.match(original, block);
+      const { parseTaskResultProjection } = await import('../scripts/task-results.mjs');
+      const bullets = parseTaskResultProjection(original).map((e) => `- Task ${e.task}: ${e.status}; artifact: ${e.artifact}; changed-paths: ${e.changedPaths.join(', ') || 'none'}; signals: ${e.signals.join(', ') || 'none'}\n`).join('');
+      writeFileSync(indexPath, original.replace(block, bullets));
+      const before = linesWith(statusOf(run), ' — SPAWNED — ').length;
+      assert.equal((await drive(run)).code, 1);
+      assert.match(statusOf(run), /resume reviewer evidence rejected: required v2 task result receipts are missing/);
       assert.equal(linesWith(statusOf(run), ' — SPAWNED — ').length, before);
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });

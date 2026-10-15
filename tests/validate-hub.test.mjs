@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 import {
   chmodSync,
-  cpSync,
   existsSync,
   lstatSync,
   mkdtempSync,

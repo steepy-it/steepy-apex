@@ -33,7 +33,7 @@ Subagent (reviewer):
     **Review artifact:** [FINAL_REVIEW_FILE]
     **Issue artifact:** [FINAL_ISSUE_FILE]
 
-    In autopilot, read and validate the manifest first. In autopilot return exactly status,
+    In autopilot, read and validate the manifest first, then return exactly status,
     artifact, signals; never include `changed-paths` (malformed). Manual drive uses the four-field
     grammar below. Read all and only its `required` inputs:
     the success-criteria source, task-result index, aggregate whole-branch diff, and relevant owning or
@@ -78,7 +78,7 @@ Subagent (reviewer):
     The gate never infers or repairs status, artifact, or signals.
 
     For manual drive, return exactly the four unbulleted fields below and nothing else.
-    In autopilot, return only status, artifact, signals, as selected above. Allowed status values are
+    In autopilot, return only status, artifact, signals. Allowed status values are
     APPROVED | ISSUES_FOUND | BLOCKED | NEEDS_CONTEXT. For APPROVED, BLOCKED, or NEEDS_CONTEXT,
     `artifact` is [FINAL_REVIEW_FILE]; for ISSUES_FOUND it is [FINAL_ISSUE_FILE]. `signals` contains
     short IDs such as `review:clean`, `review:integration`, or `none`.
