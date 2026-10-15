@@ -164,7 +164,7 @@ value, drive mode says *who pushes the button between phases*. Gear 3 only:
   `required` inventory is read eagerly, while `onDemand` entries require a named missing fact and
   are recorded. This governs eager upstream context, not repository authorization: source files
   needed to implement, test, or verify work remain normally discoverable and readable. Review uses
-  the attributed criteria-only `success-criteria.md`, exact `task-result-index.md` projection (v2 JSON or legacy bullets), and
+  the attributed criteria-only `success-criteria.md`, exact `task-result-index.md` projection (v2 JSON in autopilot; `- Task` bullets in manual drive), and
   canonical aggregate `branch-diff.txt`; a full spec is never a required review-criteria input.
   The conductor derives both of those artifacts itself before the review manifest — the criteria
   from the spec's single `## Success criteria` heading, the diff from the run's recorded `BASELINE`
@@ -179,7 +179,7 @@ value, drive mode says *who pushes the button between phases*. Gear 3 only:
   prose, recorded once as `CONTEXT_SURFACE_IGNORED` and skipped — a word in a metadata list never
   refuses a run.
   Children persist their detailed result before replying with the selected artifact-first
-  envelope (manual/legacy v1 four fields, autopilot v2 status/artifact/signals); the implement skill/controller validates it and retains only that
+  envelope (manual drive and Gear 4: four fields; Gear-3 autopilot: status/artifact/signals); the implement skill/controller validates it and retains only that
   envelope until a next decision needs the durable artifact. The controller routes an effective
   abstract tier, and adapters record concrete apply/degrade evidence. A resource-usage ledger is
   observational only: observation identity deduplicates exact retransmissions, while measurement
@@ -201,10 +201,11 @@ open design + trusted execution after the spec gate → gear 3 autopilot; otherw
 3 manual. A harness with no headless mode → autopilot is not offered (explicit
 degradation).
 
-**Autopilot task-result versioning.** Fresh Gear-3 runs pin taskResultProtocol 2 in every manifest;
-retained legacy runs stay on 1. V2 obtains source paths from immutable execution receipts and
-projects exact JSON arrays into the task index. Child changed-paths claims are ignored raw telemetry,
-including legacy brace notation. Semantic status/artifact/signals remain mandatory and never inferred.
+**Autopilot task-result versioning.** Every Gear-3 autopilot run pins taskResultProtocol 2 in every manifest;
+resume halts on a missing marker after an attempt, another version, or a retained manifest without 2
+(finish manually or start fresh). V2 obtains source paths from immutable execution receipts and
+projects exact JSON arrays into the task index. A child response carrying changed-paths is malformed.
+Semantic status/artifact/signals remain mandatory and never inferred.
 The controller records the exact execution state in its authorized ledger before dispatch; deterministic
 replay follows only schema-authorized same-directory parent/previous links. These machine capabilities
 do not allow work scanning or child report preloading. A durable capture resumes review-pending without

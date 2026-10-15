@@ -529,36 +529,33 @@ function statusWorkflowFields(record) {
 
 const STATUS_PROTOCOL_VERSION = 1;
 
-// A run keeps its task-result contract across upgrades and resumes. Absence is
-// legacy only after an actual phase reservation/dispatch; a fresh run selects v2.
+// Protocol 2 is the only task-result contract. A fresh run declares it once;
+// resume refuses any other or missing declaration.
 export function taskResultProtocol(statusText) {
   const declarations = String(statusText).split('\n').filter((line) => line.split(FIELD_SEPARATOR)[2] === 'TASK_RESULT_PROTOCOL');
   const records = normalizeAutopilotStatus(statusText);
   const matches = records.filter((record) => record.event === 'TASK_RESULT_PROTOCOL');
   if (declarations.length === 0) return null;
   if (declarations.length !== 1 || matches.length !== 1 || matches[0].actor !== 'CONDUCTOR'
-    || !/^version=[12]$/.test(matches[0].note)) throw new Error('invalid task result protocol declaration');
-  return Number(matches[0].note.slice(-1));
+    || !/^version=[1-9]\d*$/.test(matches[0].note)) throw new Error('invalid task result protocol declaration');
+  return Number(matches[0].note.slice('version='.length));
 }
 
 function selectTaskResultProtocol(cwd, statusText, specName) {
   const declared = taskResultProtocol(statusText);
   const replay = replayAutopilotStatus(statusText);
   const attempted = PHASES.some((phase) => replay.attemptsByScope[phase].length > 0);
-  const selected = declared ?? (attempted ? 1 : 2);
+  const exit = 'finish the run manually or start a fresh run';
+  if (declared === null && attempted) throw new Error(`unsupported task result protocol 1: the run has phase attempts but no TASK_RESULT_PROTOCOL declaration; ${exit}`);
+  if (declared !== null && declared !== 2) throw new Error(`unsupported task result protocol ${declared}; ${exit}`);
   // Inspect only status-authorized immutable attempt paths, never scan work.
-  for (const phase of PHASES) {
-    for (const attempt of replay.attemptsByScope[phase]) {
-      const path = `.apex/work/tasks/${specName}/context/phase-${phase}-attempt-${attempt}.json`;
-      if (!existsSync(join(cwd, path))) continue;
-      const manifest = JSON.parse(readWorkPath(cwd, path, { encoding: 'utf8' }));
-      const version = manifest.contract?.taskResultProtocol ?? 1;
-      if (version !== selected || declared === null && version === 2) {
-        throw new Error('task result protocol disagrees with retained phase manifest');
-      }
-    }
+  for (const phase of PHASES) for (const attempt of replay.attemptsByScope[phase]) {
+    const path = `.apex/work/tasks/${specName}/context/phase-${phase}-attempt-${attempt}.json`;
+    if (!existsSync(join(cwd, path))) continue;
+    const version = JSON.parse(readWorkPath(cwd, path, { encoding: 'utf8' })).contract?.taskResultProtocol;
+    if (version !== 2) throw new Error(`unsupported task result protocol ${version ?? 1} in retained phase manifest ${path}; ${exit}`);
   }
-  return selected;
+  return 2;
 }
 
 function acceptedIdentity(record) {

@@ -1,11 +1,13 @@
 # Task execution receipts (Gear 3 autopilot v2)
 
-Read this protocol only when `manifest.contract.taskResultProtocol` is `2`. The conductor records
-`TASK_RESULT_PROTOCOL` once for a fresh run and pins the value in every phase manifest; propagate
-`--task-result-protocol 2` to every task-role manifest. Retained legacy autopilot runs stay on
-protocol 1. Never silently upgrade a run or manufacture a historical baseline. Manual drive and
-Gear 4 retain their existing response and index grammar. These v2 instructions take precedence
-over the four-field and comma-list examples in the implementation skill and child prompts.
+Read this protocol for every Gear-3 autopilot run; protocol 2 is the only autopilot protocol. The
+conductor records `TASK_RESULT_PROTOCOL` once for a fresh run and pins
+`manifest.contract.taskResultProtocol: 2` in every phase manifest; propagate
+`--task-result-protocol 2` to every task-role manifest. A resumed run without protocol 2 halts;
+finish it manually or start a fresh run. Never silently upgrade a run or manufacture a
+historical baseline. Manual drive and Gear 4 retain their existing response and index grammar. The
+four-field and comma-list examples in the implementation skill and child prompts are manual-drive
+only.
 
 ## Semantic response and source evidence
 
@@ -19,9 +21,8 @@ signals: <short machine-readable IDs or none>
 ```
 
 The child writes the report first. No status, artifact, or signals may be inferred from report
-prose, a successful process exit, or observed edits. A legacy extra `changed-paths` field is retained
-as raw-only telemetry and ignored, even when it contains brace notation or Next route paths. Do
-not correct, expand, split, or use that claim as authority. Malformed semantic fields fail closed.
+prose, a successful process exit, or observed edits. A response carrying `changed-paths` (text or
+JSON) is malformed and fails closed. Malformed semantic fields fail closed.
 
 `source-observation.mjs` observes branch, HEAD, index, tracked files, and nonignored untracked
 source outside `.apex/work/`, including content, modes, and symlink targets. Git NUL-delimited
@@ -98,9 +99,7 @@ execution resumes at review-pending; reconcile its generated index and pending r
 never implement it again. A baseline-only pending execution has no captured semantic completion:
 it cannot infer DONE from changed code or a report and cannot automatically redispatch. Missing,
 corrupt, substituted, or drifted evidence blocks with existing source and reports preserved.
-Do not manufacture missing evidence, reset code, replenish a review correction budget, or rerun a
-review merely to handle ignored legacy path telemetry. Legacy protocol 1 recovery remains governed
-by its original reviewer gate; it does not acquire historical task receipts.
+Do not manufacture missing evidence or reset code.
 
 ## Continue a valid non-success response
 
@@ -140,7 +139,7 @@ node <engine-root>/scripts/task-results.mjs --repo-root . --action verify --task
 The generated Markdown index retains its lifecycle header, metadata, and reviewer references. Its
 single `<!-- steepy-task-results: v2 -->` fenced JSON block contains entries with `task`, `status`,
 `artifact`, `changedPaths`, `signals`, and `receipt`. JSON receipts are machine authority; Markdown
-is a projection. Do not hand-author task entries or mix legacy `- Task` comma-list bullets into v2.
+is a projection. Do not hand-author task entries or mix manual-drive `- Task` bullets into the autopilot index.
 Projection records execution evidence even while task review is pending; only the separate review
 gate permits a ledger task-complete transition. Verify checks exact task coverage, receipt lineage,
 all current task reports, and the latest source observation. Keep required task/final review

@@ -206,9 +206,10 @@
   records each justified `onDemand` read. It controls eager upstream context, not repository access:
   code discovery and source reads needed for implementation, tests, and verification remain normal.
 - **Artifact-first completion** — the child-completion protocol: write the detailed, durable
-  report first, then return exactly `status`, `artifact`, `changed-paths`, and `signals` to the
-  parent. The parent retains the four-field envelope, opening the artifact only for a decision or
-  action; no report body or transcript is copied into controller context.
+  report first, then return the drive's envelope to the parent: manual drive and Gear 4 return
+  exactly `status`, `artifact`, `changed-paths`, `signals`; Gear-3 autopilot returns exactly
+  `status`, `artifact`, `signals`. The parent retains that envelope, opening the artifact only for a
+  decision or action; no report body or transcript is copied into controller context.
 - **Resource-usage ledger** — an observational JSONL ledger scoped to one run, phase, and attempt.
   It records direct provider usage evidence with source provenance and one canonical measurement
   per event, so summaries cannot double-count it. It informs efficiency analysis only; it never

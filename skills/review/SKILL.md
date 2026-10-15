@@ -166,13 +166,13 @@ unmet, `validate-hub` red, or a CONFLICT discovered mid-run → append
 to `.apex/work/tasks/<spec-basename>/autopilot-status.md` and exit non-zero. A CONFLICT discovered
 mid-run is ALWAYS a halt — doc-wins needs a human, never auto-override.
 
-Use the pinned `manifest.contract.taskResultProtocol` to interpret the task index. Protocol 2
-requires the generated `steepy-task-results: v2` JSON block and exact `changedPaths` arrays;
-legacy protocol 1 retains `- Task` bullets. Never split v2 filenames on commas or expand braces.
+Use the pinned `manifest.contract.taskResultProtocol` to interpret the task index. In autopilot
+the task index is the generated `steepy-task-results: v2` JSON block with exact `changedPaths`
+arrays; manual drive keeps `- Task` bullets. Never split v2 filenames on commas or expand braces.
 The conductor replays execution receipts and required task/final approvals before this phase;
 the index is a projection, and a captured execution alone is never approval. This introduces no
 reviewer permission to open receipt bodies, task reports, the plan, or the progress ledger. Missing
-or drifted evidence fails closed; never infer historical baselines or silently upgrade a legacy run.
+or drifted evidence fails closed; never infer historical baselines.
 Manual drive and Gear 4 retain their existing grammar and capabilities.
 
 **Manual/no-manifest:** Validate the manual handoff before reading any work artifact. Regular Gear-3

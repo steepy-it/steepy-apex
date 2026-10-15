@@ -78,7 +78,7 @@ test('failed fix can retry while retaining discovery until DONE_WITH_CONCERNS', 
   assert.deepEqual(verifyTaskResults(root, { indexPath }).entries[0].signals, ['discovery:unplanned']);
 }));
 
-for (const invalid of ['malformed', 'unknown-status', 'wrong-artifact', 'bad-signals', 'missing-report', 'empty-report', 'baseline-only', 'capture-only', 'source-drift', 'report-drift', 'frozen-report-drift']) {
+for (const invalid of ['malformed', 'unknown-status', 'wrong-artifact', 'bad-signals', 'changed-paths', 'missing-report', 'empty-report', 'baseline-only', 'capture-only', 'source-drift', 'report-drift', 'frozen-report-drift']) {
   test(`explicit retry refuses ${invalid} evidence`, () => fixture(({ root, put }) => {
     beginTask(root, state, config);
     if (invalid !== 'missing-report') put(config.report, invalid === 'empty-report' ? ' \n' : 'Needs context.');
@@ -88,6 +88,7 @@ for (const invalid of ['malformed', 'unknown-status', 'wrong-artifact', 'bad-sig
       if (invalid === 'unknown-status') raw = raw.replace('NEEDS_CONTEXT', 'UNKNOWN');
       if (invalid === 'wrong-artifact') raw = raw.replace(config.report, `${dir}/other.md`);
       if (invalid === 'bad-signals') raw = raw.replace('tdd:red-green', 'bad signal');
+      if (invalid === 'changed-paths') raw += '\nchanged-paths: none';
       recordTaskResult(root, state, raw);
     }
     if (invalid === 'capture-only') rmSync(join(root, `${state}-result.json`));
@@ -125,15 +126,50 @@ test('receipt creation, baseline-only resume, exact replay and projection bind r
   assert.equal(beginTask(root, state, config).resume, true);
   assert.equal(inspectTaskResult(root, state).status, 'PENDING');
   const route = 'apps/web/app/admin/(protected)/issues/[id]/page.test.tsx'; put(route, 'test'); put(config.report, 'report');
-  const result = recordTaskResult(root, state, `${response}\nchanged-paths: bogus/{a,b}; path`);
+  const result = recordTaskResult(root, state, response);
   assert.deepEqual(result.changedPaths, [route]);
-  assert.deepEqual(recordTaskResult(root, state, `${response}\nchanged-paths: bogus/{a,b}; path`), result);
+  assert.deepEqual(recordTaskResult(root, state, response), result);
   projectTaskResults(root, { indexPath, states: [state] });
   const index = readFileSync(join(root, indexPath), 'utf8');
   assert.match(index, /Reviewer gate Task 1: retained/);
   assert.deepEqual(parseTaskResultProjection(index)[0].changedPaths, [route]);
   assert.equal(verifyTaskResults(root, { indexPath, expectedTasks: ['1'] }).entries.length, 1);
   put(route, 'drift'); assert.throws(() => inspectTaskResult(root, state), /source.*drift/);
+}));
+
+test('implementer and fix responses carrying changed-paths are malformed in text and JSON', () => {
+  fixture(({ root, put }) => {
+    beginTask(root, state, config); put(config.report, 'report');
+    const raw = `${response}\nchanged-paths: none`;
+    const rejected = recordTaskResult(root, state, raw);
+    assert.equal(rejected.status, 'BLOCKED'); assert.equal(rejected.accepted, false);
+    assert.equal(rejected.reason, 'invalid task response fields');
+    assert.equal(rejected.retryable, false);
+    assert.equal(JSON.parse(readFileSync(join(root, `${state}-capture.json`))).response, raw);
+  });
+  fixture(({ root, put }) => {
+    beginTask(root, state, { ...config, format: 'json' }); put(config.report, 'report');
+    const raw = JSON.stringify({ status: 'DONE', artifact: config.report, 'changed-paths': 'none', signals: ['tdd:red-green'] });
+    const rejected = recordTaskResult(root, state, raw);
+    assert.equal(rejected.status, 'BLOCKED'); assert.equal(rejected.accepted, false);
+    assert.equal(rejected.reason, 'invalid task response schema');
+    assert.equal(JSON.parse(readFileSync(join(root, `${state}-capture.json`))).response, raw);
+  });
+  fixture(({ root, put }) => {
+    beginTask(root, state, config); put(config.report, 'first report');
+    assert.equal(recordTaskResult(root, state, response).accepted, true);
+    const fix = `${dir}/task-1-execution-2`;
+    beginTask(root, fix, { ...config, execution: 2, role: 'fix', previousState: state });
+    put(config.report, 'fixed report');
+    const rejected = recordTaskResult(root, fix, `${response}\nchanged-paths: source`);
+    assert.equal(rejected.status, 'BLOCKED'); assert.equal(rejected.accepted, false);
+    assert.equal(rejected.reason, 'invalid task response fields');
+  });
+});
+
+test('verifyTaskResults refuses a bullet-only index', () => fixture(({ root, put }) => {
+  put(indexPath, `# Results\n- Task 1: DONE; artifact: ${config.report}; changed-paths: none; signals: none\n`);
+  assert.throws(() => verifyTaskResults(root, { indexPath, expectedTasks: ['1'] }), /required v2 task result receipts are missing/);
 }));
 
 test('projection marker words inside a literal source filename remain data', () => fixture(({ root, put }) => {

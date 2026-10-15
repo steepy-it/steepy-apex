@@ -696,15 +696,17 @@ test('review routing reads v2 receipt projections with literal steepysite paths'
   assert.deepEqual(reviewPhaseContext(plan, index).tasks.map(({ task }) => task), ['1']);
   assert.throws(() => reviewPhaseContext(plan, index.replace('"task":"1"', '"task":"2"')), /unknown reviewed task|correlation mismatch/);
   assert.throws(() => reviewPhaseContext(plan, index.replace('v2', 'v99')), /version|protocol|projection/i);
-  assert.throws(() => reviewPhaseContext(plan, index + '- Task 1: DONE; artifact: x.md; changed-paths: none; signals: none\n'), /mixed|legacy|projection/i);
+  assert.throws(() => reviewPhaseContext(plan, index + '- Task 1: DONE; artifact: x.md; changed-paths: none; signals: none\n'), /mixed|projection/i);
 });
 
 test('discovery signals survive the real review manifest boundary without loading per-task reports', (t) => {
   const repoRoot = materialize(t);
   const indexPath = '.apex/work/tasks/context-efficient/task-result-index.md';
   const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Success criteria:** SC3\n';
-  for (const signals of ['discovery:unplanned,tdd:red-green', 'review:same-session', 'none']) {
-    const index = `# Results\n\n- Task 1: DONE_WITH_CONCERNS; artifact: .apex/work/tasks/context-efficient/not-created-report.md; changed-paths: none; signals: ${signals}\n`;
+  for (const signals of [['discovery:unplanned', 'tdd:red-green'], ['review:same-session'], []]) {
+    const entry = { task: '1', status: 'DONE_WITH_CONCERNS', artifact: '.apex/work/tasks/context-efficient/task-1-report.md',
+      changedPaths: [], signals, receipt: '.apex/work/tasks/context-efficient/task-1-execution-1' };
+    const index = `# Results\n\n<!-- steepy-task-results: v2 -->\n\`\`\`json\n${JSON.stringify([entry], null, 2)}\n\`\`\`\n<!-- /steepy-task-results -->\n`;
     writeFileSync(join(repoRoot, indexPath), index);
     const manifest = buildReviewManifest({
       ...base, repoRoot,
@@ -717,7 +719,7 @@ test('discovery signals survive the real review manifest boundary without loadin
     assert.ok(declaredIndex);
     assert.equal(readFileSync(join(repoRoot, declaredIndex.path), 'utf8'), index);
     assert.equal(declaredIndex.bytes, Buffer.byteLength(index));
-    assert.ok(![...manifest.required, ...manifest.onDemand].some(({ path }) => path.endsWith('not-created-report.md')));
+    assert.ok(![...manifest.required, ...manifest.onDemand].some(({ path }) => path.endsWith('task-1-report.md')));
   }
   // The manifest preserves bytes; the skill, not this transport, interprets the signal.
   const protocol = readFileSync(join(here, '..', 'skills/implement/autopilot-protocol.md'), 'utf8');
@@ -749,13 +751,9 @@ test('SC6: the phase-controller tier is floored and capped at standard, named wi
   assert.match(implement.evidence, /phase-controller-tier=standard/);
   assert.match(implement.evidence, /distribution=mechanical:1,integration:0,design:1/);
 
-  const index = [
-    '# Results',
-    '',
-    '- Task 1: DONE; artifact: .apex/work/tasks/topic/task-1-report.md; changed-paths: none; signals: tdd:red-green',
-    '- Task 2: DONE; artifact: .apex/work/tasks/topic/task-2-report.md; changed-paths: none; signals: tdd:red-green',
-    '',
-  ].join('\n');
+  const entries = ['1', '2'].map((task) => ({ task, status: 'DONE', artifact: `.apex/work/tasks/topic/task-${task}-report.md`,
+    changedPaths: [], signals: ['tdd:red-green'], receipt: `.apex/work/tasks/topic/task-${task}-execution-1` }));
+  const index = `# Results\n\n<!-- steepy-task-results: v2 -->\n\`\`\`json\n${JSON.stringify(entries, null, 2)}\n\`\`\`\n<!-- /steepy-task-results -->\n`;
   const review = reviewPhaseContext(mixedPlan, index);
   assert.equal(review.modelTier, 'standard');
   assert.notEqual(review.modelTier, 'most-capable');
@@ -1187,6 +1185,24 @@ test('task-role CLI uses strict role-specific named paths and writes a valid man
   ], { encoding: 'utf8' });
   assert.equal(missingFinalStandard.status, 1);
   assert.match(missingFinalStandard.stderr, /final-review requires at least one relevant standard/);
+});
+
+test('task-role CLI accepts only protocol 2', (t) => {
+  const repoRoot = materialize(t);
+  const output = '.apex/work/tasks/context-efficient/context/task-1-implement.json';
+  const run = (protocol) => spawnSync(process.execPath, [scriptPath,
+    '--repo-root', repoRoot, '--role', 'implementer', '--run-id', base.runId,
+    '--task', '1', '--model-tier', 'standard', '--brief', '.apex/work/tasks/context-efficient/task-1-brief.md',
+    '--standard', '.apex/standards/scripts.md', '--task-result-protocol', protocol,
+    '--output', output,
+  ], { encoding: 'utf8' });
+  const refused = run('1');
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /--task-result-protocol must be 2/);
+  assert.equal(existsSync(join(repoRoot, output)), false, 'a refused protocol must not write a manifest');
+  const accepted = run('2');
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(JSON.parse(readFileSync(join(repoRoot, output), 'utf8')).contract.taskResultProtocol, 2);
 });
 
 test('the CLI refuses unclassifiable manifest names and non-canonical criteria paths as real subprocesses', (t) => {

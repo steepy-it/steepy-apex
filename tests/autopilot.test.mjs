@@ -26,10 +26,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const protocolLine = '2026-08-10T08:00:00.000Z — CONDUCTOR — STATUS_PROTOCOL — version=1\n';
 const priorRun = '11111111-1111-4111-8111-111111111111';
+// Every conductor run declares task-result protocol 2 before its first attempt.
+const taskResultLine = '2026-08-10T08:00:01.000Z — CONDUCTOR — TASK_RESULT_PROTOCOL — version=2\n';
 function acceptedPhase(phase = 'plan') {
   const event = phase === 'review' ? 'READY_FOR_PR' : 'DONE';
   const number = ['plan', 'implement', 'review'].indexOf(phase) + 1;
-  return protocolLine
+  return protocolLine + taskResultLine
     + `2026-08-10T09:00:00.000Z — CONDUCTOR — SPAWNED — run-id=${priorRun} phase=${phase} attempt=1 display-name=steepy-topic-${phase}-a1-11111111 readable=phase-${number}-attempt-1.log raw=phase-${number}-attempt-1.raw.jsonl session=pending\n`
     + `2026-08-10T09:00:01.000Z — ${phase} — ${event} — run-id=${priorRun} attempt=1 complete\n`
     + `2026-08-10T09:00:02.000Z — CONDUCTOR — PHASE_ACCEPTED — run-id=${priorRun} phase=${phase} attempt=1 child-event=${event}\n`;
@@ -888,7 +890,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
   // committed: the conductor's fresh-run preflight demands a clean working tree.
   function makeRun({
     repoBranch = 'gear3-topic', opencodeModel, opencodeConfig = 'opencode.json',
-    opencodeConfigText, rawSpec, legacyTaskResults = false, ...contract
+    opencodeConfigText, rawSpec, taskResultSeed, ...contract
   } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'steepy-autopilot-'));
     execFileSync('git', ['init', '-q', '-b', repoBranch], { cwd: dir });
@@ -918,10 +920,10 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
     const specPath = join(dir, '.apex', 'work', 'specs', 'topic.md');
     writeFileSync(specPath, rawSpec ?? specText(contract));
     const taskDir = join(dir, '.apex', 'work', 'tasks', 'topic');
-    if (legacyTaskResults) {
+    if (taskResultSeed !== undefined) {
       mkdirSync(taskDir, { recursive: true });
       writeFileSync(join(taskDir, 'autopilot-status.md'), protocolLine
-        + '2026-08-10T08:00:01.000Z — CONDUCTOR — TASK_RESULT_PROTOCOL — version=1\n');
+        + `2026-08-10T08:00:01.000Z — CONDUCTOR — TASK_RESULT_PROTOCOL — version=${taskResultSeed}\n`);
     }
     return { dir, specPath, taskDir, statusFile: join(taskDir, 'autopilot-status.md') };
   }
@@ -997,7 +999,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
   });
 
   it('rechecks resume inputs under the lease before creating run state', async () => {
-    const run = makeRun({ legacyTaskResults: true });
+    const run = makeRun({ taskResultSeed: 2 });
     try {
       const path = '.apex/work/tasks/topic/task-1-report.md';
       writeFileSync(join(run.dir, path), 'existing evidence');
@@ -1015,7 +1017,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
   });
 
   it('rejects physical resume aliases before acquiring the lease or changing run state', async () => {
-    const run = makeRun({ legacyTaskResults: true });
+    const run = makeRun({ taskResultSeed: 2 });
     const original = fs.lstatSync;
     try {
       const prefix = '.apex/work/tasks/topic/';
@@ -3300,14 +3302,69 @@ if (process.argv[2] === '--version') {
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 
-  it('v2 resume refuses protocol removal instead of downgrading to legacy acceptance', async () => {
+  it('resume halts a run with phase attempts but no TASK_RESULT_PROTOCOL marker', async () => {
     const run = makeRun();
     try {
       assert.equal((await drive(run, { FAKE_HARNESS_MODE_IMPLEMENT: 'fail' })).code, 1);
       writeFileSync(run.statusFile, statusOf(run).replace(/^.* — TASK_RESULT_PROTOCOL — .*\n/m, ''));
+      const spawned = linesWith(statusOf(run), ' — SPAWNED — ').length;
       const result = await drive(run);
       assert.equal(result.code, 1);
-      assert.match(result.err, /task result protocol.*retained phase manifest/);
+      assert.match(result.err, /task result protocol rejected: unsupported task result protocol 1[^]*finish the run manually or start a fresh run/);
+      const status = statusOf(run);
+      assert.equal(linesWith(status, ' — TASK_RESULT_PROTOCOL — ').length, 0);
+      assert.equal(linesWith(status, ' — SPAWNED — ').length, spawned);
+      assert.match(status.trimEnd().split('\n').at(-1), / — CONDUCTOR — HALTED — /);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  // SC4: an unsupported task-result protocol halts before BASELINE, reservation or dispatch.
+  const assertProtocolHalt = (run, result, before) => {
+    assert.equal(result.code, 1);
+    assert.match(result.err, /unsupported task result protocol[^]*finish the run manually or start a fresh run/);
+    const status = statusOf(run);
+    assert.equal(linesWith(status, ' — SPAWNED — ').length, linesWith(before, ' — SPAWNED — ').length);
+    assert.equal(linesWith(status, ' — ATTEMPT_RESERVED — ').length, linesWith(before, ' — ATTEMPT_RESERVED — ').length);
+    assert.equal(linesWith(status, ' — TASK_RESULT_PROTOCOL — ').length, linesWith(before, ' — TASK_RESULT_PROTOCOL — ').length);
+    assert.match(status.trimEnd().split('\n').at(-1), / — CONDUCTOR — HALTED — /);
+    return status;
+  };
+
+  it('resume halts a run declaring task-result protocol 1', async () => {
+    const run = makeRun({ taskResultSeed: 1 });
+    try {
+      const before = statusOf(run);
+      const result = await drive(run, {}, { commandFor: () => { throw new Error('must not dispatch'); } });
+      const status = assertProtocolHalt(run, result, before);
+      assert.ok(status.startsWith(before));
+      assert.equal(status.slice(before.length).trimEnd().split('\n').length, 1, 'only the HALTED line is appended');
+      assert.doesNotMatch(status, / — BASELINE — /);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('resume halts a run declaring a task-result protocol other than 2', async () => {
+    const run = makeRun();
+    try {
+      assert.equal((await drive(run, { FAKE_HARNESS_MODE_IMPLEMENT: 'fail' })).code, 1);
+      writeFileSync(run.statusFile, statusOf(run).replace(/( — CONDUCTOR — TASK_RESULT_PROTOCOL — )version=2$/m, '$1version=3'));
+      const before = statusOf(run);
+      assert.match(before, /TASK_RESULT_PROTOCOL — version=3/);
+      assertProtocolHalt(run, await drive(run), before);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('resume halts a run with a retained manifest without protocol 2', async () => {
+    const run = makeRun();
+    try {
+      assert.equal((await drive(run, { FAKE_HARNESS_MODE_IMPLEMENT: 'fail' })).code, 1);
+      const path = join(run.taskDir, 'context', 'phase-plan-attempt-1.json');
+      const manifest = JSON.parse(readFileSync(path, 'utf8'));
+      delete manifest.contract.taskResultProtocol;
+      writeFileSync(path, JSON.stringify(manifest));
+      const before = statusOf(run);
+      const result = await drive(run);
+      assertProtocolHalt(run, result, before);
+      assert.match(result.err, /\.apex\/work\/tasks\/topic\/context\/phase-plan-attempt-1\.json/);
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 
@@ -3332,13 +3389,14 @@ if (process.argv[2] === '--version') {
   });
 
 
-  for (const mutation of ['drop-task', 'change-handoff', 'change-code', 'corrupt-receipt']) {
+  for (const mutation of ['drop-task', 'change-handoff', 'change-code', 'corrupt-receipt', 'bullet-index']) {
     it(`conductor rejects ${mutation} despite implement DONE and a final Approved response`, async () => {
       const run = makeRun();
       try {
         const result = await drive(run, { FAKE_HARNESS_GATE_MUTATION: mutation });
         assert.equal(result.code, 1);
         assert.match(statusOf(run), /reviewer evidence rejected/);
+        if (mutation === 'bullet-index') assert.match(statusOf(run), /reviewer-evidence=required v2 task result receipts are missing/);
         assert.doesNotMatch(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
         assert.doesNotMatch(statusOf(run), /SPAWNED[^\n]*phase=review/);
       } finally { rmSync(run.dir, { recursive: true, force: true }); }
@@ -3406,53 +3464,8 @@ if (process.argv[2] === '--version') {
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 
-  for (const failure of ['none', 'bad-correction', 'code-change']) {
-    it(`real conductor resumes response-only review recovery (${failure}) without implementing completed work again`, async () => {
-      const run = makeRun({ legacyTaskResults: true });
-      try {
-        writeFileSync(join(run.dir, 'tracked.txt'), 'baseline\n');
-        execFileSync('git', ['add', 'tracked.txt'], { cwd: run.dir });
-        execFileSync('git', ['commit', '-qm', 'tracked application'], { cwd: run.dir });
-        const env = {
-          FAKE_HARNESS_MODE_IMPLEMENT: 'reviewer-recovery',
-          FAKE_HARNESS_PLAN_TEXT: '# Plan\n' + [1, 2, 3, 4, 5].map((id) =>
-            `\n## Task ${id} — integration\n\n- **Surface:** \`scripts\`\n- **Test command:** \`npm test\`\n- **Complexity:** \`integration\`\n- **Success criteria:** SC1, SC2\n`).join(''),
-        };
-        assert.equal((await drive(run, env)).code, 1);
-        const ledgerBefore = readFileSync(join(run.taskDir, 'ledger.md'), 'utf8');
-        assert.doesNotMatch(ledgerBefore, /Task 4: complete/);
-        assert.equal(readFileSync(join(run.dir, 'tracked.txt'), 'utf8'), 'task 4 corrected\n');
-        const paths = ['phase-2-attempt-1.log', 'phase-2-attempt-1.raw.jsonl', 'context/phase-implement-attempt-1.json', 'task-4-review-guard-attempt-1-iteration-2-original.json', 'task-4-review.md', 'task-4-issues.md'];
-        const saved = paths.map((path) => readFileSync(join(run.taskDir, path)));
-        const second = await drive(run, { ...env,
-          ...(failure === 'bad-correction' ? { FAKE_HARNESS_BAD_CORRECTION: '1' } : {}),
-          ...(failure === 'code-change' ? { FAKE_HARNESS_REVIEW_MUTATION: '1' } : {}),
-        }, { resumeInputs: ['.apex/work/tasks/topic/task-4-review.md', '.apex/work/tasks/topic/task-4-issues.md'] });
-        assert.equal(second.code, failure === 'none' ? 0 : 1, second.err);
-        paths.forEach((path, i) => assert.deepEqual(readFileSync(join(run.taskDir, path)), saved[i]));
-        const trace = readFileSync(join(run.taskDir, 'scenario-trace.txt'), 'utf8');
-        for (const id of [1, 2, 3, 4]) assert.equal(trace.match(new RegExp(`implement:${id}`, 'g')).length, 1);
-        assert.equal(trace.match(/fix:4/g).length, 1);
-        assert.equal(trace.match(/response-only:4/g).length, 1);
-        const ledgerAfter = readFileSync(join(run.taskDir, 'ledger.md'), 'utf8');
-        assert.ok(ledgerAfter.startsWith(ledgerBefore));
-        if (failure === 'none') {
-          assert.match(trace, /response-only:4\nimplement:5/);
-          assert.match(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
-          assert.match(statusOf(run), /SPAWNED[^\n]*phase=review/);
-        } else {
-          assert.doesNotMatch(trace, /implement:5/);
-          assert.doesNotMatch(ledgerAfter, /Task 4: complete/);
-          assert.doesNotMatch(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
-          assert.equal((await drive(run, env)).code, 1);
-          assert.equal(readFileSync(join(run.taskDir, 'scenario-trace.txt'), 'utf8'), trace, 'resume cannot replenish recovery');
-        }
-      } finally { rmSync(run.dir, { recursive: true, force: true }); }
-    });
-  }
-
   it('resumes synthetic task 3 correction after reviewer rejection without replaying completed tasks', async () => {
-    const run = makeRun({ legacyTaskResults: true });
+    const run = makeRun();
     try {
       const env = {
         FAKE_HARNESS_MODE_IMPLEMENT: 'task-resume',
@@ -3464,7 +3477,8 @@ if (process.argv[2] === '--version') {
       const indexPath = join(run.taskDir, 'task-result-index.md');
       const beforeIndex = readFileSync(indexPath, 'utf8');
       assert.match(beforeIndex, /status: DRAFT/);
-      assert.doesNotMatch(beforeIndex, /- Task 3:/);
+      const { parseTaskResultProjection } = await import('../scripts/task-results.mjs');
+      assert.deepEqual(parseTaskResultProjection(beforeIndex).map((entry) => entry.task), ['1', '2']);
       const evidencePaths = ['context/phase-implement-attempt-1.json', 'phase-2-attempt-1.log', 'phase-2-attempt-1.raw.jsonl'];
       const evidence = evidencePaths.map((path) => readFileSync(join(run.taskDir, path), 'utf8'));
       const resumeInputs = ['task-3-issues.md', 'task-3-review.md'].map((name) => `.apex/work/tasks/topic/${name}`);
@@ -3475,12 +3489,12 @@ if (process.argv[2] === '--version') {
       const manifest = JSON.parse(readFileSync(join(run.taskDir, 'context/phase-implement-attempt-2.json'), 'utf8'));
       assert.equal(manifest.onDemand.find((entry) => entry.path.endsWith('/task-result-index.md')).available, true);
       assert.deepEqual(manifest.onDemand.slice(-2).map(({ path }) => path), resumeInputs);
-      assert.equal(manifest.contract.taskResultProtocol, 1, 'resume capabilities cannot upgrade retained protocol');
+      assert.equal(manifest.contract.taskResultProtocol, 2, 'resume keeps the pinned protocol');
       const reviewManifest = JSON.parse(readFileSync(join(run.taskDir, 'context/phase-review-attempt-1.json'), 'utf8'));
       assert.ok(!reviewManifest.onDemand.some(({ path }) => resumeInputs.includes(path)), 'resume inputs stay implement-only');
       assert.equal(readFileSync(join(run.taskDir, 'scenario-trace.txt'), 'utf8'),
         'implement:1\nreview:1:APPROVED\nimplement:2\nreview:2:APPROVED\nimplement:3\nreview:3:ISSUES_FOUND\nfix:3\nreview:3:APPROVED\n');
-      assert.equal(readFileSync(indexPath, 'utf8').match(/- Task /g).length, 3);
+      assert.equal(parseTaskResultProjection(readFileSync(indexPath, 'utf8')).length, 3);
       assert.equal(linesWith(statusOf(run), ' — SPAWNED — ').filter((line) => /phase=plan/.test(line)).length, 1);
     } finally {
       rmSync(run.dir, { recursive: true, force: true });
