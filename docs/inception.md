@@ -62,7 +62,7 @@ Everything a run writes about itself lives under `.apex/inception/`. The area ha
 
 Numbered records use a global counter padded to at least four digits, never filesystem recency. Refs bind exact path, byte count, and SHA-256. The descriptor changes only through `inception-state.mjs`. Records are immutable; unit state changes are helper-owned. JSON uses canonical key order and a final newline, strict UTF-8, closed fields/enums, and no duplicate keys. Paths are confined ordinary single-link files: no symlink or symlinked ancestor directory, alias, or path named twice. Unsupported names fail rather than being normalized.
 
-Runs use the v2 descriptor. A descriptor with any other schema is an unsupported run format: every helper command, `abandon` included, refuses it before any lease or write, and Before a hub exists, `validate-hub` and the Stop hook report it as an invalid descriptor. No tool migrates, archives, deletes or restarts it. To upgrade by hand, move `.apex/inception/` out of the repository by hand, including `abandon-intent.json` and `abandoned/` left by an earlier archive, then start a fresh run.
+Runs use the v2 descriptor. A descriptor with any other schema is an unsupported run format: every helper command, `abandon` included, refuses it before any lease or write. Before a hub exists, `validate-hub` and the Stop hook report it as an invalid descriptor. No tool migrates, archives, deletes or restarts it. To upgrade, move `.apex/inception/` out of the repository by hand, including `abandon-intent.json` and `abandoned/` left by an earlier archive, then start a fresh run.
 
 ## The helper commands
 
