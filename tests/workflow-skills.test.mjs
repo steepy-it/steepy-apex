@@ -8,6 +8,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const skillsDir = join(here, '..', 'skills');
 const root = join(here, '..');
 const workflowCommands = [
+  'inception',
   'init',
   'new-surface',
   'check',
@@ -2344,8 +2345,9 @@ test('new-surface uses the full active Project planner and keeps unbound prepara
     assert.ok(text.includes(path), `new-surface must name ${path}`);
   }
   assert.match(text, /plans all four[^.]*before the first[^.]*write/i);
-  // Repair updates an untouched earlier rendering instead of claiming to preserve it.
-  assert.match(text, /earlier canonical rendering is\s+stale:[^.]*updates it to\s+the current rendering\s+without a conflict question/i);
+  // An adapter that is not the current rendering is a customized conflict resolved only by replace.
+  assert.match(text, /not the current canonical rendering[^.]*`customized` conflict[\s\S]*explicit `replace`/i);
+  assert.doesNotMatch(text, /\bstale\b/i);
   assert.match(text, /created,\s+updated,\s+or\s+preserved/i);
   assert.doesNotMatch(text, /repair\s+preserves existing artifacts/i);
 });
@@ -2529,20 +2531,20 @@ test('task reviewer explicitly rejects a review-file pointer for ISSUES_FOUND', 
 });
 
 
-test('legacy reviewer recovery retains literal none and a bounded durable reservation', () => {
+test('reviewer recovery ships only the v2 schema and has no response-only correction', () => {
   const recovery = readFileSync(join(skillsDir, 'implement/reviewer-recovery.md'), 'utf8');
-  const schema = JSON.parse(readFileSync(join(skillsDir, 'implement/reviewer-response.schema.json'), 'utf8'));
-  assert.equal(schema.properties['changed-paths'].const, 'none');
+  assert.ok(!existsSync(join(skillsDir, 'implement/reviewer-response.schema.json')));
+  const schema = JSON.parse(readFileSync(join(skillsDir, 'implement/reviewer-response-v2.schema.json'), 'utf8'));
   assert.equal(schema.additionalProperties, false);
-  assert.deepEqual(schema.required, ['status', 'artifact', 'changed-paths', 'signals']);
+  assert.deepEqual(schema.required, ['status', 'artifact', 'signals']);
   for (const file of ['SKILL.md', 'autopilot-protocol.md']) assert.match(readFileSync(join(skillsDir, 'implement', file), 'utf8'), /reviewer-recovery\.md/);
   for (const file of ['task-reviewer-prompt.md', 'final-review-prompt.md']) {
     const prompt = readFileSync(join(skillsDir, 'implement', file), 'utf8');
     assert.doesNotMatch(prompt, /changed-paths: <comma/);
     assert.match(prompt, /artifacts is required and excluded from `changed-paths`/);
   }
-  for (const action of ['begin', 'check', 'reserve', 'correct', 'inspect']) assert.ok(recovery.includes(`--action ${action}`));
-  assert.match(recovery, /reservation is consumed even if the process crashes/);
+  for (const action of ['begin', 'check', 'inspect']) assert.ok(recovery.includes(`--action ${action}`));
+  assert.doesNotMatch(recovery, /--action (?:reserve|correct)\b|REPAIRABLE|response-only correction/);
   assert.match(recovery, /never another implementation/);
   assert.match(recovery, /do not invent a schema flag/);
 });
@@ -2554,6 +2556,7 @@ test('receipt protocol selects semantic transport and records exact restart capa
   }
   assert.match(protocol, /manifest\.contract\.taskResultProtocol/);
   assert.match(protocol, /TASK_RESULT_PROTOCOL/);
+  assert.doesNotMatch(protocol, /legacy|protocol 1/i);
   assert.match(protocol, /before[^]*dispatch[^]*ledger/i);
   assert.match(protocol, /parentState[^]*all tasks/i);
   assert.match(protocol, /previousState[^]*same.task/i);
@@ -2565,20 +2568,50 @@ test('receipt protocol selects semantic transport and records exact restart capa
   assert.match(protocol, /outputs[^]*not[^]*read permission/i);
 });
 
-test('v2 prompts override four-field legacy examples without changing manual or Gear-4 grammar', () => {
+test('autopilot prompts specify only status, artifact, signals; manual drive keeps four fields', () => {
   for (const file of ['SKILL.md', 'implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md']) {
     const text = readFileSync(join(skillsDir, 'implement', file), 'utf8');
-    assert.match(text, /taskResultProtocol[^]*2/);
     assert.match(text, /status[^]*artifact[^]*signals/);
-    assert.match(text, /manual[^]*legacy/i);
-    assert.match(text, /precedence/i);
-    assert.match(text, /changed-paths:/, 'legacy grammar remains documented');
+    assert.match(text, /changed-paths:/, 'manual-drive grammar remains documented');
+    assert.doesNotMatch(text, /legacy/i, file);
+    assert.doesNotMatch(text, /protocol 1/i, file);
+    assert.match(text, /autopilot[^]*status[^]*artifact[^]*signals/i, file);
+    assert.match(text, /changed-paths[^\n]*malformed/i, file);
   }
   const recovery = readFileSync(join(skillsDir, 'implement/reviewer-recovery.md'), 'utf8');
   assert.match(recovery, /--execution/);
   assert.match(recovery, /reviewer-response-v2\.schema\.json/);
-  assert.match(recovery, /path.only[^]*correction/i);
+  assert.doesNotMatch(recovery, /correction/i);
   const schema = JSON.parse(readFileSync(join(skillsDir, 'implement/reviewer-response-v2.schema.json'), 'utf8'));
   assert.deepEqual(schema.required, ['status', 'artifact', 'signals']);
   assert.equal(schema.additionalProperties, false);
+});
+
+// SC8: autopilot text shows no four-field example and no protocol-1 path; every
+// four-field example in a mixed file is labelled as the manual-drive grammar.
+test('autopilot sections carry no four-field example and mixed files label manual four-field examples', () => {
+  for (const file of ['reviewer-recovery.md', 'task-results-protocol.md', 'autopilot-protocol.md']) {
+    const text = readFileSync(join(skillsDir, 'implement', file), 'utf8');
+    assert.doesNotMatch(text, /^\s*changed-paths: /m, file);
+    assert.doesNotMatch(text, /legacy|protocol 1/i, file);
+  }
+  const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  assert.doesNotMatch(sectionBetween(review, '**Autopilot preflight:**', '**Manual/no-manifest:**'), /legacy|protocol 1/i);
+  const field = /^\s*(?:status|artifact|changed-paths|signals): /;
+  for (const file of ['SKILL.md', 'implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md']) {
+    const lines = readFileSync(join(skillsDir, 'implement', file), 'utf8').split('\n');
+    const fourField = [], threeField = [];
+    lines.forEach((line, i) => {
+      if (!/^\s*status: /.test(line)) return;
+      if (lines.slice(i + 1, i + 4).some((next) => /^\s*changed-paths:/.test(next))) {
+        let j = i - 1;
+        while (j >= 0 && (!lines[j].trim() || /^\s*```/.test(lines[j]) || field.test(lines[j]))) j--;
+        assert.match(lines[j] ?? '', /manual/i, `${file}:${i + 1} four-field example must be labelled manual drive`);
+        fourField.push(i);
+      } else if (/^\s*artifact: /.test(lines[i + 1] ?? '') && /^\s*signals: /.test(lines[i + 2] ?? '')) threeField.push(i);
+    });
+    assert.ok(fourField.length > 0, `${file} keeps the manual four-field grammar`);
+    if (file !== 'SKILL.md') assert.ok(threeField.length > 0, `${file} shows the three-field autopilot shape`);
+    for (const i of threeField) assert.ok(i > fourField[0], `${file}:${i + 1} autopilot example must follow the first manual block`);
+  }
 });

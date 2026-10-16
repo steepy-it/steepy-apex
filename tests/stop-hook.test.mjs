@@ -146,3 +146,127 @@ test('a case alias into reserved work emits a Stop-hook block without consuming 
   assert.match(payload.reason, /enters excluded \.apex\/work|stable docs must not link into \.apex\/work/i);
   assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, /STOP_WORK_BYTE_SENTINEL/u);
 });
+
+// Inception area mirror of the reserved-work case-alias block above. The
+// temporary root is resolved with realpathSync and removed in `finally`.
+import { realpathSync, rmSync } from 'node:fs';
+
+test('a case alias into the inception area emits a Stop-hook block without consuming it', (t) => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), 'steepy-stop-inception-case-alias-')));
+  try {
+    if (!storageAliasesCase(repo)) {
+      t.skip('temporary storage keeps case-distinct directory identities');
+      return;
+    }
+    mkdirSync(join(repo, '.apex', 'inception'), { recursive: true });
+    writeFileSync(join(repo, '.apex', '_INDEX.md'), '# Index\n- [Hidden](INCEPTION/sentinel.md)\n');
+    writeFileSync(
+      join(repo, '.apex', 'inception', 'sentinel.md'),
+      '# Hidden\n[Sentinel](STOP_INCEPTION_BYTE_SENTINEL.md)\n',
+    );
+
+    const r = run([repo], '{}', 2_000);
+    assert.notEqual(r.error?.code, 'ETIMEDOUT');
+    assert.equal(r.status, 0, r.stderr);
+    const payload = JSON.parse(r.stdout);
+    assert.equal(payload.decision, 'block');
+    assert.match(payload.reason, /enters excluded \.apex\/inception/i);
+    assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, /STOP_INCEPTION_BYTE_SENTINEL/u);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// Pre-hub inception state: `.apex/` holds the inception area but no `_INDEX.md`.
+// The hook stays silent for a valid run descriptor and blocks on an unparseable
+// one. Each temporary root is resolved with realpathSync and removed in `finally`.
+import { createRunDescriptor, serializeRunDescriptor } from '../scripts/inception-state.mjs';
+import { v1RunDescriptorText } from './helpers/inception-fixture.mjs';
+
+function preHubRepo(suffix, descriptorBytes) {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), `steepy-stop-prehub-${suffix}-`)));
+  mkdirSync(join(repo, '.apex', 'inception'), { recursive: true });
+  writeFileSync(join(repo, '.apex', 'inception', '.gitignore'), '*\n');
+  writeFileSync(join(repo, '.apex', 'inception', 'run.json'), descriptorBytes);
+  return repo;
+}
+
+test('pre-hub: a valid inception run descriptor keeps the Stop hook silent', () => {
+  const repo = preHubRepo('valid', serializeRunDescriptor(createRunDescriptor({
+    runId: 'inc-20261007T120000Z-1a2b3c4d',
+    harnessName: 'claude-code',
+    capabilities: ['shell'],
+    git: { present: false, branch: null, commits: 'none' },
+  })));
+  try {
+    const r = run([repo], '{}', 2_000);
+    assert.notEqual(r.error?.code, 'ETIMEDOUT');
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, '');
+    assert.equal(r.stderr, '');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: an unparseable inception run descriptor emits a block naming its path', () => {
+  const repo = preHubRepo('invalid', '{ "schema": \n');
+  try {
+    const r = run([repo], '{}', 2_000);
+    assert.notEqual(r.error?.code, 'ETIMEDOUT');
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stderr, '');
+    const payload = JSON.parse(r.stdout);
+    assert.deepEqual(payload, {
+      decision: 'block',
+      reason: [
+        'steepy validate-hub: 1 hub violation(s):',
+        '  - inception run descriptor .apex/inception/run.json cannot be parsed: run descriptor is not valid JSON',
+        'Fix the hub (or run /steepy-apex:check) before ending the turn.',
+      ].join('\n'),
+    });
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('C7 Stop hook admits a pending archive without a descriptor, then restores missing-index blocking', async () => {
+  const { rmSync } = await import('node:fs');
+  const repo = mkdtempSync(join(tmpdir(), 'steepy-stop-abandon-'));
+  const helper = new URL('../scripts/inception-state.mjs', import.meta.url).href;
+  try {
+    const crash = spawnSync(process.execPath, ['--input-type=module', '-e', `import {startRun,abandonRun} from ${JSON.stringify(helper)}; startRun(process.argv[1], {harnessName:'codex',gitCommits:'forbidden'}); abandonRun(process.argv[1], {reason:'Stop',fault(p,d){if(p==='after-move'&&d.name==='run.json')process.exit(73);}});`, repo], { encoding: 'utf8' });
+    assert.equal(crash.status, 73, crash.stderr);
+    let observed = run([repo], '{}'); assert.equal(observed.status, 0); assert.equal(observed.stdout, '');
+    const resume = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/inception-state.mjs', import.meta.url)), 'abandon', '--repo-root', repo, '--resume'], { encoding: 'utf8' });
+    assert.equal(resume.status, 0, resume.stdout + resume.stderr);
+    observed = run([repo], '{}'); assert.equal(observed.status, 0); assert.equal(JSON.parse(observed.stdout).decision, 'block');
+    writeFileSync(join(repo, '.apex/inception/abandon-intent.json'), '{}');
+    observed = run([repo], '{}'); assert.equal(observed.status, 0); assert.match(JSON.parse(observed.stdout).reason, /abandon/);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('pre-hub hook blocks an unsupported v1 run format', () => {
+  for (const status of ['active', 'blocked', 'complete']) {
+    const repo = preHubRepo(`v1-${status}`, v1RunDescriptorText(status));
+    try {
+      const result = run([repo], '{}', 2_000);
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout);
+      assert.equal(payload.decision, 'block');
+      assert.match(payload.reason, /schema "steepy-inception-run\/v1" is unsupported/);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  }
+});
+
+test('pre-hub hook v2 status matrix stays silent while unknown schema blocks', () => {
+  const initial = createRunDescriptor({ runId: 'inc-20261007T120000Z-1a2b3c4d', harnessName: 'codex', git: { present: false, branch: null, commits: 'none' } });
+  const ref = path => ({ path, bytes: 1, sha256: 'a'.repeat(64) });
+  const cycle = ref('.apex/inception/verification/cycles/0001.json');
+  const complete = { ...initial, phase: 'complete', status: 'complete', nextRecord: 4, cycles: [cycle], currentCycle: cycle, baseline: ref('.apex/inception/snapshots/0002.json'), completion: ref('.apex/inception/verification/completions/0003.json') };
+  for (const descriptor of [initial, { ...initial, status: 'blocked', blocks: [{ id: 'human', reason: 'Human decision needed', evidence: [] }] }, complete, { ...initial, schema: 'unknown/v99' }]) {
+    const repo = preHubRepo('v2-matrix', `${JSON.stringify(descriptor, null, 2)}\n`);
+    try { const result = run([repo], '{}', 2_000); assert.equal(result.status, 0, result.stderr); if (descriptor.schema === 'unknown/v99') assert.match(JSON.parse(result.stdout).reason, /schema "unknown\/v99" is unsupported; supported: steepy-inception-run\/v2/); else assert.equal(result.stdout, ''); }
+    finally { rmSync(repo, { recursive: true, force: true }); }
+  }
+});

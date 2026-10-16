@@ -62,9 +62,9 @@ import { readFileSync } from 'node:fs';
 const HERE = dirname(fileURLToPath(import.meta.url)); // <root>/adapters/dsh
 const PACKAGE_ROOT = dirname(dirname(HERE)); // <root>
 
-// The nine canonical skills, invocation order per the routing chain.
+// The ten canonical skills, invocation order per the routing chain.
 const SKILL_NAMES = [
-  'init', 'check', 'new-surface', 'discovery', 'brainstorm',
+  'inception', 'init', 'check', 'new-surface', 'discovery', 'brainstorm',
   'plan', 'implement', 'review', 'loop-engineer',
 ];
 
@@ -211,7 +211,7 @@ function registerCommands(scoped) {
         handler: (invocation) => commandResult(skill, invocation),
       });
     } catch {
-      // this one name was rejected — keep going, the other eight still register.
+      // this one name was rejected — keep going, the other nine still register.
     }
   }
 }
@@ -222,7 +222,7 @@ function registerCommands(scoped) {
 // can only be TOLD which tool call to make; this tool is that call. `skill` is
 // validated against the closed SKILL_NAMES allowlist by EXACT MATCH before any
 // filesystem access (GC7) — a non-string, empty string, unknown name, or a
-// traversal attempt is rejected with a message naming the nine valid values,
+// traversal attempt is rejected with a message naming the ten valid values,
 // and no path is ever built from the rejected input. Only once that match
 // succeeds is the path composed, from the ALLOWLISTED constant, never from a
 // normalized/resolved form of the input:
@@ -233,7 +233,7 @@ const SKILL_TOOL_PARAMETERS = {
     skill: {
       type: 'string',
       enum: [...SKILL_NAMES],
-      description: `One of the nine canonical skill names: ${SKILL_NAMES.join(', ')}.`,
+      description: `One of the ten canonical skill names: ${SKILL_NAMES.join(', ')}.`,
     },
     args: {
       type: 'string',
@@ -290,7 +290,7 @@ function registerSkillTool(scoped) {
   try {
     tools.register({
       name: SKILL_TOOL_NAME,
-      description: `Load one of the nine canonical Steepy Apex skills (${SKILL_NAMES.join(', ')}) and return its exact prose from the engine root.`,
+      description: `Load one of the ten canonical Steepy Apex skills (${SKILL_NAMES.join(', ')}) and return its exact prose from the engine root.`,
       parameters: SKILL_TOOL_PARAMETERS,
       output: { schema: { type: 'string' }, render: renderSkillTool },
       execute: executeSkillTool,
@@ -310,7 +310,7 @@ function registerSkillTool(scoped) {
 //     in the same teardown that removes the registrations themselves.
 //
 // The lifetime scoping is the load-bearing half. A host reload disposes this
-// fiber's effects first — tearing down the nine commands and the bootstrap
+// fiber's effects first — tearing down the ten commands and the bootstrap
 // section — and then re-invokes `apply()` with the SAME ctx object. A guard that
 // outlived its own registrations would short-circuit that second call and leave
 // the adapter silently dead for the rest of the session: no block, no commands,

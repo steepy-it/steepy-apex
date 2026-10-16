@@ -59,6 +59,53 @@ only the current conductor ledger schema and identify unsupported records as inv
   insufficient facts need human clarification, not unauthorized upstream reads. Content-contract
   tests document these model-based decisions; they do not prove deterministic manual enforcement.
 
+## Inception (pre-hub)
+- `inception` is a pre-hub skill, not a gear. It sits outside the chain and has no
+  headless or autopilot mode. It never creates hub artifacts: no `_INDEX.md`, standard,
+  glossary, or agent. Order: inception → `init` (ordinary interview, unchanged) →
+  `discovery` (inception source) → gears.
+- Local area `.apex/inception/` has its own `.gitignore` (`*`), written first. The root
+  `.gitignore` is never edited for the area; an approved bootstrap tool may change it as
+  an application file, recorded as an effect. The area is excluded from anti-orphan
+  checks, stable reads, and discovery's explorer reads, like `.apex/work/`; inception
+  material reaches the hub only through discovery's inception source. Stable links into
+  it are errors. It stays after `complete` until the user deletes it after discovery.
+- One run per repository, at `.apex/inception/run.json`, changed only by
+  `scripts/inception-state.mjs`. Abandon moves the run to
+  `.apex/inception/abandoned/<run-id>/` and deletes nothing.
+- Pre-hub rule: no `_INDEX.md` plus a descriptor → `validate-hub` exits 0 naming the phase
+  and next step, and the Stop hook stays silent. An unparseable descriptor is an error
+  naming it.
+- Single human approval, with file digests and the user's statement kept verbatim. It is
+  never self-approved by the model; a digest proves bytes, not a human.
+- Effects and checkpoints: an effect records its intent before and its outcome after. An
+  uncertain effect is never repeated. Records are immutable.
+- Session/recovery policy: three sessions (project/approval, bootstrap, verification) are recommended, not imposed. Resume uses exact descriptor refs from any point, independent of chat; notes present the next step, never authorize recovery. Research and bootstrap delegate when available, one persisted unit at a time; inline degradation is explicit. The skill conducts work and human decisions; the helper validates structured evidence, never infers acceptance from Markdown.
+- V2 format: Node >=24 ESM/built-ins, strict UTF-8 JSON, closed fields/enums, safe counters, UTC millisecond timestamps, lowercase SHA-256, canonical key order/newline. Exact confined ordinary single-link paths only, no alias/symlink; names are literal, so brackets, braces, `*`, `?` and `:` are ordinary characters and no path is read as a pattern. Descriptor revision and ordered refs identify records; no recency selection. Immutable units/outputs, snapshots, effects, cycles, sessions, captures, summary/report and completion remain reachable by exact refs. `inception-state.mjs` alone mutates the descriptor; protocol validates, snapshot observes, collector executes one approved command, governance certifies init only.
+- Writer/publication policy: persist the sole active unit before decisions, research, bootstrap or checks; bind complete identity-delimited reports and observed whole-inventory changes before finish. The scaffold lease serializes short cooperating-writer mutations. A pending reservation binds bytes, token, revision and exact targets before publication; resume completes that reservation only, never application replay. Divergent/foreign targets block without overwrite. A partial own staging generation stays interruption evidence. No adversarial filesystem guarantee is claimed.
+- Contract/approval policy: freeze all project documents, decision register and the control contract in the human approval. Required/type/expected cannot be weakened to close a failure; scope reduction requires human decision and re-approval. Live documents may change only after returning to approval; historical approvals verify frozen copies. Required checks must succeed, with automatic execution/output, manual procedure/acceptance and explicit human confirmation, or both proofs for type both. One scoped human confirmation may cover multiple checks. Every registered decision output under the project area must be covered by the latest approval: outside the approval phase `unit begin` refuses a new one, and every non-historical check of the latest approval (forward transitions, verification, resume-check, verify-complete) refuses an uncovered one, naming its path.
+- Application policy: inventory every approved root's paths/content/modes with exact justified dependency/cache/generated exclusions, never hide relevant manifests, lockfiles, configuration or migrations. Git is separate provenance; neither Git nor a clean tree is required. Before approval observe the full repository except physically bound local/Git areas, recognized leases and the exact dependency/cache/generated exclusions bound at start; start refuses before any write when that scope cannot be inventoried, and the approved contract's scope replaces it. A recognized lease is a repository-root directory in the scaffold lock family (canonical, stale, retired or candidate name) holding only a canonical 0600 owner record that matches its name, live or dead; every observer excludes it by path, and readers never retire or write it; anything else lock-like stays drift. Git status excludes the same set as the inventory, approved exclusions included, tracked or untracked; branch/HEAD stay compared and different scopes are always drift. Symlinks/special files fail closed. Whole before/after diffs must match exact allowed paths and evidence; a checkpoint cannot erase unexplained drift. Accepted application changes require all required automatic and manual checks in a new cycle; a new approval also invalidates prior results.
+- Cycle/session policy: cycle binds approval/contract/application identity/environment; reuse only if all agree. Unchanged resume retains valid snapshot-policy results; mutable-resource reobserve needs current-session evidence from the approved procedure. The skill explicitly persists a verification session once on new entry; read-only resume-check does not invalidate evidence. Compare application before/after every automatic/manual check and before complete. Drift during execution invalidates the old-cycle success.
+- Evidence/reconciliation policy: reconcile automatically only with sufficient evidence and exact correlation to the original intent; ambiguous outcomes stay uncertain and require a human decision, without replay or invented success. Partial effects remain unresolved. Reconciliation replaces neither required manual confirmation nor remote authorization. Non-capture incomplete closure binds an explicit verbatim stopped-writer observation; it never overrides a live/unverifiable capture PID. Retries use a new ID and exact predecessor; uncertainty and unrelated blocks persist.
+- Collector/complete policy: reserve capture identity/PID before one approved executable/argv command, seal full separate streams with exit/signal/timing and cycle/session/unit/before/after refs. No external receipt import or passed boolean. Linux/darwin process-group termination and stream settlement are required; unsupported platforms refuse before effects. Capture exit 0 can include a red command. Helper-derived summary/report/coverage binds all evidence; complete requires every required type/reuse proof, current application/environment/approval, final checkpoint, verified transitive digests and zero uncertain effects, writers, foreign pending publications or blocks. Optional missing checks stay not-executed with limits; future stays future. Missing closing note permits presentation repair only.
+- Post-complete policy: read-only `verify-complete` authenticates evidence and application before releasing exact source inputPaths; source rejection preserves completion and leaves ordinary discovery available, with no old-decision fallback. Init certifies only exact prepared governance operations via pending/final provenance receipts and the public planner/applicator; pending recovery uses the original validated plan, never fresh replanning. Virtually reverse only wholly added files or certified managed blocks, preserving unmanaged bytes and checking current governance. Other provider/config/lockfile/application changes remain visible. A descriptor whose schema is not steepy-inception-run/v2 is an unsupported run format: every command refuses it before any lease or write, with no migration, archive, deletion or automatic restart. Only `inception-governance.mjs documents` writes the certified stable documents, from the retained input with fixed mode 0644; it refuses a divergent document or mode instead of changing it.
+- Archive policy: publish canonical abandon intention before moving exact physically identified children, descriptor last. Resume uses that intention even after descriptor move, without scanning archives; conflicting identities refuse, verified receipt is a no-op. No new run starts without an explicit request. Linter may read only canonical descriptor/intention and their exact archive proof; after archive with no hub/run the missing-index behavior returns.
+- Hard links: every path under the area is excluded whatever its link count; a stable file
+  that shares an inode with an area file stays stable content; the helper refuses area
+  files with more than one link.
+- Discovery's inception source: a `complete` run only, read at the exact bound paths, verified
+  before the run writes any hub document, and imported once: a later write-back makes the
+  certified documents drift. Every decision is approved. Three promotion rules:
+  - Approved and verified (`verified`) → may be written as an existing component or rule.
+  - Approved but unverified (`unverified`) → written as a design choice, not an existing
+    component.
+  - A future flow (`future`) → written as context in `conventions.md`, never an implemented
+    component, a spec, or a started task.
+
+  Destinations are only `conventions.md`, the routed surface standards, and `glossary.md`:
+  no new hub document and no `_INDEX.md` change. The write-back never names the area. Every
+  decision in the register is accepted or rejected with a reason.
+
 ## Decision model (conditional ceremony)
 
 Every task entering a gear-aware workflow is classified by that workflow entry on two axes → a ceremony **gear**.
@@ -118,7 +165,7 @@ value, drive mode says *who pushes the button between phases*. Gear 3 only:
   `required` inventory is read eagerly, while `onDemand` entries require a named missing fact and
   are recorded. This governs eager upstream context, not repository authorization: source files
   needed to implement, test, or verify work remain normally discoverable and readable. Review uses
-  the attributed criteria-only `success-criteria.md`, exact `task-result-index.md` projection (v2 JSON or legacy bullets), and
+  the attributed criteria-only `success-criteria.md`, exact `task-result-index.md` projection (v2 JSON in autopilot; `- Task` bullets in manual drive), and
   canonical aggregate `branch-diff.txt`; a full spec is never a required review-criteria input.
   The conductor derives both of those artifacts itself before the review manifest — the criteria
   from the spec's single `## Success criteria` heading, the diff from the run's recorded `BASELINE`
@@ -133,7 +180,7 @@ value, drive mode says *who pushes the button between phases*. Gear 3 only:
   prose, recorded once as `CONTEXT_SURFACE_IGNORED` and skipped — a word in a metadata list never
   refuses a run.
   Children persist their detailed result before replying with the selected artifact-first
-  envelope (manual/legacy v1 four fields, autopilot v2 status/artifact/signals); the implement skill/controller validates it and retains only that
+  envelope (manual drive and Gear 4: four fields; Gear-3 autopilot: status/artifact/signals); the implement skill/controller validates it and retains only that
   envelope until a next decision needs the durable artifact. The controller routes an effective
   abstract tier, and adapters record concrete apply/degrade evidence. A resource-usage ledger is
   observational only: observation identity deduplicates exact retransmissions, while measurement
@@ -155,10 +202,11 @@ open design + trusted execution after the spec gate → gear 3 autopilot; otherw
 3 manual. A harness with no headless mode → autopilot is not offered (explicit
 degradation).
 
-**Autopilot task-result versioning.** Fresh Gear-3 runs pin taskResultProtocol 2 in every manifest;
-retained legacy runs stay on 1. V2 obtains source paths from immutable execution receipts and
-projects exact JSON arrays into the task index. Child changed-paths claims are ignored raw telemetry,
-including legacy brace notation. Semantic status/artifact/signals remain mandatory and never inferred.
+**Autopilot task-result versioning.** Every Gear-3 autopilot run pins taskResultProtocol 2 in every manifest;
+resume halts on a missing marker after an attempt, another version, or a retained manifest without 2
+(finish manually or start fresh). V2 obtains source paths from immutable execution receipts and
+projects exact JSON arrays into the task index. A child response carrying changed-paths is malformed.
+Semantic status/artifact/signals remain mandatory and never inferred.
 The controller records the exact execution state in its authorized ledger before dispatch; deterministic
 replay follows only schema-authorized same-directory parent/previous links. These machine capabilities
 do not allow work scanning or child report preloading. A durable capture resumes review-pending without
@@ -306,7 +354,7 @@ would add a read, not save tokens — do not DRY them.
 ## Multi-harness distribution
 
 Steepy Apex ships as one **shared canonical core + native adapters** for Claude Code,
-Codex, OpenCode, Pi, and DeepSeek Harness: the nine skills in `skills/` are the single source of behavior,
+Codex, OpenCode, Pi, and DeepSeek Harness: the ten skills in `skills/` are the single source of behavior,
 served verbatim to every harness; per-harness manifests and thin runtime adapters
 (`adapters/**`) do the wiring. Core-portability rules:
 

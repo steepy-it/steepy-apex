@@ -318,9 +318,8 @@ function conflictDetails(conflicts) {
 }
 
 // `repair: true` repairs the current public layout: current generated adapters and an existing
-// standard are preserved, an adapter byte-identical to a prior canonical rendering is updated,
-// any other noncanonical adapter is refused, and missing targets are created. Every target is
-// planned before the first output write.
+// standard are preserved, any adapter that is not the current canonical rendering is refused,
+// and missing targets are created. Every target is planned before the first output write.
 export function scaffold({
   name,
   surfacePath,
@@ -435,7 +434,7 @@ export function scaffold({
     .filter(({ artifactId }) => triadArtifactIds.has(artifactId))
     .map((operation) => [triadArtifactIds.get(operation.artifactId), operation]));
   // A `create` operation is a new file; every replace kind rewrites an existing one
-  // (a stale earlier rendering, or a customization the user chose to replace).
+  // (a customization the user chose to replace).
   const created = [];
   const updated = [];
   const preserved = [];

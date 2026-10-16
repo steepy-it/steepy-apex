@@ -8,8 +8,8 @@
   `skills/loop-engineer/loop-final-review-prompt.md`. The five chain skills
   short-circuit Gear 2 through brainstorm → implement, run Gear 3 through brainstorm → plan →
   implement → review, and assign Gear 4 to `loop-engineer`; standalone hub-aware skills are `init`,
-  `new-surface`, `check`, and additive/re-runnable `discovery`. Chain skills carry gear-0, a checklist,
-  and the locked Model Selection block; `discovery` has its own prose dispatch policy; the rest do not dispatch.
+  `new-surface`, `check`, and additive/re-runnable `discovery`; `inception` is pre-hub (conventions.md → "Inception (pre-hub)"). Chain skills carry gear-0, a checklist,
+  and the locked Model Selection block; `discovery` has its own prose dispatch policy; inception research and bootstrap delegate when available, one persisted unit at a time; the other standalone skills do not dispatch.
 - Does NOT own: the engine scripts they call (→ `scripts`) or the markdown templates they copy
   (→ `templates`).
 - Exemplar: `skills/init/SKILL.md`
@@ -45,7 +45,7 @@
   A `HALTED` result is a permanently abandoned run, never an exact-resume handoff; preserve all of its state and recover only with a new ratified goal at a distinct goal path and loop workspace.
 - Project setup retains one immutable user-confirmed interview record, derives the planner's exact
   five-key Project model v1, and applies preview → conflict resolution → zero-conflict preview → apply.
-  Init/repair share this path; conflict prompts expose only planner choices and a second repair is a
+  Certified post-complete init binds exact governance provenance; pending recovery uses the retained original validated plan with public idempotent apply, never fresh replanning; certified stable documents come only from the governance `documents` command, never from the agent. Init/repair share this path; conflict prompts expose only planner choices and a second repair is a
   byte/mode/mtime no-op. Surface scaffolding separates unbound preparation from active-v1 addition;
   the latter uses the public planner to keep root, routing, create-only standard, and specialist triad
   coherent. Planner-owned provenance resolves the canonical project bootstrap, which owns navigation
@@ -64,7 +64,7 @@
   eagerly loads only `required` inputs, obtains an `onDemand` item only for a named missing fact,
   records that justification, and writes its durable artifact before returning the selected response envelope below.
   Manifests govern eager upstream context, not normal repository source discovery.
-  The implement skill/controller validates artifact-first completion and the envelope. The implement handoff writes the aggregate diff only as `branch-diff.txt`. Manual drive and legacy autopilot protocol 1 record each task-result bullet as
+  The implement skill/controller validates artifact-first completion and the envelope. The implement handoff writes the aggregate diff only as `branch-diff.txt`. Manual drive records each task-result bullet as
   `- Task <id>: <DONE|DONE_WITH_CONCERNS>; artifact: <path>; changed-paths: <paths|none>; signals: <IDs|none>`,
   then verifies that index against the plan before claiming completion — a skill never hands a
   downstream deterministic gate an artifact it has not parsed itself.
@@ -91,7 +91,7 @@
   creation remains allowed when neither derived artifact exists.
   Skills route abstract tiers; adapters, not skill prose, apply or degrade concrete models.
 - The chain skills carry one byte-identical workflow-header grammar whose phase domain is `phase: <brainstorm|plan|implement|review|loop-engineer|goal-contract>`; `goal-contract` is the producer-facing Gear-4 identity consumed by `loop-engineer` and checked by Gear-4 `review` provenance.
-- Manual drive and legacy autopilot protocol 1 artifact-first child results emitted by the implement controller and its three prompt templates share this exact ordered four-field shape: `status`, `artifact`, `changed-paths`, `signals`. Status domains and placeholder text are role-specific and are not byte-identical. Implementer and fix roles use `DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT`. Reviewer roles use `APPROVED | ISSUES_FOUND | BLOCKED | NEEDS_CONTEXT`.
+- Manual-drive artifact-first child results emitted by the implement controller and its three prompt templates share this exact ordered four-field shape: `status`, `artifact`, `changed-paths`, `signals`. Status domains and placeholder text are role-specific and are not byte-identical. Implementer and fix roles use `DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT`. Reviewer roles use `APPROVED | ISSUES_FOUND | BLOCKED | NEEDS_CONTEXT`.
   Each emitting prompt may specialize placeholder text while retaining those field names in that order. The loop prompt templates use closed artifact-first envelopes in the exact ordered four-field shape; their immutable reports carry detail, while the final reviewer returns `status: DONE` plus `signals: approved | issues-found`.
   The common completion grammar below specifies the implementer specialization; it does not assert cross-role byte identity:
 
@@ -104,8 +104,8 @@
 
 - Task-reviewer `ISSUES_FOUND` points directly to `task-N-issues.md`; a review-file link is not
   a substitute. Malformed envelopes still fail closed without task completion. Gear-3 autopilot uses the
-  reviewer-response gate before trusting any reviewer result. In protocol 1, authorized review artifacts are excluded from `changed-paths`, which is literal `none`. One changed-paths-only correction requires a correlated reservation, valid unchanged verdict/artifact/signals, independent Git-state verification, and frozen report bytes. Task/final receipts bind the result index and full plan contract; active references use bind-reference rather than duplicate appends. The conductor verifies retained approvals before phase acceptance without rerunning review. Resume never replenishes the budget or repeats implementation.
-- Fresh Gear-3 autopilot runs pin `taskResultProtocol: 2`; retained legacy runs stay on protocol 1. `skills/implement/task-results-protocol.md` takes precedence over legacy four-field examples only for v2: implementer/fix and reviewer responses contain status, artifact, signals. Legacy extra changed-paths is raw-only telemetry, never path authority or a reason for path-only correction. The controller records an exact execution state in its authorized ledger before each writer, begins/captures immutable source and report receipts, and generates the JSON task-index projection. A saved execution resumes review-pending without reimplementation; baseline-only state cannot establish completion. Fixes bind same-task previous state and the latest global parent state. Valid captured NEEDS_CONTEXT/BLOCKED can continue only through a new retry execution after a recorded remedy, retaining all earlier evidence; malformed/baseline-only results cannot. Retry uses the original task-manifest role and a fresh task-N-retry-E.json path. Every ancestor must match its phase manifest provenance. Task reviews bind the latest execution, so fixes require fresh approval when an old proof is obsolete. Only schema-authorized exact receipt links grant confined machine replay; outputs do not grant generic work reads and children never inherit receipt-body access. Source discovery stays normal. Never fabricate a historical baseline, silently upgrade, or change manual/Gear-4 grammar.
+  reviewer-response gate before trusting any reviewer result. Task/final receipts bind the result index and full plan contract; active references use bind-reference rather than duplicate appends. The conductor verifies retained approvals before phase acceptance without rerunning review. Resume never repeats implementation.
+- Gear-3 autopilot always pins `taskResultProtocol: 2`; implementer/fix and reviewer responses contain status, artifact, signals only; a `changed-paths` field is malformed. The controller records an exact execution state in its authorized ledger before each writer, begins/captures immutable source and report receipts, and generates the JSON task-index projection. A saved execution resumes review-pending without reimplementation; baseline-only state cannot establish completion. Fixes bind same-task previous state and the latest global parent state. Valid captured NEEDS_CONTEXT/BLOCKED can continue only through a new retry execution after a recorded remedy, retaining all earlier evidence; malformed/baseline-only results cannot. Retry uses the original task-manifest role and a fresh task-N-retry-E.json path. Every ancestor must match its phase manifest provenance. Task reviews bind the latest execution, so fixes require fresh approval when an old proof is obsolete. Only schema-authorized exact receipt links grant confined machine replay; outputs do not grant generic work reads and children never inherit receipt-body access. Source discovery stays normal. Never fabricate a historical baseline or change manual/Gear-4 grammar.
 - Each chain skill keeps a phase-local role map: in Gear 2, `brainstorm` produces a READY spec
   directly for `implement`, and an explicitly requested light plan may still insert `plan`; in Gear
   3, `brainstorm` produces a READY spec for `plan`, `plan` produces a READY plan for `implement`,
@@ -132,6 +132,7 @@
   Review requires set equality between plan task IDs and result-index IDs.
 
 ## Anti-patterns
+- Inception follows conventions.md → "Inception (pre-hub)": persist unit before work, recover exact refs/publications without replay, approve the control contract, collect automatic/manual/both evidence and rerun all required checks after fixes. Complete/source import requires verified evidence and application; an unsupported run format is refused, never migrated or archived.
 - Specs and plans live only under `.apex/work/` (gitignored local artifacts) — never register
   them in `_INDEX.md` or create a specs/plans sub-index.
 - Never omit `model:` when dispatching a subagent — an omitted model inherits the expensive
@@ -144,7 +145,6 @@
 
 ## Testing
 Narrowest validation that can falsify a change here:
-
 ```sh
 node --test tests/workflow-skills.test.mjs
 ```

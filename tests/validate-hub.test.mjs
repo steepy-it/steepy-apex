@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 import {
   chmodSync,
-  cpSync,
   existsSync,
   lstatSync,
   mkdtempSync,
@@ -91,67 +90,9 @@ function putPortable(hub, path, content) {
   writeFileSync(join(hub, path), content);
 }
 
-// Copies `templates/` into a temp directory and writes the next adapter template text,
-// so the linter is proved before the real templates change. Full contents are written
-// (never `.replace` on the old text), so this stays valid after the real templates
-// change. Exactly two copies of this helper exist on purpose: this one and the one in
-// tests/project-scaffold.test.mjs. Keep them identical. The caller removes the directory
-// in `finally`.
-function nextTemplatesDir() {
-  const dir = mkdtempSync(join(tmpdir(), 'steepy-next-templates-'));
-  cpSync(templates, dir, { recursive: true });
-  writeFileSync(join(dir, 'surface-agent-claude.md'), [
-    '---',
-    'name: {{agent}}',
-    'description: >-',
-    '  Specialist for the {{surface}} surface. Use it for changes under {{path}}.',
-    'model: {{model}}',
-    '---',
-    '<!-- steepy:generated:{{agent}}-claude:v1 -->',
-    '',
-    '# {{agent}}',
-    '',
-    'You are the specialist agent for the `{{surface}}` surface at `{{path}}`.',
-    '',
-    'Run the `{{projectName}}-bootstrap` skill, then read the standard linked in the `{{surface}}` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
-    '',
-  ].join('\n'));
-  writeFileSync(join(dir, 'surface-agent-opencode.md'), [
-    '---',
-    'description: >-',
-    '  Specialist for the {{surface}} surface. Use it for changes under {{path}}.',
-    'mode: subagent',
-    'model: {{model}}',
-    '---',
-    '<!-- steepy:generated:{{agent}}-opencode:v1 -->',
-    '',
-    '# {{agent}}',
-    '',
-    'You are the specialist agent for the `{{surface}}` surface at `{{path}}`.',
-    '',
-    'Run the `{{projectName}}-bootstrap` skill, then read the standard linked in the `{{surface}}` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
-    '',
-  ].join('\n'));
-  writeFileSync(join(dir, 'surface-agent-codex.toml'), [
-    '# steepy:generated:{{agent}}-codex:v1',
-    '# Project description: {{description}}',
-    '# Surface path: {{path}}',
-    'name = "{{agent}}"',
-    'description = "Specialist agent for {{surface}} work."',
-    'developer_instructions = """',
-    'You are the {{agent}} specialist for the {{surface}} surface.',
-    '',
-    'Run the `{{projectName}}-bootstrap` skill, then read the standard linked in the `{{surface}}` row of the routing table in `.apex/_INDEX.md` before working on this surface. Follow that standard without copying its rules into this adapter.',
-    '"""',
-    '',
-  ].join('\n'));
-  return dir;
-}
-
 // Literal v1.0.0-v1.0.6 adapter renderings for the portable-demo triad that
-// portableHub() writes, keyed by path. Duplicated on purpose: rendered once from
-// `git show v1.0.0:templates/<name>` with `model: 'inherit'`, never computed from
-// templates/prior/ at test time.
+// portableHub() writes, keyed by path: literals copied from the released v1.0.0
+// templates, rendered once with `model: 'inherit'`.
 const V1_0_PORTABLE_DEMO_ADAPTERS = {
   '.claude/agents/web-agent.md': [
     '---',
@@ -201,9 +142,8 @@ const V1_0_PORTABLE_DEMO_ADAPTERS = {
 };
 
 // Literal v1.0.0-v1.0.6 adapter renderings for the unbound preparatory triad
-// (projectName `project`, empty description), keyed by path. Duplicated on purpose:
-// rendered once from `git show v1.0.0:templates/<name>` with `model: 'inherit'`,
-// never computed from templates/prior/ at test time.
+// (projectName `project`, empty description), keyed by path: literals copied from
+// the released v1.0.0 templates, rendered once with `model: 'inherit'`.
 const V1_0_PREPARATORY_ADAPTERS = {
   '.claude/agents/web-agent.md': [
     '---',
@@ -691,18 +631,15 @@ test('portable v1: a full project still fails a modular route even though adapte
   assert.equal(captureMain(['--quiet', hub]).code, 1);
 });
 
-// GC10 warn text for one untouched v1.0.0-v1.0.6 web-agent adapter.
-function staleWarn(adapter, path) {
-  return {
-    level: 'warn',
-    msg: `portable-v1: web-agent ${adapter} adapter at ${path} is the v1.0.0-v1.0.6 rendering; init repair updates it to the current rendering`,
-  };
+// Error text for one untouched v1.0.0-v1.0.6 web-agent adapter in a bound hub.
+function customizedError(adapter, path) {
+  return { level: 'error', msg: `portable-v1: web-agent ${adapter} adapter at ${path} is customized` };
 }
 
-const WEB_AGENT_STALE_WARNS = [
-  staleWarn('claude', '.claude/agents/web-agent.md'),
-  staleWarn('codex', '.codex/agents/web-agent.toml'),
-  staleWarn('opencode', '.opencode/agents/web-agent.md'),
+const WEB_AGENT_CUSTOMIZED_ERRORS = [
+  customizedError('claude', '.claude/agents/web-agent.md'),
+  customizedError('codex', '.codex/agents/web-agent.toml'),
+  customizedError('opencode', '.opencode/agents/web-agent.md'),
 ];
 
 function portableEntries(violations) {
@@ -713,18 +650,14 @@ function putAdapters(hub, adapters) {
   for (const [path, content] of Object.entries(adapters)) putPortable(hub, path, content);
 }
 
-test('portable v1: untouched v1.0 adapters in a bound hub only warn', () => {
-  const next = nextTemplatesDir();
+test('portable v1: untouched v1.0 adapters in a bound hub are a customized error', () => {
   const hub = portableHub();
   try {
     // GC12: write the v1.0 literals explicitly instead of relying on portableHub().
     putAdapters(hub, V1_0_PORTABLE_DEMO_ADAPTERS);
-    const violations = collectViolations(hub, { templatesDir: next });
-    assert.deepEqual(violations.filter((item) => item.level === 'error'), [], JSON.stringify(violations));
-    assert.deepEqual(portableEntries(violations), WEB_AGENT_STALE_WARNS);
+    assert.deepEqual(portableEntries(collectViolations(hub)), WEB_AGENT_CUSTOMIZED_ERRORS);
   } finally {
     rmSync(hub, { recursive: true, force: true });
-    rmSync(next, { recursive: true, force: true });
   }
 });
 
@@ -736,38 +669,37 @@ test('portable v1: any byte beyond a bound v1.0 adapter stays customized', () =>
     ['one doubled inner space', rendering.replace('You are the specialist', 'You are  the specialist')],
     ['CRLF line endings', rendering.replaceAll('\n', '\r\n')],
   ];
-  const next = nextTemplatesDir();
   const hub = portableHub();
   try {
     putAdapters(hub, V1_0_PORTABLE_DEMO_ADAPTERS);
     for (const [name, observed] of cases) {
       assert.notEqual(observed, rendering, name);
       putPortable(hub, path, observed);
-      assert.deepEqual(portableEntries(collectViolations(hub, { templatesDir: next })), [
+      assert.deepEqual(portableEntries(collectViolations(hub)), [
         {
           level: 'error',
           msg: 'portable-v1: web-agent claude adapter at .claude/agents/web-agent.md is customized',
         },
-        ...WEB_AGENT_STALE_WARNS.slice(1),
+        ...WEB_AGENT_CUSTOMIZED_ERRORS.slice(1),
       ], name);
     }
   } finally {
     rmSync(hub, { recursive: true, force: true });
-    rmSync(next, { recursive: true, force: true });
   }
 });
 
-test('portable v1: an untouched v1.0 preparatory triad stays compatible with one warn per adapter', () => {
-  const next = nextTemplatesDir();
+test('portable v1: an untouched v1.0 preparatory triad closes validation', () => {
   const hub = preparatoryHub();
   try {
     putAdapters(hub, V1_0_PREPARATORY_ADAPTERS);
-    const violations = collectViolations(hub, { templatesDir: next });
-    assert.deepEqual(violations.filter((item) => item.level === 'error'), [], JSON.stringify(violations));
-    assert.deepEqual(portableEntries(violations), WEB_AGENT_STALE_WARNS);
+    const violations = collectViolations(hub);
+    assert.ok(
+      violations.some(({ level, msg }) => level === 'error' && msg === 'portable-v1: project instructions at AGENTS.md are missing'),
+      JSON.stringify(violations),
+    );
+    assert.equal(violations.some(({ level }) => level === 'warn'), false, JSON.stringify(violations));
   } finally {
     rmSync(hub, { recursive: true, force: true });
-    rmSync(next, { recursive: true, force: true });
   }
 });
 
@@ -775,12 +707,11 @@ test('portable v1: a drifted v1.0 preparatory adapter closes validation', () => 
   const path = '.claude/agents/web-agent.md';
   const drifted = V1_0_PREPARATORY_ADAPTERS[path].replace('You are the specialist', 'You are  the specialist');
   assert.notEqual(drifted, V1_0_PREPARATORY_ADAPTERS[path]);
-  const next = nextTemplatesDir();
   const hub = preparatoryHub();
   try {
     putAdapters(hub, V1_0_PREPARATORY_ADAPTERS);
     putPortable(hub, path, drifted);
-    const errors = collectViolations(hub, { templatesDir: next }).filter((item) => item.level === 'error');
+    const errors = collectViolations(hub).filter((item) => item.level === 'error');
     assert.ok(errors.length > 0, 'a drifted preparatory adapter fell through');
     assert.ok(
       errors.some(({ msg }) => msg === 'portable-v1: project instructions at AGENTS.md are missing'),
@@ -788,32 +719,26 @@ test('portable v1: a drifted v1.0 preparatory adapter closes validation', () => 
     );
   } finally {
     rmSync(hub, { recursive: true, force: true });
-    rmSync(next, { recursive: true, force: true });
   }
 });
 
 // Reverse direction against the real engine and the packaged templates (no seam):
-// an untouched v1.0.0-v1.0.6 hub stays green everywhere, a drifted one does not.
-test('portable v1: untouched v1.0 adapters warn under the real templates and stay silent when quiet and in the Stop hook', () => {
+// an untouched v1.0.0-v1.0.6 adapter is customized, so the hub fails and the Stop hook blocks.
+test('portable v1: untouched v1.0 adapters error under the real templates, fail quiet, and block the Stop hook', () => {
   const hub = portableHub();
   try {
     putAdapters(hub, V1_0_PORTABLE_DEMO_ADAPTERS);
-    // The adapters and AGENTS.md cite the surface path; it exists so the stale warns are the only warns.
     mkdirSync(join(hub, 'apps', 'web'), { recursive: true });
     const violations = collectViolations(hub);
-    assert.deepEqual(violations.filter((item) => item.level === 'error'), [], JSON.stringify(violations));
-    assert.deepEqual(violations, WEB_AGENT_STALE_WARNS);
+    assert.deepEqual(violations.filter((item) => item.level === 'error'), WEB_AGENT_CUSTOMIZED_ERRORS);
+    assert.deepEqual(violations.filter((item) => item.level === 'warn'), []);
 
-    const loud = captureMain([hub]);
-    assert.equal(loud.code, 0, loud.err);
-    assert.match(loud.out, /OK/);
-    assert.match(loud.err, /warn: portable-v1: web-agent claude adapter at .* is the v1\.0\.0-v1\.0\.6 rendering/);
-    assert.deepEqual(captureMain([hub, '--quiet']), { code: 0, out: '', err: '' });
+    assert.equal(captureMain([hub]).code, 1);
+    assert.equal(captureMain([hub, '--quiet']).code, 1);
 
-    const quiet = spawnSync(process.execPath, [validator, hub, '--quiet'], { encoding: 'utf8' });
-    assert.deepEqual([quiet.status, quiet.stdout, quiet.stderr], [0, '', '']);
     const hook = spawnSync(process.execPath, [stopHook, hub], { encoding: 'utf8', input: '{}' });
-    assert.deepEqual([hook.status, hook.stdout, hook.stderr], [0, '', '']);
+    assert.equal(hook.status, 0, hook.stderr);
+    assert.equal(JSON.parse(hook.stdout).decision, 'block');
   } finally {
     rmSync(hub, { recursive: true, force: true });
   }
@@ -848,51 +773,43 @@ test('portable v1: a drifted bound v1.0 adapter errors under the real templates,
   }
 });
 
-test('portable v1: an untouched v1.0 preparatory triad exits 0 with three warns under the real templates', () => {
+test('portable v1: an untouched v1.0 preparatory triad exits 1 under the real templates', () => {
   const hub = preparatoryHub();
   try {
     putAdapters(hub, V1_0_PREPARATORY_ADAPTERS);
     const result = runValidator(hub);
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /OK/);
-    assert.equal(result.stderr, WEB_AGENT_STALE_WARNS.map(({ msg }) => `  - warn: ${msg}\n`).join(''));
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /portable-v1: project instructions at AGENTS\.md are missing/);
+    assert.doesNotMatch(result.stderr, /warn:/);
   } finally {
     rmSync(hub, { recursive: true, force: true });
   }
 });
 
-test('portable v1: new-surface --repair reports an untouched v1.0 preparatory triad as updated, then preserved', () => {
+test('portable v1: new-surface --repair stops on the customized conflict for an untouched v1.0 preparatory triad', () => {
   const library = preparatoryHub();
   const cli = preparatoryHub();
   const surface = { name: 'web', surfacePath: 'apps/web', agent: 'web-agent', templatesDir: templates, testCmd: 'npm test' };
   try {
     putAdapters(library, V1_0_PREPARATORY_ADAPTERS);
-    const result = scaffold({ ...surface, hubRoot: library, repair: true });
-    assert.deepEqual(
-      [result.created, result.updated, result.preserved],
-      [[], ['claude', 'codex', 'opencode'], ['standard']],
+    assert.throws(
+      () => scaffold({ ...surface, hubRoot: library, repair: true }),
+      /specialist scaffold conflicts: v1:web-agent-claude:customized/,
     );
 
     putAdapters(cli, V1_0_PREPARATORY_ADAPTERS);
+    const indexBefore = readFileSync(join(cli, '.apex', '_INDEX.md'), 'utf8');
     const run = spawnSync(process.execPath, [
       newSurfaceScript, '--name', 'web', '--path', 'apps/web', '--agent', 'web-agent',
       '--test', 'npm test', '--hub', cli, '--repair',
     ], { encoding: 'utf8' });
-    assert.equal(run.status, 0, run.stderr);
-    const lines = run.stdout.split('\n');
-    for (const path of Object.keys(V1_0_PREPARATORY_ADAPTERS)) {
-      assert.ok(lines.some((line) => line.startsWith('updated ') && line.includes(path)),
-        `${path} must be reported as updated:\n${run.stdout}`);
+    assert.equal(run.status, 1, run.stderr);
+    assert.match(run.stderr, /specialist scaffold conflicts: .*v1:web-agent-claude:customized.*choices: replace, abort/);
+    assert.equal(run.stdout, '');
+    for (const [path, content] of Object.entries(V1_0_PREPARATORY_ADAPTERS)) {
+      assert.equal(readFileSync(join(cli, path), 'utf8'), content, path);
     }
-    assert.doesNotMatch(run.stdout, /^created /m);
-    assert.doesNotMatch(run.stdout, /partial surface|nothing to scaffold/);
-    assert.deepEqual(collectViolations(cli), []);
-
-    const rerun = scaffold({ ...surface, hubRoot: cli, repair: true });
-    assert.deepEqual(
-      [rerun.created, rerun.updated, rerun.preserved],
-      [[], [], ['standard', 'claude', 'codex', 'opencode']],
-    );
+    assert.equal(readFileSync(join(cli, '.apex', '_INDEX.md'), 'utf8'), indexBefore);
   } finally {
     rmSync(library, { recursive: true, force: true });
     rmSync(cli, { recursive: true, force: true });
@@ -2802,5 +2719,777 @@ test('permission-denied package metadata returns controlled violations without t
     assert.doesNotMatch(cli.stderr, /at .*validate-hub\.mjs/i);
   } finally {
     chmodSync(manifest, 0o600);
+  }
+});
+
+// Inception area exclusion (.apex/inception/**). These blocks mirror the
+// .apex/work exclusion coverage above. Every new block resolves its temporary
+// root with realpathSync and removes it in `finally`.
+import { linkSync, realpathSync } from 'node:fs';
+
+function inceptionTempRoot(suffix) {
+  return realpathSync(mkdtempSync(join(tmpdir(), `steepy-inception-${suffix}-`)));
+}
+
+test('inception area files with broken links and orphan Markdown are ignored by stable hub scans', () => {
+  const hub = inceptionTempRoot('ignored');
+  try {
+    mkdirSync(join(hub, '.apex', 'inception', 'project'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(
+      join(hub, '.apex', 'inception', 'project', 'decision-register.md'),
+      '# Register\n[Broken](missing.md)\n',
+    );
+    writeFileSync(join(hub, '.apex', 'inception', 'orphan.md'), '# Orphan\n');
+
+    assert.deepEqual(collectViolations(hub), []);
+    const cli = runValidator(hub);
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.match(cli.stdout, /OK — doc graph is coherent/);
+    assert.doesNotMatch(`${cli.stdout}\n${cli.stderr}`, /\.apex\/inception/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('stable hub docs must not link into the .apex/inception area', () => {
+  const hub = inceptionTempRoot('link');
+  try {
+    mkdirSync(join(hub, '.apex', 'inception', 'project'), { recursive: true });
+    writeFileSync(join(hub, '.apex', 'inception', 'project', 'decision-register.md'), '# Register\n');
+    writeFileSync(join(hub, '.apex', 'inception', 'run.json'), '{}\n');
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), [
+      '# Index',
+      '- [Guide](guide.md)',
+      '- [Register](inception/project/decision-register.md)',
+      '',
+    ].join('\n'));
+    writeFileSync(join(hub, '.apex', 'guide.md'), '# Guide\n- [Run](./inception/run.json)\n');
+
+    assert.deepEqual(collectViolations(hub), [
+      {
+        level: 'error',
+        msg: 'stable docs must not link into .apex/inception: .apex/_INDEX.md -> inception/project/decision-register.md',
+      },
+      {
+        level: 'error',
+        msg: 'stable docs must not link into .apex/inception: .apex/guide.md -> ./inception/run.json',
+      },
+    ]);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('routing-table links into .apex/inception are rejected once', () => {
+  const hub = inceptionTempRoot('routing-link');
+  try {
+    mkdirSync(join(hub, '.apex', 'inception', 'project', 'standards'), { recursive: true });
+    mkdirSync(join(hub, '.claude', 'agents'), { recursive: true });
+    writeFileSync(join(hub, '.apex', 'inception', 'project', 'standards', 'web.md'), '# Draft\n');
+    writeFileSync(join(hub, '.claude', 'agents', 'web-agent.md'), '# web-agent\n');
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), [
+      '# Index',
+      '',
+      '| Surface | Docs | Agent | Skill |',
+      '|---|---|---|---|',
+      '| `web` | [Draft](inception/project/standards/web.md) | `web-agent` | — |',
+    ].join('\n'));
+
+    const v = collectViolations(hub).filter((x) => x.msg.includes('.apex/inception'));
+    assert.deepEqual(v, [{
+      level: 'error',
+      msg: 'stable docs must not link into .apex/inception: .apex/_INDEX.md -> inception/project/standards/web.md',
+    }]);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('work link messages stay byte-identical beside the inception link message', () => {
+  const hub = inceptionTempRoot('work-message');
+  try {
+    mkdirSync(join(hub, '.apex', 'work', 'specs'), { recursive: true });
+    mkdirSync(join(hub, '.apex', 'inception', 'project'), { recursive: true });
+    writeFileSync(join(hub, '.apex', 'work', 'specs', 'draft.md'), '# Draft\n');
+    writeFileSync(join(hub, '.apex', 'inception', 'project', 'decision-register.md'), '# Register\n');
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), [
+      '# Index',
+      '- [Draft](work/specs/draft.md)',
+      '- [Register](inception/project/decision-register.md)',
+      '',
+    ].join('\n'));
+
+    assert.deepEqual(collectViolations(hub), [
+      {
+        level: 'error',
+        msg: 'stable docs must not link into .apex/work: .apex/_INDEX.md -> work/specs/draft.md',
+      },
+      {
+        level: 'error',
+        msg: 'stable docs must not link into .apex/inception: .apex/_INDEX.md -> inception/project/decision-register.md',
+      },
+    ]);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('code-anchor: backticked .apex/inception tokens in stable docs never warn', () => {
+  const hub = inceptionTempRoot('anchor');
+  try {
+    mkdirSync(join(hub, '.apex', 'notes'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), [
+      '# Index',
+      '- [Guide](notes/guide.md)',
+      '',
+      'The run descriptor is `.apex/inception/run.json`; the register is',
+      '`inception/project/decision-register.md`.',
+      '',
+    ].join('\n'));
+    writeFileSync(
+      join(hub, '.apex', 'notes', 'guide.md'),
+      '# Guide\n\nResults land in `../inception/verification/results.md`.\n',
+    );
+
+    assert.deepEqual(collectViolations(hub), []);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('case aliases into the inception area are refused before BFS consumes hidden bytes', (t) => {
+  const capability = inceptionTempRoot('case-capability');
+  const hubs = [];
+  try {
+    if (!storageAliasesCase(capability)) {
+      t.skip('temporary storage keeps case-distinct directory identities');
+      return;
+    }
+    for (const alias of ['INCEPTION', 'InCePtIoN']) {
+      const hub = inceptionTempRoot(`case-link-${alias}`);
+      hubs.push(hub);
+      mkdirSync(join(hub, '.apex', 'inception'), { recursive: true });
+      writeFileSync(join(hub, '.apex', '_INDEX.md'), [
+        '# Index',
+        `- [Hidden](${alias}/sentinel.md)`,
+        `- [Traversal](${alias}/../leaf.md)`,
+        '',
+      ].join('\n'));
+      writeFileSync(join(hub, '.apex', 'inception', 'sentinel.md'), [
+        '# Hidden',
+        '[Sentinel](SYNTHETIC_INCEPTION_BYTE_SENTINEL.md)',
+        '[Leaf](../leaf.md)',
+        '',
+      ].join('\n'));
+      writeFileSync(join(hub, '.apex', 'leaf.md'), '# Leaf\n');
+
+      const messages = collectViolations(hub).map(({ msg }) => msg).join('\n');
+      assert.match(messages, /enters excluded \.apex\/inception/i, alias);
+      assert.match(messages, /anti-orphan: \.apex\/leaf\.md/i, alias);
+      assert.doesNotMatch(messages, /SYNTHETIC_INCEPTION_BYTE_SENTINEL/u, alias);
+      const cli = runValidator(hub);
+      assert.equal(cli.status, 1, `${alias}: ${cli.stderr}`);
+      assert.doesNotMatch(`${cli.stdout}\n${cli.stderr}`, /SYNTHETIC_INCEPTION_BYTE_SENTINEL/u, alias);
+    }
+  } finally {
+    for (const dir of [capability, ...hubs]) rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('nested parent-relative inception aliases are refused before hidden BFS reads', (t) => {
+  const hub = inceptionTempRoot('case-nested');
+  try {
+    if (!storageAliasesCase(hub)) {
+      t.skip('temporary storage keeps case-distinct directory identities');
+      return;
+    }
+    mkdirSync(join(hub, '.apex', 'docs'), { recursive: true });
+    mkdirSync(join(hub, '.apex', 'inception'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n- [Start](docs/start.md)\n');
+    writeFileSync(join(hub, '.apex', 'docs', 'start.md'), [
+      '# Start',
+      '- [Hidden](../InCePtIoN/sentinel.md)',
+      '- [Traversal](../INCEPTION/../leaf.md)',
+      '',
+    ].join('\n'));
+    writeFileSync(join(hub, '.apex', 'inception', 'sentinel.md'), [
+      '# Hidden',
+      '[Sentinel](NESTED_INCEPTION_BYTE_SENTINEL.md)',
+      '[Leaf](../leaf.md)',
+      '',
+    ].join('\n'));
+    writeFileSync(join(hub, '.apex', 'leaf.md'), '# Leaf\n');
+
+    const messages = collectViolations(hub).map(({ msg }) => msg).join('\n');
+    assert.match(messages, /enters excluded \.apex\/inception/i);
+    assert.match(messages, /anti-orphan: \.apex\/leaf\.md/i);
+    assert.doesNotMatch(messages, /NESTED_INCEPTION_BYTE_SENTINEL/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('root instruction aliases into the inception area are controlled refusals', (t) => {
+  const hub = inceptionTempRoot('case-root-link');
+  try {
+    if (!storageAliasesCase(hub)) {
+      t.skip('temporary storage keeps case-distinct directory identities');
+      return;
+    }
+    mkdirSync(join(hub, '.apex', 'inception'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(
+      join(hub, '.apex', 'inception', 'sentinel.md'),
+      '# Hidden\n[Sentinel](ROOT_INCEPTION_BYTE_SENTINEL.md)\n',
+    );
+    writeFileSync(join(hub, 'AGENTS.md'), [
+      '# Instructions',
+      '- [Hidden](.APEX/INCEPTION/sentinel.md)',
+      '- [Traversal](.APEX/InCePtIoN/../_INDEX.md)',
+      '',
+    ].join('\n'));
+
+    const result = runValidator(hub);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /enters excluded \.apex\/inception/i);
+    assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /ROOT_INCEPTION_BYTE_SENTINEL/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('a noncanonical stored inception-case alias is silently excluded from incidental scans', (t) => {
+  const hub = inceptionTempRoot('case-stored');
+  try {
+    mkdirSync(join(hub, '.apex', 'INCEPTION'), { recursive: true });
+    if (!storageAliasesCase(hub) || !existsSync(join(hub, '.apex', 'inception'))) {
+      t.skip('temporary storage keeps case-distinct directory identities');
+      return;
+    }
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(
+      join(hub, '.apex', 'INCEPTION', 'sentinel.md'),
+      '# Hidden\n[Sentinel](STORED_INCEPTION_BYTE_SENTINEL.md)\n',
+    );
+    writeFileSync(join(hub, '.apex', 'INCEPTION', 'oversized.md'), 'x'.repeat(1024 * 1024 + 1));
+    symlinkSync(join(hub, '.apex', '_INDEX.md'), join(hub, '.apex', 'INCEPTION', 'refused.md'));
+
+    assert.deepEqual(collectViolations(hub), []);
+    const quiet = captureMain(['--quiet', hub]);
+    assert.equal(quiet.code, 0, quiet.err);
+    assert.equal(quiet.err, '');
+    assert.doesNotMatch(quiet.out, /STORED_INCEPTION_BYTE_SENTINEL/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('a physically distinct uppercase INCEPTION directory remains stable content', (t) => {
+  const hub = inceptionTempRoot('case-distinct');
+  try {
+    if (storageAliasesCase(hub)) {
+      t.skip('temporary storage aliases case spellings');
+      return;
+    }
+    mkdirSync(join(hub, '.apex', 'INCEPTION'), { recursive: true });
+    mkdirSync(join(hub, '.apex', 'inception'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(
+      join(hub, '.apex', 'INCEPTION', 'visible.md'),
+      '# Visible\n[Sentinel](CASE_DISTINCT_INCEPTION_VISIBLE_SENTINEL.md)\n',
+    );
+
+    const messages = collectViolations(hub).map(({ msg }) => msg).join('\n');
+    assert.match(messages, /\.apex\/INCEPTION\/visible\.md/u);
+    assert.match(messages, /CASE_DISTINCT_INCEPTION_VISIBLE_SENTINEL/u);
+    assert.doesNotMatch(messages, /enters excluded \.apex\/inception/i);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('a descendant symlink from a stable path into the inception area is refused unread', () => {
+  const hub = inceptionTempRoot('bfs-symlink');
+  try {
+    mkdirSync(join(hub, '.apex', 'decisions'), { recursive: true });
+    mkdirSync(join(hub, '.apex', 'inception', 'project'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), [
+      '# Index',
+      '- [Decisions](decisions/_INDEX.md)',
+      '- [Linked](linked/sentinel.md)',
+      '',
+    ].join('\n'));
+    writeFileSync(join(hub, '.apex', 'leaf.md'), '# Stable leaf\n');
+    writeFileSync(join(hub, '.apex', 'inception', 'project', 'sentinel.md'), [
+      '# Hidden',
+      '[Sentinel](INCEPTION_SENTINEL_MUST_NOT_BE_READ.md)',
+      '- [Leaf](../../leaf.md)',
+      '',
+    ].join('\n'));
+    symlinkSync(
+      join(hub, '.apex', 'inception', 'project', 'sentinel.md'),
+      join(hub, '.apex', 'decisions', '_INDEX.md'),
+    );
+    symlinkSync(join(hub, '.apex', 'inception', 'project'), join(hub, '.apex', 'linked'));
+
+    const messages = collectViolations(hub).map((item) => item.msg).join('\n');
+    assert.match(messages, /stable-read: \.apex\/decisions\/_INDEX\.md is symlink/i);
+    assert.match(messages, /stable-read: \.apex\/linked\/sentinel\.md has symlinked component/i);
+    assert.match(messages, /anti-orphan: \.apex\/leaf\.md/);
+    assert.doesNotMatch(messages, /INCEPTION_SENTINEL_MUST_NOT_BE_READ/u);
+    assert.doesNotMatch(messages, /\.apex\/inception/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('PD3(a): an inception file hard-linked to a linked stable doc keeps the hub green', () => {
+  const hub = inceptionTempRoot('hardlink-area');
+  try {
+    mkdirSync(join(hub, '.apex', 'inception', 'project'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n- [Leaf](leaf.md)\n');
+    writeFileSync(join(hub, '.apex', 'leaf.md'), '# Leaf\n');
+    linkSync(join(hub, '.apex', 'leaf.md'), join(hub, '.apex', 'inception', 'project', 'leaf.md'));
+    assert.equal(lstatSync(join(hub, '.apex', 'leaf.md')).nlink, 2);
+
+    assert.deepEqual(collectViolations(hub), []);
+    const cli = runValidator(hub);
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.match(cli.stdout, /OK — doc graph is coherent/);
+    assert.doesNotMatch(`${cli.stdout}\n${cli.stderr}`, /\.apex\/inception/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('PD3(b): a stable orphan hard-linked to an inception file is an anti-orphan by its stable path', () => {
+  const hub = inceptionTempRoot('hardlink-stable');
+  try {
+    mkdirSync(join(hub, '.apex', 'inception', 'project'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(join(hub, '.apex', 'inception', 'project', 'decision-register.md'), '# Register\n');
+    linkSync(
+      join(hub, '.apex', 'inception', 'project', 'decision-register.md'),
+      join(hub, '.apex', 'orphan.md'),
+    );
+    assert.equal(lstatSync(join(hub, '.apex', 'orphan.md')).nlink, 2);
+
+    assert.deepEqual(collectViolations(hub), [
+      { level: 'error', msg: 'anti-orphan: .apex/orphan.md is not linked from .apex/_INDEX.md' },
+    ]);
+    const cli = runValidator(hub);
+    assert.equal(cli.status, 1, cli.stderr);
+    assert.match(cli.stderr, /anti-orphan: \.apex\/orphan\.md is not linked/u);
+    assert.doesNotMatch(`${cli.stdout}\n${cli.stderr}`, /\.apex\/inception/u);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+// Pre-hub inception state (Task 4). The lexical `.apex/inception` exclusion in
+// the stable reader is pinned first, with the area absent so no physical
+// identity check can refuse before it: only the pre-hub descriptor read may
+// admit `.apex/inception/run.json`.
+test('a root instruction link into an absent inception area is a lexical refusal, never a broken link', () => {
+  const hub = inceptionTempRoot('lexical-absent');
+  try {
+    mkdirSync(join(hub, '.apex'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(join(hub, 'AGENTS.md'), '# proj\n\nSee [run](.apex/inception/run.json).\n');
+    assert.equal(existsSync(join(hub, '.apex', 'inception')), false);
+
+    assert.deepEqual(collectViolations(hub), [
+      { level: 'error', msg: 'stable-read: .apex/inception/run.json enters excluded .apex/inception' },
+    ]);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+test('a root instruction link to a present run descriptor beside a hub index stays a lexical refusal', () => {
+  const hub = inceptionTempRoot('lexical-present');
+  try {
+    mkdirSync(join(hub, '.apex', 'inception'), { recursive: true });
+    writeFileSync(join(hub, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(join(hub, '.apex', 'inception', 'run.json'), '{}\n');
+    writeFileSync(join(hub, 'AGENTS.md'), '# proj\n\nSee [run](.apex/inception/run.json).\n');
+
+    assert.deepEqual(collectViolations(hub), [
+      { level: 'error', msg: 'stable-read: .apex/inception/run.json enters excluded .apex/inception' },
+    ]);
+  } finally {
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
+// Pre-hub state: `.apex/` holds the inception area but no `_INDEX.md`. A valid
+// run descriptor makes validation exit 0 with the run's phase and next step;
+// an unsafe or unparseable one is an error naming `.apex/inception/run.json`.
+import { createRunDescriptor, parseRunDescriptor, serializeRunDescriptor } from '../scripts/inception-state.mjs';
+import { v1RunDescriptorText } from './helpers/inception-fixture.mjs';
+
+const PRE_HUB_RUN_ID = 'inc-20261007T120000Z-1a2b3c4d';
+const preHubRef = path => ({ path, bytes: 1, sha256: 'a'.repeat(64) });
+const PRE_HUB_CYCLE = preHubRef('.apex/inception/verification/cycles/0001.json');
+const PRE_HUB_COMPLETE = {
+  phase: 'complete',
+  status: 'complete',
+  nextRecord: 4,
+  cycles: [PRE_HUB_CYCLE],
+  currentCycle: PRE_HUB_CYCLE,
+  baseline: preHubRef('.apex/inception/snapshots/0002.json'),
+  completion: preHubRef('.apex/inception/verification/completions/0003.json'),
+};
+
+// Raw JSON, so an invalid override never throws while the fixture is built.
+function preHubDescriptor(changes = {}) {
+  return `${JSON.stringify({ ...createRunDescriptor({ runId: PRE_HUB_RUN_ID, harnessName: 'claude-code', capabilities: ['shell', 'subagents'], git: { present: false, branch: null, commits: 'none' } }), ...changes }, null, 2)}\n`;
+}
+
+// A valid descriptor's bytes; parsing here keeps a fixture bug from posing as
+// the parse-failure path.
+function validPreHubDescriptor(changes = {}) {
+  const bytes = preHubDescriptor(changes);
+  parseRunDescriptor(bytes);
+  return bytes;
+}
+
+function preHubRoot(suffix, descriptorBytes) {
+  const repo = inceptionTempRoot(`prehub-${suffix}`);
+  mkdirSync(join(repo, '.apex', 'inception'), { recursive: true });
+  writeFileSync(join(repo, '.apex', 'inception', '.gitignore'), '*\n');
+  if (descriptorBytes !== undefined) {
+    writeFileSync(join(repo, '.apex', 'inception', 'run.json'), descriptorBytes);
+  }
+  return repo;
+}
+
+function preHubLine(phase, status, nextStep) {
+  return `steepy validate-hub: no hub yet — inception run ${PRE_HUB_RUN_ID} is in phase ${phase} (${status}); next: ${nextStep}\n`;
+}
+
+function runQuietValidator(hub) {
+  return spawnSync(process.execPath, [validator, '--quiet', hub], { encoding: 'utf8', timeout: 2_000 });
+}
+
+function assertPreHubError(repo, msg) {
+  assert.deepEqual(collectViolations(repo), [{ level: 'error', msg }]);
+  const cli = runValidator(repo);
+  assert.equal(cli.status, 1, cli.stderr);
+  assert.equal(cli.stdout, '');
+  assert.equal(cli.stderr, `steepy validate-hub: 1 violation(s):\n  - ${msg}\n`);
+  const quiet = runQuietValidator(repo);
+  assert.equal(quiet.status, 1, quiet.stderr);
+  assert.equal(quiet.stderr, cli.stderr);
+}
+
+test('pre-hub: an area-only .apex with a valid descriptor exits 0 with the run phase and next step', () => {
+  const repo = preHubRoot('active', validPreHubDescriptor());
+  try {
+    writeFileSync(join(repo, '.apex', '.DS_Store'), Buffer.from([0, 0, 0, 1, 66, 117, 100, 49]));
+
+    assert.deepEqual(collectViolations(repo), []);
+    const cli = runValidator(repo);
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.equal(cli.stdout, preHubLine(
+      'reconnaissance',
+      'active',
+      'resume with the inception skill (phase reconnaissance)',
+    ));
+    assert.equal(cli.stderr, '');
+    const quiet = runQuietValidator(repo);
+    assert.equal(quiet.status, 0, quiet.stderr);
+    assert.equal(quiet.stdout, '');
+    assert.equal(quiet.stderr, '');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+const PRE_HUB_V1_ERROR = 'inception run descriptor .apex/inception/run.json cannot be parsed: run descriptor schema "steepy-inception-run/v1" is unsupported; supported: steepy-inception-run/v2';
+
+test('pre-hub: a v1 descriptor is an unsupported run format error', () => {
+  const repo = preHubRoot('complete', v1RunDescriptorText('complete'));
+  try {
+    assertPreHubError(repo, PRE_HUB_V1_ERROR);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: a blocked v1 descriptor is an unsupported run format error', () => {
+  const repo = preHubRoot('blocked', v1RunDescriptorText('blocked'));
+  try {
+    assertPreHubError(repo, PRE_HUB_V1_ERROR);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: an unparseable descriptor is one error naming .apex/inception/run.json', () => {
+  const invalidJson = preHubRoot('invalid-json', '{ "schema": \n');
+  const invalidState = preHubRoot('invalid-state', preHubDescriptor({ phase: 'complete' }));
+  try {
+    assertPreHubError(
+      invalidJson,
+      'inception run descriptor .apex/inception/run.json cannot be parsed: run descriptor is not valid JSON',
+    );
+    assertPreHubError(
+      invalidState,
+      'inception run descriptor .apex/inception/run.json cannot be parsed: run descriptor v2: complete phase/status must go together',
+    );
+  } finally {
+    rmSync(invalidJson, { recursive: true, force: true });
+    rmSync(invalidState, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: a descriptor with invalid UTF-8 is a parse failure, not a lossy valid run', () => {
+  const marked = Buffer.from(validPreHubDescriptor({
+    git: { present: true, branch: 'mainZZ', commits: 'allowed' },
+  }));
+  const at = marked.indexOf('ZZ');
+  const bytes = Buffer.concat([marked.subarray(0, at), Buffer.from([0xff]), marked.subarray(at + 2)]);
+  const repo = preHubRoot('invalid-utf8', bytes);
+  try {
+    assertPreHubError(
+      repo,
+      'inception run descriptor .apex/inception/run.json cannot be parsed: run descriptor is not valid UTF-8',
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: a symlinked descriptor or area is refused unread, naming the descriptor path', () => {
+  const linkedFile = preHubRoot('symlink-file');
+  const linkedArea = inceptionTempRoot('prehub-symlink-area');
+  try {
+    writeFileSync(join(linkedFile, 'elsewhere.json'), validPreHubDescriptor());
+    symlinkSync(join(linkedFile, 'elsewhere.json'), join(linkedFile, '.apex', 'inception', 'run.json'));
+    assertPreHubError(linkedFile, 'stable-read: .apex/inception/run.json is symlink');
+
+    mkdirSync(join(linkedArea, '.apex'));
+    mkdirSync(join(linkedArea, 'area'));
+    writeFileSync(join(linkedArea, 'area', 'run.json'), validPreHubDescriptor());
+    symlinkSync(join(linkedArea, 'area'), join(linkedArea, '.apex', 'inception'));
+    assertPreHubError(linkedArea, 'stable-read: .apex/inception/run.json has symlinked component');
+  } finally {
+    rmSync(linkedFile, { recursive: true, force: true });
+    rmSync(linkedArea, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: a hard-linked descriptor is refused, naming the descriptor path', () => {
+  const repo = preHubRoot('hardlink', validPreHubDescriptor());
+  try {
+    linkSync(join(repo, '.apex', 'inception', 'run.json'), join(repo, 'outside.json'));
+    assert.equal(lstatSync(join(repo, '.apex', 'inception', 'run.json')).nlink, 2);
+    assertPreHubError(repo, 'stable-read: .apex/inception/run.json is hard-linked');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: a non-file or oversized descriptor is refused, naming the descriptor path', () => {
+  const directory = preHubRoot('non-file');
+  const oversized = preHubRoot('oversized', 'x'.repeat(1024 * 1024 + 1));
+  try {
+    mkdirSync(join(directory, '.apex', 'inception', 'run.json'));
+    assertPreHubError(directory, 'stable-read: .apex/inception/run.json is non-file');
+    assertPreHubError(oversized, 'stable-read: .apex/inception/run.json exceeds 1048576 bytes');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(oversized, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: an unreadable descriptor is refused, naming the descriptor path', {
+  skip: process.platform === 'win32' || process.getuid?.() === 0,
+}, () => {
+  const repo = preHubRoot('unreadable', validPreHubDescriptor());
+  const descriptor = join(repo, '.apex', 'inception', 'run.json');
+  try {
+    chmodSync(descriptor, 0o000);
+    assertPreHubError(repo, 'stable-read: .apex/inception/run.json could not be opened safely');
+  } finally {
+    chmodSync(descriptor, 0o644);
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: .apex without an index or a descriptor keeps the missing-index error', () => {
+  const empty = inceptionTempRoot('prehub-empty');
+  const areaOnly = preHubRoot('area-only');
+  try {
+    mkdirSync(join(empty, '.apex'));
+    for (const repo of [empty, areaOnly]) {
+      const msg = `missing _INDEX.md at ${join(repo, '.apex', '_INDEX.md')}`;
+      assert.deepEqual(collectViolations(repo), [{ level: 'error', msg }]);
+      const cli = runValidator(repo);
+      assert.equal(cli.status, 1, cli.stderr);
+      assert.equal(cli.stderr, `steepy validate-hub: 1 violation(s):\n  - ${msg}\n`);
+    }
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+    rmSync(areaOnly, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: a repository without .apex keeps the no-hub line', () => {
+  const repo = inceptionTempRoot('prehub-no-apex');
+  try {
+    assert.deepEqual(collectViolations(repo), []);
+    const cli = runValidator(repo);
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.equal(cli.stdout, 'steepy validate-hub: no .apex hub found — run /steepy-apex:init to create one\n');
+    assert.equal(cli.stderr, '');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: other inception area files are never read, whether the descriptor is valid or not', () => {
+  const sentinel = 'PRE_HUB_AREA_SENTINEL_MUST_NOT_BE_READ';
+  const seed = (repo) => {
+    const area = join(repo, '.apex', 'inception');
+    mkdirSync(join(area, 'project'));
+    mkdirSync(join(area, 'research'));
+    writeFileSync(join(area, 'project', 'decision-register.md'), `# ${sentinel}\n[Broken](missing.md)\n`);
+    writeFileSync(join(area, 'effects.jsonl'), `${sentinel}\n`);
+    writeFileSync(join(area, 'research', 'oversized.md'), `${sentinel}\n${'x'.repeat(1024 * 1024)}`);
+    writeFileSync(join(repo, 'outside.md'), `${sentinel}\n`);
+    symlinkSync(join(repo, 'outside.md'), join(area, 'project', 'linked.md'));
+    writeFileSync(join(area, 'research', 'locked.md'), `${sentinel}\n`);
+    chmodSync(join(area, 'research', 'locked.md'), 0o000);
+    return join(area, 'research', 'locked.md');
+  };
+  const valid = preHubRoot('sentinel-valid', validPreHubDescriptor());
+  const invalid = preHubRoot('sentinel-invalid', '{\n');
+  const locked = [];
+  try {
+    locked.push(seed(valid), seed(invalid));
+
+    assert.deepEqual(collectViolations(valid), []);
+    const green = runValidator(valid);
+    assert.equal(green.status, 0, green.stderr);
+    assert.equal(green.stdout, preHubLine(
+      'reconnaissance',
+      'active',
+      'resume with the inception skill (phase reconnaissance)',
+    ));
+    assert.equal(green.stderr, '');
+
+    const msg = 'inception run descriptor .apex/inception/run.json cannot be parsed: run descriptor is not valid JSON';
+    assert.deepEqual(collectViolations(invalid), [{ level: 'error', msg }]);
+    const red = runValidator(invalid);
+    assert.equal(red.status, 1, red.stderr);
+    assert.equal(red.stderr, `steepy validate-hub: 1 violation(s):\n  - ${msg}\n`);
+    for (const output of [green, red]) {
+      assert.doesNotMatch(`${output.stdout}\n${output.stderr}`, new RegExp(sentinel, 'u'));
+    }
+  } finally {
+    for (const path of locked) chmodSync(path, 0o644);
+    rmSync(valid, { recursive: true, force: true });
+    rmSync(invalid, { recursive: true, force: true });
+  }
+});
+
+test('pre-hub: with _INDEX.md present the descriptor is ignored and validation is normal', () => {
+  const invalid = preHubRoot('index-invalid', '{\n');
+  const valid = preHubRoot('index-valid', validPreHubDescriptor());
+  try {
+    writeFileSync(join(invalid, '.apex', '_INDEX.md'), '# Index\n');
+    assert.deepEqual(collectViolations(invalid), []);
+    const ok = runValidator(invalid);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(ok.stdout, 'steepy validate-hub: OK — doc graph is coherent\n');
+
+    writeFileSync(join(valid, '.apex', '_INDEX.md'), '# Index\n');
+    writeFileSync(join(valid, '.apex', 'orphan.md'), '# Orphan\n');
+    const msg = 'anti-orphan: .apex/orphan.md is not linked from .apex/_INDEX.md';
+    assert.deepEqual(collectViolations(valid), [{ level: 'error', msg }]);
+    const failed = runValidator(valid);
+    assert.equal(failed.status, 1, failed.stderr);
+    assert.equal(failed.stdout, '');
+    assert.equal(failed.stderr, `steepy validate-hub: 1 violation(s):\n  - ${msg}\n`);
+  } finally {
+    rmSync(invalid, { recursive: true, force: true });
+    rmSync(valid, { recursive: true, force: true });
+  }
+});
+
+import { preHubInceptionStatus } from '../scripts/validate-hub.mjs';
+
+test('pre-hub: preHubInceptionStatus reports a valid run and is null outside the pre-hub state', () => {
+  const active = preHubRoot('status-active', validPreHubDescriptor());
+  const blocked = preHubRoot('status-blocked', validPreHubDescriptor({ phase: 'approval', status: 'blocked' }));
+  const complete = preHubRoot('status-complete', validPreHubDescriptor(PRE_HUB_COMPLETE));
+  const noApex = inceptionTempRoot('status-no-apex');
+  const noDescriptor = preHubRoot('status-no-descriptor');
+  const withIndex = preHubRoot('status-index', validPreHubDescriptor());
+  const invalid = preHubRoot('status-invalid', '{\n');
+  const linked = preHubRoot('status-linked', validPreHubDescriptor());
+  const unsupported = preHubRoot('status-v1', v1RunDescriptorText('active'));
+  try {
+    writeFileSync(join(withIndex, '.apex', '_INDEX.md'), '# Index\n');
+    linkSync(join(linked, '.apex', 'inception', 'run.json'), join(linked, 'outside.json'));
+
+    assert.deepEqual(preHubInceptionStatus(active), {
+      runId: PRE_HUB_RUN_ID,
+      phase: 'reconnaissance',
+      status: 'active',
+      nextStep: 'resume with the inception skill (phase reconnaissance)',
+    });
+    assert.deepEqual(preHubInceptionStatus(blocked), {
+      runId: PRE_HUB_RUN_ID,
+      phase: 'approval',
+      status: 'blocked',
+      nextStep: 'resolve each named human block with block resolve and observe uncertain effects; transition --to active only when all blocks and effects are resolved',
+    });
+    assert.deepEqual(preHubInceptionStatus(complete), {
+      runId: PRE_HUB_RUN_ID,
+      phase: 'complete',
+      status: 'complete',
+      nextStep: 'verify-complete before running the init skill, then the discovery skill with the inception source',
+    });
+    for (const repo of [noApex, noDescriptor, withIndex, invalid, linked, unsupported, join(noApex, 'absent')]) {
+      assert.equal(preHubInceptionStatus(repo), null, repo);
+    }
+  } finally {
+    for (const repo of [active, blocked, complete, noApex, noDescriptor, withIndex, invalid, linked, unsupported]) {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
+test('C7 pre-hub admission recovers descriptor-last abandon and refuses foreign or corrupt archives', () => {
+  const repo = preHubRoot('abandon-intent', validPreHubDescriptor());
+  const helper = new URL('../scripts/inception-state.mjs', import.meta.url).href;
+  try {
+    const crash = spawnSync(process.execPath, ['--input-type=module', '-e', `import {abandonRun} from ${JSON.stringify(helper)}; abandonRun(process.argv[1], {reason:'Stop', fault(p,d) {if(p === 'after-move' && d.name === 'run.json') process.exit(73);}});`, repo], { encoding: 'utf8' });
+    assert.equal(crash.status, 73, crash.stderr);
+    assert.deepEqual(collectViolations(repo), []);
+    assert.match(runValidator(repo).stdout, /abandon.*resume|resume.*abandon/);
+    const archive = join(repo, '.apex/inception/abandoned', PRE_HUB_RUN_ID);
+    writeFileSync(join(archive, 'foreign.md'), '# Do not consume');
+    assert.match(collectViolations(repo).map(v => v.msg).join('\n'), /foreign|unexpected/);
+    rmSync(join(archive, 'foreign.md'));
+    const done = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/inception-state.mjs', import.meta.url)), 'abandon', '--repo-root', repo, '--resume'], { encoding: 'utf8' });
+    assert.equal(done.status, 0, done.stdout + done.stderr);
+    assert.match(collectViolations(repo)[0].msg, /missing _INDEX/);
+    writeFileSync(join(archive, 'receipt.json'), '{}\n');
+    assert.match(collectViolations(repo).map(v => v.msg).join('\n'), /abandon|receipt/);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('pre-hub v2 next-step policy comes from the public helper without reading run evidence', () => {
+  const initial = createRunDescriptor({ runId: PRE_HUB_RUN_ID, harnessName: 'codex', git: { present: false, branch: null, commits: 'none' } });
+  assert.equal(initial.schema, 'steepy-inception-run/v2');
+  for (const changes of [{}, { status: 'blocked', blocks: [{ id: 'decision', reason: 'Need human choice', evidence: [] }] }]) {
+    const d = { ...initial, ...changes }; const repo = preHubRoot('v2-policy', serializeRunDescriptor(d));
+    try { assert.deepEqual(collectViolations(repo), []); const result = runValidator(repo); assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, d.status === 'blocked' ? /block resolve/ : /phase reconnaissance/); }
+    finally { rmSync(repo, { recursive: true, force: true }); }
   }
 });

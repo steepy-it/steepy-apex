@@ -974,8 +974,8 @@ function cliInput(values, repoRoot) {
   const role = safeRole(values.role);
   if (!TASK_ROLES.includes(role)) throw new Error(`CLI only creates task-role manifests, got '${role}'`);
   const allowed = ROLE_OPTIONS[role];
-  if (values['task-result-protocol'] !== undefined && !['1', '2'].includes(values['task-result-protocol'])) {
-    throw new Error('--task-result-protocol must be 1 or 2');
+  if (values['task-result-protocol'] !== undefined && values['task-result-protocol'] !== '2') {
+    throw new Error('--task-result-protocol must be 2');
   }
   for (const option of CLI_PATH_OPTIONS) {
     if (values[option] !== undefined && option !== 'artifact-output' && !allowed.has(option)) {
@@ -990,7 +990,7 @@ function cliInput(values, repoRoot) {
     testCommand: values['test-command'],
     criterionIds: values.criterion,
     outputs: values['artifact-output'],
-    ...(values['task-result-protocol'] === undefined ? {} : { contract: { taskResultProtocol: Number(values['task-result-protocol']) } }),
+    ...(values['task-result-protocol'] === undefined ? {} : { contract: { taskResultProtocol: 2 } }),
   };
   const standards = values.standard ?? [];
   return {

@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.2.0 (2026-10-13)
+
+- New skill `/steepy-apex:inception`: turns an idea and its materials into a minimal, verified,
+  runnable first version before the hub exists. It runs reconnaissance, architecture decisions
+  with a decision register, versions verified from official sources, one human approval,
+  bootstrap of one representative path, and final verification, then points to `init` and
+  `discovery`. It is not a gear and has no headless or autopilot mode.
+- The run lives under `.apex/inception/` as a v2 descriptor with immutable records, persisted
+  work units with one active writer, reserved publications, and exact-ref resume. Every
+  registered decision must be covered by the latest approval.
+- New helpers: `inception-state.mjs` records and verifies the run and alone writes its
+  descriptor; `inception-protocol.mjs` validates the formats; `inception-snapshot.mjs` takes full
+  content/mode application snapshots; `capture-inception-evidence.mjs` runs one approved check and
+  seals its output; `inception-governance.mjs` certifies the first `init` after a complete run.
+  No tool deletes a run.
+- Snapshots leave the reserved areas, recognized scaffold leases, and exact exclusions out of
+  both the inventory and Git status: before approval the exclusions bound by `start --exclusions`
+  (for example installed dependencies), from approval the contract's. Application names are
+  literal, so a route like `app/[id]/page.tsx` is an ordinary file. Neither Git nor a clean tree
+  is required.
+- `validate-hub` excludes `.apex/inception/` like `.apex/work/` and rejects stable links into it.
+  Before a hub exists, a valid run descriptor makes it exit 0 with the run's phase and next step,
+  and the Stop hook stays silent.
+- `init` keeps its interview. After a complete run, `inception-governance.mjs` `prepare`,
+  `documents`, and `finish` certify the first init: only `documents` writes the stable hub
+  documents, exact bytes at mode 0644, and init-provenance receipts bind them to the completion.
+- `discovery` offers an inception source for a complete run. Read-only `verify-complete` first
+  checks the evidence and the current application, before discovery writes anything; accepted
+  decisions go only to `conventions.md`, the routed standards, and `glossary.md`. The import is
+  one-time: a later run sees the certified documents drift and refuses the source.
+- Breaking (released as a minor version by decision): v1.2.0 drops every compatibility path for older formats.
+  - Specialist adapters rendered by v1.0.0–v1.0.6 are no longer recognized. An untouched one is a `customized` conflict: a `validate-hub` error that blocks the Stop hook. Run `init` repair, or `new-surface` with `--resolution <id>=replace` in an active hub, and choose `replace`. `templates/prior/` is gone.
+  - Autopilot runs started on task-result protocol 1 cannot resume: the conductor halts with an unsupported-protocol reason. Finish such a run manually or start a fresh run. In autopilot, implementer, fix and reviewer responses carry exactly `status`, `artifact`, `signals`; a response with `changed-paths` is malformed. `skills/implement/reviewer-response.schema.json` is removed. Manual drive keeps its four-field grammar and `- Task` bullets. An in-flight protocol-2 run whose retained reviewer or task responses carried `changed-paths` also halts on resume; finish it manually or start a fresh run.
+  - Inception run descriptors with schema `steepy-inception-run/v1` are refused by every command, `abandon` included; no tool migrates, archives or deletes them. Move `.apex/inception/` out of the repository by hand, including `abandon-intent.json` and `abandoned/` left by an earlier archive, then start a fresh run.
+  - A child autopilot status note that carries `phase=` no longer completes a phase. The shipped chain skills already write only `run-id` and `attempt`; drop `phase=` from any custom child or hand-written status marker.
+- The dsh, OpenCode, and Pi adapters, the packaging, and the docs list ten skills.
+- `docs/inception.md` is the user guide; `docs/inception-acceptance.md` defines the native
+  acceptance runs, still not run and a release gate.
+
 ## v1.1.7 (2026-10-13)
 
 - `brainstorm` Step 5 applies the spec machine contract to gear-2 specs too: `Owning surface`,
