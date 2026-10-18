@@ -253,6 +253,18 @@ for (const boundary of ['after-reserve', 'before-bind', 'after-bind']) test(`M11
   const before = f.snapshot(); f.cli('publish', 'resume', '--reservation', 'terminal'); f.cli('resume-check'); assert.deepEqual(f.snapshot(), before);
 });
 
+test('M11 complete compares the live application and Git once, before reserving, and names the drift it refuses', t => {
+  const f = fixture(t, { phase: 'verification', git: true }); f.manual('verified', ['app']); const checkpoint = f.checkpoint();
+  const complete = () => f.process([script('inception-state'), 'transition', '--repo-root', f.root, '--to', 'complete', '--reason', 'Verified', '--cycle', f.cycle(), '--checkpoint', checkpoint]);
+  f.put('src/app.js', 'Changed after the final checkpoint\n');
+  let r = complete(); assert.equal(r.status, 1, r.stdout);
+  assert.match(JSON.parse(r.stdout).error, /baseline drift requires reconciliation: "src\/app\.js"/);
+  f.put('src/app.js', 'Application\n'); f.git('commit', '--allow-empty', '-qm', 'Provenance change');
+  r = complete(); assert.equal(r.status, 1, r.stdout);
+  assert.match(JSON.parse(r.stdout).error, /baseline drift requires reconciliation: Git branch, HEAD or status/);
+  assert.notEqual(f.descriptor().status, 'complete'); assert.equal(f.descriptor().pending, null);
+});
+
 test('M13 an unsupported v1 run format is refused by every command without mutation', t => {
   for (const status of ['active', 'blocked', 'complete']) {
     const f = fixture(t, { start: false }); f.put(`${area}/run.json`, v1RunDescriptorText(status));

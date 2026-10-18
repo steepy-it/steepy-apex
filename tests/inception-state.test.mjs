@@ -2169,7 +2169,8 @@ test('v2 terminal reservation completes despite later application drift, which v
       // A dev server writes inside the window without interrupting the writer.
       stateV2.transitionRun(root, { ...options, reservation: 'terminal-window', fault: step => { if (step === event) writeFileSync(join(root, 'app.js'), 'Rewritten by a dev server'); } });
       assert.equal(readV2(root).status, 'complete');
-      assert.match(stateV2.verifyComplete(root).reason, /application-drift/);
+      assert.match(stateV2.verifyComplete(root).reason, /application-drift: completed application identity changed: "app\.js"/);
+      assert.match(stateV2.resumeCheck(root).divergences[0].reason, /"app\.js"/);
       writeFileSync(join(root, 'app.js'), 'Application');
       assert.equal(stateV2.verifyComplete(root).ok, true, stateV2.verifyComplete(root).reason);
     } finally { rmSync(root, { recursive: true, force: true }); }

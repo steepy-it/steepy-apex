@@ -671,8 +671,9 @@ transitive digests, zero uncertain/partial effects, active units, residual block
 writes. It publishes immutable report/completion plus `verification/results.md`, then complete state.
 It compares the live application and Git once, before it reserves the completion. An interrupted
 complete is finished with `publish resume`, which rechecks only recorded evidence; if the
-application changed after the reservation, the run still completes and `verify-complete` reports
-the drift. Restore the reported bytes before `init` and `discovery`.
+application changed after the reservation, the run still completes and `verify-complete` names the
+drifted paths. Restore their bytes before `init` and `discovery`. Git provenance after the
+reservation is historical, as after any completion.
 
 <!-- example:verify-complete -->
 ```bash

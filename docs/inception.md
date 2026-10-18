@@ -131,7 +131,7 @@ Start from `inspect` and `resume-check`, using exact descriptor refs only, witho
 
 | Observed state | Next action |
 |---|---|
-| Pending publication | `publish resume` with its exact reservation. Accept only token/revision/digest-correlated staging or targets; divergent targets block without overwrite. Never rerun application work. A pending `complete` is bound to its recorded evidence: complete compared the live application and Git before reserving it, so later drift does not block the publication; `verify-complete` reports it as application drift. |
+| Pending publication | `publish resume` with its exact reservation. Accept only token/revision/digest-correlated staging or targets; divergent targets block without overwrite. Never rerun application work. A pending `complete` is bound to its recorded evidence: complete compared the live application and Git before reserving it, so later drift does not block the publication. `verify-complete` reports later application drift and names the drifted paths; Git provenance after the reservation is historical, as after any completion. |
 | Complete bound report and explained diff | Validate the unit contract, then finish/reconcile the same unit. |
 | Interrupted non-capture writer | Establish stopped-writer observation before close-incomplete; output presence alone is insufficient. |
 | Registered capture with live or unverifiable PID | Refuse takeover. A human statement cannot override process liveness. |

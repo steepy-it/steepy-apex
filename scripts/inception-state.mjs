@@ -1259,10 +1259,18 @@ function observeRunApplication(root, descriptor) {
   }
   return observeApplication(root, { exclusions: descriptor.preapprovalExclusions });
 }
+// Name the drifted paths so they can be restored or reconciled; JSON keeps each one line.
+function driftSummary(before, after) {
+  const changes = applicationChanges(before, after);
+  if (changes.length === 0) return 'roots or exclusions';
+  const shown = changes.slice(0, 5).map(change => JSON.stringify(change.path)).join(', ');
+  return changes.length > 5 ? `${shown} and ${changes.length - 5} more` : shown;
+}
 function assertBaseline(root, descriptor, observed) {
   if (descriptor.baseline === null) return;
   const baseline = readRecordV2(root, descriptor, descriptor.baseline, 'snapshot').body;
-  if (applicationIdentity(baseline) !== applicationIdentity(observed) || !sameValue(baseline.git, observed.git)) throw refuse('application or Git baseline drift requires reconciliation');
+  if (applicationIdentity(baseline) !== applicationIdentity(observed)) throw refuse(`application or Git baseline drift requires reconciliation: ${driftSummary(baseline, observed)}`);
+  if (!sameValue(baseline.git, observed.git)) throw refuse('application or Git baseline drift requires reconciliation: Git branch, HEAD or status');
 }
 function effectBlockId(id) { return `effect-${createHash('sha256').update(id).digest('hex').slice(0, 32)}`; }
 function assertGitExplained(root, descriptor, before, after, unitId) {
@@ -2180,7 +2188,7 @@ function verifyCompletedState(root, descriptor, { verifyGovernance = verifyCanon
       observed = projected;
     }
   }
-  if (applicationIdentity(snapshot) !== applicationIdentity(observed)) throw refuse('application-drift: completed application identity changed');
+  if (applicationIdentity(snapshot) !== applicationIdentity(observed)) throw refuse(`application-drift: completed application identity changed: ${driftSummary(snapshot, observed)}`);
   const context = { ref: body.cycle, cycle, contract, snapshot, observed, session };
   const checkpoint = finalCheckpoint(root, descriptor, context, body.checkpoint.path, { historical: true });
   if (!sameValue(checkpoint.ref, body.checkpoint) || !sameValue(checkpoint.snapshot, body.snapshot)) throw refuse('completion checkpoint mismatch');
