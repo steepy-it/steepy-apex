@@ -1605,6 +1605,15 @@ export function verifyApprovalV2(repoRoot, { approval, historical = false } = {}
   const { record } = readApprovalV2(root, descriptor, ref, { historical });
   return { ok: true, approval: ref.path, documents: record.body.documents, contract: record.body.contract };
 }
+// Discovery reads a decision's verification only from the coverage entry whose id is
+// its lowercase register ID (DR-3 -> dr-3), so every register row needs one.
+function assertDecisionCoverage(register, contract) {
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(register); } catch { throw refuse(`${DECISION_REGISTER_PATH}: must be valid UTF-8`); }
+  const covered = new Set(contract.coverage.map(entry => entry.id));
+  const missing = [...new Set([...text.matchAll(/^\|\s*(DR-[1-9]\d*)\s*\|/gmu)].map(match => match[1]))].filter(id => !covered.has(id.toLowerCase()));
+  if (missing.length) throw refuse(`${DECISION_REGISTER_PATH}: ${missing.join(', ')}: no contract coverage entry with the lowercase register ID (dr-n)`);
+}
 function approveRunV2(repoRoot, options) {
   validateText(options.statement, 'statement');
   if (options.contract !== CONTRACT_PATH_V2) throw refuse('contract must be the exact project/verification-contract.json path');
@@ -1628,6 +1637,7 @@ function approveRunV2(repoRoot, options) {
     const documents = targets.map((t, i) => publicationRef(paths[i], t.content));
     const contractRef = documents.find(d => d.path === options.contract);
     const contract = parseVerificationContract(targets[paths.indexOf(options.contract)].content);
+    assertDecisionCoverage(targets[paths.indexOf(DECISION_REGISTER_PATH)].content, contract);
     const approval = newRecordV2(descriptor, 'approval', { statement: options.statement, documents, contract: contractRef, frozenDocuments: targets.map((t, i) => ({ sourcePath: paths[i], artifact: publicationRef(t.path, t.content) })) });
     const snapshot = newRecordV2(descriptor, 'snapshot', observeApplication(root, { contract: contractRef, roots: contract.roots, exclusions: contract.exclusions }), null, 1);
     const next = { ...descriptor, nextRecord: descriptor.nextRecord + 2, approvals: [...descriptor.approvals, approval.ref], currentCycle: null, verificationSession: null, baseline: snapshot.ref };

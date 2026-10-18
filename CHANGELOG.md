@@ -9,7 +9,8 @@
   `discovery`. It is not a gear and has no headless or autopilot mode.
 - The run lives under `.apex/inception/` as a v2 descriptor with immutable records, persisted
   work units with one active writer, reserved publications, and exact-ref resume. Every
-  registered decision must be covered by the latest approval.
+  registered decision must be covered by the latest approval, and every decision-register row
+  `DR-n` needs a contract coverage entry `dr-n`, the one discovery reads.
 - New helpers: `inception-state.mjs` records and verifies the run and alone writes its
   descriptor; `inception-protocol.mjs` validates the formats; `inception-snapshot.mjs` takes full
   content/mode application snapshots; `capture-inception-evidence.mjs` runs one approved check and

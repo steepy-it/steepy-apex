@@ -131,6 +131,14 @@ test('project contract is approved before bootstrap and cannot be weakened to hi
   for (const pattern of [/verification-contract\.json/, /automatic.*manual.*both/, /roots/, /exclusions/, /reobserve/, /decision-register/, /verbatim/, /human/, /--contract/, /all current project documents/, /reapproval/, /hash.*human/]) assert.match(s, pattern);
   assert.match(flat(skill), /Never make a failed required check optional/);
 });
+test('every decision-register row gets the coverage entry discovery reads, and approve enforces it', () => {
+  const s = section('### Step 5');
+  assert.match(s, /register row its own entry whose `id` is the lowercase register ID \(`DR-1` → `dr-1`\)/);
+  assert.match(s, /`approve` refuses a register row without its `dr-n` entry/);
+  assert.match(flat(skill), /Each ID gets a coverage entry `dr-n` in the verification contract/);
+  const prompt = flat(readFileSync(join(root, 'skills/discovery/explore-inception-prompt.md'), 'utf8'));
+  assert.match(prompt, /register `DR-n` maps only to exact `coverage` `id` `dr-n`/);
+});
 
 test('verification obeys cycles, capture provenance, manual human attest, all required checks after fixes and session reobservation', () => {
   const s = section('### Step 10');

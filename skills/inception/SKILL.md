@@ -332,6 +332,7 @@ Every significant decision enters the decision register,
 | DR-1 | system shape | <decision> | <reason> | <each alternative, accepted or rejected> | <how it was confirmed> |
 
 - IDs are stable: `DR-1`, `DR-2`, and so on. They are never renumbered.
+- Each ID gets a coverage entry `dr-n` in the verification contract (Step 5).
 - **Alternatives** names each alternative, accepted or rejected.
 - **Confirmed** says how it was confirmed: its own question or a grouped confirmation.
 
@@ -371,7 +372,9 @@ The contract assigns automatic, manual or both to each check; subject, procedure
 evidenceRequired, required boolean and applicable command/procedures are explicit. Declare roots
 (a root that bootstrap creates later may be absent at approval; it holds no files until then),
 exact justified exclusions (dependencies/cache/generated; literal paths, never globs), tools/resources, and coverage for every
-approved decision/component, current or future. Do not exclude pertinent manifests, lockfiles,
+approved decision/component, current or future. Give every register row its own entry whose `id` is
+the lowercase register ID (`DR-1` → `dr-1`): discovery reads a decision's status only from that
+entry. Component entries may be added. `approve` refuses a register row without its `dr-n` entry. Do not exclude pertinent manifests, lockfiles,
 configuration or migrations to conceal failure. Before approval the helper inventories `.`
 excluding only the reserved protocol areas, recognized scaffold leases and the exclusions bound at
 `start`; Gitignore is not the inventory rule. From approval the contract's exclusions replace the

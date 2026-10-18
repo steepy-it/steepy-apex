@@ -1796,6 +1796,26 @@ test('v2 contract validation, document scope and all project decision outputs ar
     assert.equal(readV2(root).approvals.length, 0);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+test('v2 approval requires a coverage entry dr-n for every DR-n row of the decision register', () => {
+  const register = '| ID | Category | Decision |\n|---|---|---|\n| DR-1 | system shape | One page |\n| DR-2 | hosting | Later |\n| DR-10 | data | None |\n';
+  const root = approvalFixtureV2();
+  try {
+    writeFileSync(join(root, REGISTER), register);
+    // Component-keyed coverage alone cannot tell discovery which decision it verifies.
+    const before = readFileSync(join(root, RUN_DESCRIPTOR_PATH));
+    assert.throws(() => approveV2(root), /DR-1, DR-2, DR-10.*dr-n/);
+    assert.deepEqual(readFileSync(join(root, RUN_DESCRIPTOR_PATH)), before);
+    const contract = checksV2();
+    contract.coverage.push({ id: 'dr-1', component: 'Page', checks: ['page'], status: 'current' }, { id: 'dr-2', component: 'Hosting', checks: [], status: 'future' });
+    writeFileSync(join(root, contractPathV2), JSON.stringify(contract));
+    assert.throws(() => approveV2(root), /DR-10/);
+    contract.coverage.push({ id: 'dr-10', component: 'Data', checks: [], status: 'future' });
+    writeFileSync(join(root, contractPathV2), JSON.stringify(contract));
+    assert.equal(readV2(root).approvals.length, 0);
+    approveV2(root);
+    assert.equal(readV2(root).approvals.length, 1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 test('v2 same-cycle begin and read-only resume-check preserve evidence, sessions invalidate only reobserve', () => {
   for (const policy of ['snapshot', 'reobserve']) {
     const root = verificationFixtureV2(checksV2(policy));
