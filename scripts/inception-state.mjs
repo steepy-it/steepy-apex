@@ -1279,20 +1279,23 @@ function assertGitExplained(root, descriptor, before, after, unitId) {
   // Dirty status normally changes with the authorized application diff. A branch
   // or HEAD change, or status-only drift, requires a correlated commit observation.
   // Git names some of that diff differently: macOS reports precomposed names for
-  // decomposed files, an untracked nested repository is one `dir/` entry for the
-  // files beneath it, and a changed .gitignore hides or reveals unchanged untracked
-  // files below its directory.
+  // decomposed files, and an untracked nested repository is one `dir/` entry for the
+  // files beneath it. An unchanged untracked file that appears or disappears is
+  // accepted when a .gitignore in one of its ancestor directories also changed; the
+  // old rules are not retained, so this is correlation, not proof of cause.
   const changedPaths = applicationChanges(before, after).map(change => change.path.normalize('NFC'));
   const prior = new Map(before.files.map(file => [file.path, file]));
   const unchangedPaths = after.files.filter(file => sameValue(prior.get(file.path), file)).map(file => file.path.normalize('NFC'));
+  const changedSet = new Set(changedPaths); const unchangedSet = new Set(unchangedPaths);
   const ignoreDirectories = changedPaths.filter(path => path === '.gitignore' || path.endsWith('/.gitignore')).map(path => path.slice(0, -'.gitignore'.length));
-  const covers = (path, paths) => path.endsWith('/') ? paths.some(p => p.startsWith(path)) : paths.includes(path);
-  const statusChanges = [...before.git.status.filter(entry => !after.git.status.includes(entry)), ...after.git.status.filter(entry => !before.git.status.includes(entry))];
+  const covers = (path, paths, set) => path.endsWith('/') ? paths.some(p => p.startsWith(path)) : set.has(path);
+  const beforeStatus = new Set(before.git.status); const afterStatus = new Set(after.git.status);
+  const statusChanges = [...before.git.status.filter(entry => !afterStatus.has(entry)), ...after.git.status.filter(entry => !beforeStatus.has(entry))];
   const explained = entry => {
     const path = (/^[ MARCUD?!]{2} /u.test(entry) ? entry.slice(3) : entry).normalize('NFC');
-    if (changedPaths.includes(path)) return true;
+    if (changedSet.has(path)) return true;
     if (!entry.startsWith('?? ')) return false;
-    return (path.endsWith('/') && covers(path, changedPaths)) || (ignoreDirectories.some(directory => path.startsWith(directory)) && covers(path, unchangedPaths));
+    return (path.endsWith('/') && covers(path, changedPaths, changedSet)) || (ignoreDirectories.some(directory => path.startsWith(directory)) && covers(path, unchangedPaths, unchangedSet));
   };
   if (before.git.present === after.git.present && before.git.branch === after.git.branch && before.git.head === after.git.head
       && statusChanges.every(explained)) return;
