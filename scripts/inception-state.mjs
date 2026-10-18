@@ -1270,11 +1270,24 @@ function assertGitExplained(root, descriptor, before, after, unitId) {
   if (sameValue(before.git, after.git)) return;
   // Dirty status normally changes with the authorized application diff. A branch
   // or HEAD change, or status-only drift, requires a correlated commit observation.
-  const changedPaths = new Set(applicationChanges(before, after).map(change => change.path));
+  // Git names some of that diff differently: macOS reports precomposed names for
+  // decomposed files, an untracked nested repository is one `dir/` entry for the
+  // files beneath it, and a changed .gitignore hides or reveals unchanged untracked
+  // files below its directory.
+  const changedPaths = applicationChanges(before, after).map(change => change.path.normalize('NFC'));
+  const prior = new Map(before.files.map(file => [file.path, file]));
+  const unchangedPaths = after.files.filter(file => sameValue(prior.get(file.path), file)).map(file => file.path.normalize('NFC'));
+  const ignoreDirectories = changedPaths.filter(path => path === '.gitignore' || path.endsWith('/.gitignore')).map(path => path.slice(0, -'.gitignore'.length));
+  const covers = (path, paths) => path.endsWith('/') ? paths.some(p => p.startsWith(path)) : paths.includes(path);
   const statusChanges = [...before.git.status.filter(entry => !after.git.status.includes(entry)), ...after.git.status.filter(entry => !before.git.status.includes(entry))];
-  const statusPath = entry => /^[ MARCUD?!]{2} /u.test(entry) ? entry.slice(3) : entry;
+  const explained = entry => {
+    const path = (/^[ MARCUD?!]{2} /u.test(entry) ? entry.slice(3) : entry).normalize('NFC');
+    if (changedPaths.includes(path)) return true;
+    if (!entry.startsWith('?? ')) return false;
+    return (path.endsWith('/') && covers(path, changedPaths)) || (ignoreDirectories.some(directory => path.startsWith(directory)) && covers(path, unchangedPaths));
+  };
   if (before.git.present === after.git.present && before.git.branch === after.git.branch && before.git.head === after.git.head
-      && statusChanges.every(entry => changedPaths.has(statusPath(entry)))) return;
+      && statusChanges.every(explained)) return;
   const effects = readEffectsV2(root, descriptor);
   const committed = e => {
     const observed = readRecordV2(root, descriptor, e.outcome.body.after, 'snapshot').body;

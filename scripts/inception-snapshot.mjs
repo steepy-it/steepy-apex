@@ -39,7 +39,9 @@ export function observeSnapshotGit(root, excluded) {
   if (probe.status !== 0 || fs.realpathSync(probe.stdout.trim()) !== fs.realpathSync(root)) return absentGit();
   const branch = run(['symbolic-ref', '--quiet', '--short', 'HEAD']);
   const head = run(['rev-parse', '--verify', '--quiet', 'HEAD']);
-  const status = run(['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.', ...excluded.map(p => `:(exclude,literal)${p}`)]);
+  // Submodule work trees are application bytes the inventory already observes; a
+  // moved submodule commit still appears.
+  const status = run(['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=dirty', '--', '.', ...excluded.map(p => `:(exclude,literal)${p}`)]);
   if (status.error || status.status !== 0) throw new Error(`Git provenance observation failed${status.error ? `: ${status.error.code ?? status.error.message}` : ''}`);
   return validateGit({ present: true, branch: branch.status === 0 ? branch.stdout.trim() : null, head: head.status === 0 ? head.stdout.trim() : null, status: status.stdout.split('\0').filter(Boolean).sort() });
 }

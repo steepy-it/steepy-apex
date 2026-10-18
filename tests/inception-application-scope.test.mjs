@@ -158,3 +158,73 @@ test('CR14 start reads exclusions from a quoted heredoc so their reasons are nev
   assert.deepEqual(f.descriptor().preapprovalExclusions, exclusions);
   for (const stray of ['pwned', 'out']) assert.equal(fs.existsSync(join(f.root, stray)), false, stray);
 });
+
+// CR6: Git status and the inventory name the same work differently. A status change with
+// no byte change at that path is explained only by its cause in the diff: an untracked
+// directory entry (a nested repository) by changed files beneath it, an untracked entry
+// that appears or disappears by a changed .gitignore in an ancestor directory, and macOS
+// precomposed names by the decomposed on-disk name. Dirty submodule work trees are left
+// to the inventory; a moved submodule commit is still Git drift.
+const DRIFT = /Git drift requires a correlated commit observation or human reconciliation/u;
+const bootstrapUnit = (f, id, allowedPaths) => f.begin(id, { kind: 'bootstrap', allowedPaths });
+// Untracked starting material: committed by the fixture, then removed from the index.
+function untrackedBootstrap(t, paths) {
+  const f = fixture(t, { git: true, start: false, initialFiles: Object.fromEntries(paths.map(path => [path, `${path}\n`])) });
+  f.git('rm', '-q', '--cached', ...paths); f.git('commit', '-qm', 'Leave starting material untracked');
+  start(f);
+  toApproval(f, []); f.approve(); f.transition('bootstrap');
+  return f;
+}
+test('CR6 a .gitignore change explains the untracked entries it hides or reveals below its directory', t => {
+  const f = untrackedBootstrap(t, ['debug.log', 'web/tmp/trace.log']);
+  bootstrapUnit(f, 'gen', ['.gitignore', 'src']);
+  f.put('.gitignore', '*.log\n'); f.put('src/app.js', 'Generated application\n'); f.report('gen'); f.finish('gen');
+  bootstrapUnit(f, 'unignore', ['.gitignore']);
+  f.put('.gitignore', '# nothing ignored\n'); f.report('unignore'); f.finish('unignore');
+  bootstrapUnit(f, 'nested-ignore', ['web/.gitignore']);
+  f.put('web/.gitignore', 'tmp/\n'); f.report('nested-ignore'); f.finish('nested-ignore');
+  assert.equal(f.read(unitAfter(f, 'nested-ignore').path).body.git.status.includes('?? web/tmp/trace.log'), false);
+  assert.equal(f.cli('resume-check').ok, true);
+});
+test('CR6 a .gitignore cannot explain entries outside its directory or an index change', t => {
+  const f = untrackedBootstrap(t, ['debug.log']);
+  bootstrapUnit(f, 'outside', ['web/.gitignore']);
+  f.put('web/.gitignore', 'debug.log\n'); f.git('add', 'debug.log'); f.report('outside');
+  assert.match(f.refuse('unit', 'finish', '--id', 'outside').error, DRIFT);
+});
+test('CR6 a nested repository created inside an allowed directory is explained by the files beneath it', t => {
+  const f = fixture(t, { git: true, phase: 'bootstrap' });
+  bootstrapUnit(f, 'nested', ['web']);
+  f.put('web/index.html', '<p>Ready</p>\n'); f.git('-C', 'web', 'init', '-q'); f.report('nested'); f.finish('nested');
+  const after = f.read(unitAfter(f, 'nested').path).body;
+  assert.ok(after.git.status.includes('?? web/'));
+  assert.ok(after.files.some(file => file.path === 'web/index.html') && after.files.some(file => file.path.startsWith('web/.git/')));
+  assert.equal(f.cli('resume-check').ok, true);
+});
+test('CR6 a decomposed file name matches the precomposed name Git reports', t => {
+  const f = fixture(t, { git: true, phase: 'bootstrap' });
+  bootstrapUnit(f, 'docs', ['docs']);
+  f.put('docs/perché.md', 'Decomposed name\n'); f.report('docs'); f.finish('docs');
+  assert.equal(f.cli('resume-check').ok, true);
+});
+test('CR6 a dirty submodule work tree is left to the inventory; a moved submodule commit is still Git drift', t => {
+  const f = fixture(t, { git: true, phase: 'approval', approvedContract: contract(undefined, { exclusions: [{ path: 'vendor/lib/node_modules', kind: 'dependencies', reason: 'Submodule packages' }] }) });
+  const library = join(f.sandbox, 'library'); fs.mkdirSync(library);
+  const lib = (...args) => { const r = spawnSync('git', ['-C', library, ...args], { env: f.env, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+  lib('init', '-q'); lib('config', 'user.name', 'Fixture'); lib('config', 'user.email', 'fixture@example.test');
+  fs.writeFileSync(join(library, 'index.js'), 'Library\n'); lib('add', '.'); lib('commit', '-qm', 'Library');
+  f.git('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', library, 'vendor/lib'); f.git('commit', '-qm', 'Add library');
+  f.approve(); f.transition('bootstrap');
+  bootstrapUnit(f, 'install', ['src']);
+  f.put('vendor/lib/node_modules/dep/index.js', 'Installed\n'); f.put('src/app.js', 'Uses the library\n'); f.report('install'); f.finish('install');
+  bootstrapUnit(f, 'bump', ['vendor/lib']);
+  f.put('vendor/lib/index.js', 'Library v2\n');
+  f.git('-C', 'vendor/lib', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qam', 'Bump library'); f.report('bump');
+  assert.match(f.refuse('unit', 'finish', '--id', 'bump').error, DRIFT);
+});
+test('CR6 a root .gitignore change cannot explain a new untracked file outside the approved roots', t => {
+  const f = fixture(t, { git: true, phase: 'bootstrap', approvedContract: contract(undefined, { roots: ['.gitignore', 'src'] }) });
+  bootstrapUnit(f, 'ignore', ['.gitignore']);
+  f.put('.gitignore', '*.log\n'); f.put('notes/outside.txt', 'Outside the roots\n'); f.report('ignore');
+  assert.match(f.refuse('unit', 'finish', '--id', 'ignore').error, DRIFT);
+});
