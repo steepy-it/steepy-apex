@@ -1816,6 +1816,18 @@ test('v2 approval requires a coverage entry dr-n for every DR-n row of the decis
     assert.equal(readV2(root).approvals.length, 1);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+test('v2 approval finds decision-register rows whose ID cell is emphasized, code-quoted, indented or unpiped', () => {
+  const root = approvalFixtureV2();
+  try {
+    writeFileSync(join(root, REGISTER), '| ID | Decision |\n|---|---|\n| **DR-1** | Bold |\n| `DR-2` | Code |\n  | DR-3 | Indented |\nDR-4 | No leading pipe |\n| DR-05 | Padded |\nProse mentioning DR-6 is not a row.\n');
+    assert.throws(() => approveV2(root), /DR-1, DR-2, DR-3, DR-4, DR-05: no contract coverage entry/);
+    const contract = checksV2();
+    for (const id of ['dr-1', 'dr-2', 'dr-3', 'dr-4', 'dr-05']) contract.coverage.push({ id, component: id, checks: [], status: 'future' });
+    writeFileSync(join(root, contractPathV2), JSON.stringify(contract));
+    approveV2(root);
+    assert.equal(readV2(root).approvals.length, 1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 test('v2 same-cycle begin and read-only resume-check preserve evidence, sessions invalidate only reobserve', () => {
   for (const policy of ['snapshot', 'reobserve']) {
     const root = verificationFixtureV2(checksV2(policy));

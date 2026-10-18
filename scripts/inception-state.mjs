@@ -1635,7 +1635,9 @@ function assertDecisionCoverage(register, contract) {
   let text;
   try { text = new TextDecoder('utf-8', { fatal: true }).decode(register); } catch { throw refuse(`${DECISION_REGISTER_PATH}: must be valid UTF-8`); }
   const covered = new Set(contract.coverage.map(entry => entry.id));
-  const missing = [...new Set([...text.matchAll(/^\|\s*(DR-[1-9]\d*)\s*\|/gmu)].map(match => match[1]))].filter(id => !covered.has(id.toLowerCase()));
+  // A register row starts with its ID cell, optionally indented, emphasized or code-quoted.
+  const rows = text.matchAll(/^[ \t]*\|?[ \t]*[*_`]*(DR-\d+)[*_`]*[ \t]*\|/gmu);
+  const missing = [...new Set([...rows].map(match => match[1]))].filter(id => !covered.has(id.toLowerCase()));
   if (missing.length) throw refuse(`${DECISION_REGISTER_PATH}: ${missing.join(', ')}: no contract coverage entry with the lowercase register ID (dr-n)`);
 }
 function approveRunV2(repoRoot, options) {
