@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { area, contract, fixture } from './helpers/inception-fixture.mjs';
 
@@ -49,20 +50,27 @@ function installedDependencies(f) {
   f.put('node_modules/.pnpm/dep/index.js', 'shared\n');
   fs.linkSync(join(f.root, 'node_modules/.pnpm/dep/index.js'), join(f.root, 'node_modules/dep/index.js'));
 }
-const start = (f, extra = [], expected = 0) => JSON.parse(f.run('inception-state', ['start', '--repo-root', f.root, '--harness', 'codex', '--capabilities', 'shell', '--git-commits', 'allowed', ...extra], expected).stdout);
+const START = ['start', '--harness', 'codex', '--capabilities', 'shell', '--git-commits', 'allowed'];
+// Exclusions arrive on standard input, never as a shell word.
+function start(f, exclusions = null, expected = 0) {
+  const args = [join(import.meta.dirname, '../scripts/inception-state.mjs'), ...START, '--repo-root', f.root, ...(exclusions === null ? [] : ['--exclusions-stdin'])];
+  const r = f.process(args, exclusions === null ? {} : { input: typeof exclusions === 'string' ? exclusions : JSON.stringify(exclusions) });
+  assert.equal(r.status, expected, r.stdout + r.stderr);
+  return JSON.parse(r.stdout);
+}
 
 for (const git of [false, true]) {
   test(`CR2 ${git ? 'git' : 'no-git'}: start binds pre-approval exclusions so installed dependencies never stop the run`, t => {
     const f = fixture(t, { start: false, git });
     installedDependencies(f);
     const before = f.snapshot();
-    const refused = start(f, [], 1);
+    const refused = start(f, null, 1);
     assert.match(refused.error, /node_modules\/\.bin\/dep: symlink is not an application file/);
-    assert.match(refused.error, /--exclusions/);
+    assert.match(refused.error, /--exclusions-stdin/);
     assert.deepEqual(f.snapshot(), before);
     assert.equal(fs.existsSync(join(f.root, '.apex')), false);
 
-    start(f, ['--exclusions', JSON.stringify(DEPENDENCIES)]);
+    start(f, DEPENDENCIES);
     assert.deepEqual(f.descriptor().preapprovalExclusions, DEPENDENCIES);
     f.begin('recon'); f.put('node_modules/dep/later.js', 'Installed later\n'); f.report('recon'); f.finish('recon');
     const recon = f.read(unitAfter(f, 'recon').path).body;
@@ -91,10 +99,10 @@ for (const git of [false, true]) {
 test('CR2 a start refusal names an unrepresentable application path so it can be excluded', t => {
   const f = fixture(t, { start: false });
   f.put('node_modules/dep/a\\b.js', 'Backslash name\n');
-  const refused = start(f, [], 1);
+  const refused = start(f, null, 1);
   assert.match(refused.error, /application path "node_modules\/dep\/a\\\\b\.js"/);
   assert.equal(fs.existsSync(join(f.root, '.apex')), false);
-  start(f, ['--exclusions', JSON.stringify(DEPENDENCIES)]);
+  start(f, DEPENDENCIES);
 });
 
 test('CR2 start refuses malformed or non-literal exclusions before any write', t => {
@@ -103,9 +111,15 @@ test('CR2 start refuses malformed or non-literal exclusions before any write', t
   for (const value of ['not json', '{}', JSON.stringify([{ path: 'node_modules', kind: 'vendor', reason: 'Packages' }]),
     JSON.stringify([...DEPENDENCIES, ...DEPENDENCIES]), JSON.stringify([{ path: '../outside', kind: 'cache', reason: 'Outside' }]),
     JSON.stringify([{ ...DEPENDENCIES[0], extra: true }]), '[{"path":"node_modules","path":"x","kind":"cache","reason":"Duplicate key"}]']) {
-    const refused = JSON.parse(f.process([join(import.meta.dirname, '../scripts/inception-state.mjs'), 'start', '--repo-root', f.root, '--harness', 'codex', '--capabilities', 'shell', '--git-commits', 'allowed', '--exclusions', value]).stdout);
+    const r = f.process([join(import.meta.dirname, '../scripts/inception-state.mjs'), ...START, '--repo-root', f.root, '--exclusions-stdin'], { input: value });
+    assert.ok([1, 2].includes(r.status), r.stdout + r.stderr);
+    const refused = JSON.parse(r.stdout);
     assert.equal(refused.ok, false, value);
     assert.match(refused.error, /exclusions/, value);
+  }
+  for (const [args, input] of [[['--exclusions-stdin'], ''], [['--exclusions', JSON.stringify(DEPENDENCIES)], undefined]]) {
+    const r = f.process([join(import.meta.dirname, '../scripts/inception-state.mjs'), ...START, '--repo-root', f.root, ...args], { input });
+    assert.equal(r.status, 2, r.stdout + r.stderr);
   }
   assert.deepEqual(f.snapshot(), before);
   assert.equal(fs.existsSync(join(f.root, '.apex')), false);
@@ -129,4 +143,18 @@ test('CR9 roots that do not exist yet are approved, then created and removed by 
   const statement = f.input({ evidence: [`${area}/project/drop-src.md`], reason: 'Source moved', statement: 'I accept removing src.' });
   assert.equal(f.cli('unit', 'reconcile', '--id', 'drop-src', '--input', statement).ok, true);
   f.checkpoint();
+});
+
+// CR14: a confirmed reason is free human text. A quoted heredoc passes apostrophes,
+// backticks, command substitution and redirection signs byte-exact, with nothing run.
+test('CR14 start reads exclusions from a quoted heredoc so their reasons are never shell code', t => {
+  const f = fixture(t, { start: false });
+  installedDependencies(f);
+  const reason = "Vite's pre-bundle cache; rebuilt by `npm run dev` -> $(touch pwned) && 'build' > out";
+  const exclusions = [{ path: 'node_modules', kind: 'dependencies', reason }];
+  const script = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(import.meta.dirname, '../scripts/inception-state.mjs'))} ${START.join(' ')} --repo-root . --exclusions-stdin <<'JSON'\n${JSON.stringify(exclusions)}\nJSON\n`;
+  const r = spawnSync('/bin/sh', ['-c', script], { cwd: f.root, env: f.env, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(f.descriptor().preapprovalExclusions, exclusions);
+  for (const stray of ['pwned', 'out']) assert.equal(fs.existsSync(join(f.root, stray)), false, stray);
 });

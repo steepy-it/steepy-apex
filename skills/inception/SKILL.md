@@ -47,7 +47,7 @@ human provenance and runs authorized effects. The separate collector executes ap
 |---|---|
 | `node <engine-root>/scripts/inception-state.mjs classify --repo-root . [--maturity suitable\|mature]` | Read fixed entry paths. |
 | `node <engine-root>/scripts/inception-state.mjs inspect --repo-root .` | Read schema, phase, actions and exact refs. |
-| `node <engine-root>/scripts/inception-state.mjs start --repo-root . --harness <slug> --capabilities <csv> --git-commits allowed\|forbidden [--exclusions <json>]` | Create one v2 run with its pre-approval exclusions; never replace an existing run. |
+| `node <engine-root>/scripts/inception-state.mjs start --repo-root . --harness <slug> --capabilities <csv> --git-commits allowed\|forbidden [--exclusions-stdin]` | Create one v2 run with its pre-approval exclusions, read from standard input; never replace an existing run. |
 | `node <engine-root>/scripts/inception-state.mjs resume-check --repo-root .` | Read-only verification of approval, refs, baseline, effects and pending work. |
 | `node <engine-root>/scripts/inception-state.mjs unit begin --repo-root . --id <id> --input <json> [--previous-unit <id>]` | Persist the sole writer, before snapshot, exact inputs/outputs and allowed paths. |
 | `node <engine-root>/scripts/inception-state.mjs unit finish --repo-root . --id <id> [--evidence <path>]...` | Validate complete reports, freeze immutable outputs and observe the diff. No success boolean. |
@@ -76,8 +76,8 @@ human provenance and runs authorized effects. The separate collector executes ap
 
 Every JSON input is an exact coordinator-declared file under the run, strict UTF-8 with all required
 keys (including nulls), no duplicate/unknown keys or aliases. The one exception is `start
---exclusions`, inline because the run does not exist yet: pass it as one single-quoted argument and
-keep `'` out of its reasons. Use shell-quoted `--text=value` for free text, particularly text
+--exclusions-stdin`: the run does not exist yet, so the array arrives on standard input through a
+quoted heredoc (`<<'JSON'`), which the shell passes byte-exact. Use shell-quoted `--text=value` for free text, particularly text
 beginning with `-`. Never interpolate human text as shell code. Single-quote every path argument,
 such as `--evidence 'app/[id]/page.tsx'`: brackets, braces, `*` and `?` are literal to the helper,
 but an unquoted shell expands them, and zsh refuses a pattern that matches nothing.
@@ -207,8 +207,8 @@ output, and those that work before approval will create, such as dependencies in
 prototype. They cannot change until approval. Look at the repository's real directories; there is no preset list. Each entry is
 `{"path", "kind", "reason"}` with kind `dependencies`, `cache` or `generated` and a literal path,
 never a glob. Never exclude manifests, lockfiles, configuration or migrations. Ask the user to
-confirm the list, then pass it as one strict JSON array with `--exclusions`; omit the option when
-nothing qualifies. `start` observes the repository once before writing anything: a symlink, hard
+confirm the list, then pass it as one strict JSON array on standard input with `--exclusions-stdin`
+and a quoted heredoc; omit the option when nothing qualifies. `start` observes the repository once before writing anything: a symlink, hard
 link or special file outside the exclusions refuses the start and names the path. Add that path
 only when it is dependency, cache or generated material; otherwise stop and ask the user. These
 exclusions hold until approval, when the contract's roots and exclusions replace them.
@@ -224,7 +224,9 @@ node <engine-root>/scripts/inception-state.mjs start --repo-root . --harness cod
 With installed dependencies, add the confirmed exclusions:
 
 ```bash
-node <engine-root>/scripts/inception-state.mjs start --repo-root . --harness codex --capabilities shell --git-commits forbidden --exclusions '[{"path":"node_modules","kind":"dependencies","reason":"Installed packages; package.json and the lockfile stay inventoried"}]'
+node <engine-root>/scripts/inception-state.mjs start --repo-root . --harness codex --capabilities shell --git-commits forbidden --exclusions-stdin <<'JSON'
+[{"path":"node_modules","kind":"dependencies","reason":"Installed packages; package.json and the lockfile stay inventoried"}]
+JSON
 ```
 
 **Resume:** use `inspect`, `.apex/inception/run.json`, and only the exact refs it binds; no directory

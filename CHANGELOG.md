@@ -16,7 +16,7 @@
   seals its output; `inception-governance.mjs` certifies the first `init` after a complete run.
   No tool deletes a run.
 - Snapshots leave the reserved areas, recognized scaffold leases, and exact exclusions out of
-  both the inventory and Git status: before approval the exclusions bound by `start --exclusions`
+  both the inventory and Git status: before approval the exclusions bound by `start --exclusions-stdin`
   (for example installed dependencies), from approval the contract's. Application names are
   literal, so a route like `app/[id]/page.tsx` is an ordinary file. Neither Git nor a clean tree
   is required.

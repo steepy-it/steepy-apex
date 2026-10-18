@@ -72,7 +72,7 @@ The skill drives `node <engine-root>/scripts/inception-state.mjs`, resolved rela
 |---|---|
 | `inception-state.mjs classify [--maturity suitable\|mature]` | Read fixed entry paths. |
 | `inception-state.mjs inspect` | Read schema, actions, state and exact refs. |
-| `inception-state.mjs start --harness <slug> --capabilities <csv> --git-commits allowed\|forbidden [--exclusions <json>]` | Create one v2 run with its exact pre-approval exclusions; never replace one. Refuses before any write when the repository cannot be inventoried. |
+| `inception-state.mjs start --harness <slug> --capabilities <csv> --git-commits allowed\|forbidden [--exclusions-stdin]` | Create one v2 run with its exact pre-approval exclusions, a strict JSON array read from standard input (a quoted heredoc keeps human reasons away from the shell); never replace one. Refuses before any write when the repository cannot be inventoried. |
 | `inception-state.mjs resume-check` | Read-only validation of current refs, approval, baseline, effects and pending work. |
 | `inception-state.mjs unit begin --id <id> --input <json> [--previous-unit <id>]` | Persist the sole writer, before snapshot, inputs, outputs and allowed paths. |
 | `inception-state.mjs unit finish --id <id> [--evidence <path>]...` | Validate complete outputs, freeze copies, observe the whole diff. |

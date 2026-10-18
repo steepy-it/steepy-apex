@@ -12,6 +12,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readFileSync,
   readSync,
   readdirSync,
   realpathSync,
@@ -508,7 +509,7 @@ function startRunUnlocked(repoRoot, {
   for (const name of capabilities) {
     if (!CAPABILITIES.includes(name)) throw usage(`unknown capability: ${JSON.stringify(name)}`);
   }
-  try { validateSnapshotScope({ roots: ['.'], exclusions }); } catch (error) { throw refuse(`--exclusions: ${message(error)}`); }
+  try { validateSnapshotScope({ roots: ['.'], exclusions }); } catch (error) { throw refuse(`--exclusions-stdin: ${message(error)}`); }
 
   const apexExists = realDirectory(root, '.apex');
   if (apexExists && lstatOrNull(join(root, HUB_INDEX_PATH)) !== null) {
@@ -545,7 +546,7 @@ function startRunUnlocked(repoRoot, {
   // Every later pre-approval command observes this scope, so prove it observable
   // before the first write: a run that cannot be inventoried is never created.
   try { observeApplication(root, { exclusions }); } catch (error) {
-    throw refuse(`cannot observe the application: ${message(error)}; declare exact dependency, cache or generated paths with --exclusions, never manifests, lockfiles, configuration or migrations`);
+    throw refuse(`cannot observe the application: ${message(error)}; declare exact dependency, cache or generated paths with --exclusions-stdin, never manifests, lockfiles, configuration or migrations`);
   }
   if (!apexExists) createDirectory(root, '.apex');
   if (!areaExists) createDirectory(root, INCEPTION_AREA);
@@ -570,9 +571,13 @@ function parseCapabilities(csv) {
   return names;
 }
 
-// A strict JSON array of {path, kind, reason}; startRun validates the entries.
-function parseExclusions(json) {
-  try { return parseV2Json(json, '--exclusions'); } catch (error) { throw usage(message(error)); }
+// A strict JSON array of {path, kind, reason}; startRun validates the entries. The run
+// does not exist yet, so this is not a run file: standard input (a quoted heredoc)
+// keeps the human reasons out of shell word splitting and expansion.
+function readStdinExclusions(read = () => readFileSync(0)) {
+  let bytes;
+  try { bytes = read(); } catch (error) { throw usage(`--exclusions-stdin cannot read standard input: ${message(error)}`); }
+  try { return parseV2Json(bytes, '--exclusions-stdin'); } catch (error) { throw usage(message(error)); }
 }
 
 function startCommand(root, values) {
@@ -580,7 +585,7 @@ function startCommand(root, values) {
     harnessName: values.harness,
     capabilities: values.capabilities,
     gitCommits: values['git-commits'],
-    exclusions: values.exclusions,
+    exclusions: values['exclusions-stdin'] ? readStdinExclusions() : [],
   });
   return { ok: true, fields: result };
 }
@@ -2231,10 +2236,10 @@ const COMMANDS = Object.freeze({
     run: classifyCommand,
   },
   start: {
-    options: { 'repo-root': REPO_ROOT_OPTION, harness: STRING_OPTION, capabilities: STRING_OPTION, 'git-commits': STRING_OPTION, exclusions: STRING_OPTION },
+    options: { 'repo-root': REPO_ROOT_OPTION, harness: STRING_OPTION, capabilities: STRING_OPTION, 'git-commits': STRING_OPTION, 'exclusions-stdin': { type: 'boolean' } },
     required: ['harness', 'capabilities', 'git-commits'],
     enums: { 'git-commits': GIT_COMMITS_CHOICES },
-    parsers: { capabilities: parseCapabilities, exclusions: parseExclusions },
+    parsers: { capabilities: parseCapabilities },
     run: startCommand,
   },
   transition: {
