@@ -278,6 +278,31 @@ test('managed-root replacement preserves CRLF prefix and suffix bytes exactly', 
   prepareGovernance(root, request); apply(root, request); finishGovernance(root);
   const rendered = fs.readFileSync(join(root, 'AGENTS.md'), 'utf8'); assert.ok(rendered.startsWith(prefix)); assert.ok(rendered.endsWith(suffix)); assert.equal(state.verifyComplete(root).ok, true);
 });
+// CR1: an unmarked CLAUDE.md that imports AGENTS.md (create-next-app's default) offers only
+// adopt; governance certifies exactly the planner's relocation of the import into the block.
+for (const [label, claude] of [
+  ['bare import', '@AGENTS.md\n'],
+  ['notes then import', '# Notes\n\n@AGENTS.md\n'],
+  ['import between lines', '# Notes\n@AGENTS.md\nKeep this line.\n'],
+  ['CRLF', '# Notes\r\n@AGENTS.md\r\nKeep this line.\r\n'],
+]) {
+  test(`certified init adopts an unmarked CLAUDE.md import: ${label}`, t => {
+    const root = fixture(t, { initialRoots: root => { put(root, 'AGENTS.md', '# Agent notes\n'); put(root, 'CLAUDE.md', claude); } });
+    const request = input(root);
+    const conflict = planProjectScaffold({ hubRoot: root, model: request.projectModel }).conflicts.find(c => c.path === 'CLAUDE.md');
+    assert.deepEqual(conflict.choices, ['adopt', 'abort']);
+    request.projectModel.resolutions[conflict.id] = 'adopt';
+    prepareGovernance(root, request); apply(root, request); finishGovernance(root);
+    assert.equal(state.verifyComplete(root).ok, true, state.verifyComplete(root).reason);
+    const adopted = fs.readFileSync(join(root, 'CLAUDE.md'), 'utf8');
+    for (const line of claude.split(/\r?\n/u).filter(line => line && line !== '@AGENTS.md')) assert.ok(adopted.includes(line), line);
+    assert.equal(adopted.includes('\r\n'), claude.includes('\r\n'));
+    const before = metadata(root); prepareGovernance(root, request); finishGovernance(root); assert.deepEqual(metadata(root), before);
+    // Unmanaged bytes stay certified: a later hand edit is drift.
+    put(root, 'CLAUDE.md', `User addition\n${adopted}`);
+    assert.equal(state.verifyComplete(root).ok, false);
+  });
+}
 test('a planner replacement that would discard unmanaged root bytes cannot become an init-only exception', t => {
   const root = fixture(t, { initialRoots: root => put(root, 'AGENTS.md', 'User content\n<!-- steepy:managed:project-instructions:v2:start -->\nOld\n<!-- steepy:managed:project-instructions:v2:end -->\nUser suffix\n') });
   const request = input(root); request.projectModel.resolutions['v1:project-instructions:unknown-version'] = 'replace';

@@ -5,7 +5,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createHash } from 'node:crypto';
-import { normalizeProjectModel, planProjectScaffold, renderProjectArtifact, withProjectScaffoldLock } from './project-scaffold.mjs';
+import { adoptUnmanagedClaudeImport, normalizeProjectModel, planProjectScaffold, renderProjectArtifact, withProjectScaffoldLock } from './project-scaffold.mjs';
 import { parseStrictJson, validateRef, validateAppEntry, validateId, validatePath, publicationRef, readPublicationFile, parseInceptionRecord } from './inception-protocol.mjs';
 import { observeApplication, applicationIdentity, applicationChanges, withApplicationSnapshotLease } from './inception-snapshot.mjs';
 import { parseRunDescriptor, verifyComplete } from './inception-state.mjs';
@@ -160,7 +160,7 @@ function inverse(root, receipt, ctx, { partial = false } = {}) {
       requireThat(offset >= 0 && after.indexOf(op.managedAfter, offset + 1) < 0, `${op.path} managed replacement is not unique`);
       const before = after.slice(0, offset) + op.managedBefore + after.slice(offset + op.managedAfter.length);
       requireThat(same(entry(op.path, Buffer.from(before), op.before.mode), op.before), `${op.path} unmanaged bytes changed`);
-      requireThat(same(managedDelta(before, after, op.path), { managedBefore: op.managedBefore, managedAfter: op.managedAfter }), `${op.path} uncertified unmanaged replacement`);
+      requireThat(same(managedDelta(before, after, op.path, receipt.producer.projectModel), { managedBefore: op.managedBefore, managedAfter: op.managedAfter }), `${op.path} uncertified unmanaged replacement`);
       // The current managed content must still contain the exact public block.
       const rendered = renderProjectArtifact(artifactIds(receipt.producer.projectModel).get(op.path), receipt.producer.projectModel).trimEnd();
       requireThat(after.replaceAll('\r\n', '\n').includes(rendered), `${op.path} managed block differs from public renderer`);
@@ -258,7 +258,7 @@ function publish(root, path, receipt, { fault } = {}) {
   requireThat(readPublicationFile(root, path, { missing: true }) === null, `${path} appeared before publication`);
   fs.renameSync(join(root, stage), join(root, path)); syncDirectory(join(root, base)); syncDirectory(dirname(join(root, path)));
 }
-function managedDelta(before, after, path) {
+function managedDelta(before, after, path, model) {
   const id = path === 'AGENTS.md' ? 'project-instructions' : 'claude-import';
   const startMarker = `<!-- steepy:managed:${id}:v1:start -->`;
   const endMarker = `<!-- steepy:managed:${id}:v1:end -->`;
@@ -268,11 +268,14 @@ function managedDelta(before, after, path) {
     requireThat(after.startsWith(prefix) && after.endsWith(suffix) && after.length >= prefix.length + suffix.length, `${path} replacement would discard unmanaged bytes`);
     return { managedBefore: before.slice(start, limit), managedAfter: after.slice(prefix.length, after.length - suffix.length) };
   }
-  // First init may append a block to an unmarked root. A destructive repair of
-  // malformed/legacy roots is still an ordinary planner operation, but cannot
-  // be certified as an init-only addition to a completed application.
-  requireThat(after.startsWith(before), `${path} replacement would discard unmanaged bytes`);
-  return { managedBefore: '', managedAfter: after.slice(before.length) };
+  // First init may append a block to an unmarked root, or adopt an unmarked CLAUDE.md
+  // import exactly as the public planner does. A destructive repair of malformed/legacy
+  // roots is still an ordinary planner operation, but cannot be certified as an
+  // init-only addition to a completed application.
+  if (after.startsWith(before)) return { managedBefore: '', managedAfter: after.slice(before.length) };
+  requireThat(path === 'CLAUDE.md' && after === adoptUnmanagedClaudeImport(before, renderProjectArtifact('claude-import', model)), `${path} replacement would discard unmanaged bytes`);
+  // Adoption moves import lines, so the certified span is the whole file.
+  return { managedBefore: before, managedAfter: after };
 }
 function withGovernanceSnapshotLease(root, observed, expectedId, options, action) {
   const identity = path => {
@@ -323,7 +326,7 @@ export function prepareGovernance(repoRoot, rawInput, options = {}) {
     ].map(op => {
       const before = currentEntry(root, op.path); const bytes = Buffer.from(op.content);
       const after = entry(op.path, bytes, before === null ? 0o644 : (before.mode & 0o777) || 0o644);
-      const delta = op.kind === 'replace-managed' ? managedDelta(readPublicationFile(root, op.path).toString('utf8'), op.content, op.path) : { managedBefore: null, managedAfter: null };
+      const delta = op.kind === 'replace-managed' ? managedDelta(readPublicationFile(root, op.path).toString('utf8'), op.content, op.path, input.projectModel) : { managedBefore: null, managedAfter: null };
       return { path: op.path, kind: op.kind, before, after, ...delta };
     }).sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
     const receipt = validateGovernanceReceipt({ schema: SCHEMA, id: receiptId(input.runId, input.completion, producer), runId: input.runId, completion: input.completion, producer, operations, applicationBefore: current.completion.body.snapshot, applicationAfter: null, status: 'prepared' });

@@ -486,6 +486,12 @@ function removeActiveUnmanagedClaudeImports(text) {
   return result;
 }
 
+// Adoption of an unmarked import: drop each active `@AGENTS.md` line and append the
+// canonical block. Governance certifies exactly this output as an init-only change.
+export function adoptUnmanagedClaudeImport(text, block) {
+  return appendManaged(removeActiveUnmanagedClaudeImports(text), block, lineEnding(text));
+}
+
 function preserveExtraClaudeImports(existing) {
   const markers = PROJECT_MARKERS['claude-import'];
   const start = existing.indexOf(markers.start);
@@ -570,11 +576,10 @@ function classifyMixed(observed, artifact, model) {
       return { priorState: 'malformed', reason: /:v(?!1:)/u.test(text) ? 'unknown-version' : 'malformed-markers', replacement: content };
     }
     if (artifactId === 'claude-import' && countActiveClaudeImports(text) > 0) {
-      const remainder = removeActiveUnmanagedClaudeImports(text);
       return {
         priorState: 'unmarked',
         reason: 'unmanaged-import',
-        replacement: appendManaged(remainder, content, lineEnding(text)),
+        replacement: adoptUnmanagedClaudeImport(text, content),
       };
     }
     return { priorState: 'unmarked', reason: null, replacement: appendManaged(text, content) };
