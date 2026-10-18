@@ -1025,7 +1025,7 @@ function finishPublicationLocked(root, descriptor, { fault } = {}) {
   // Binding is the already-rendered next descriptor, never a rerun of the
   // original writer, report parser, or application operation.
   verifyPublicationTargets(root, pending.targets);
-  if (pending.operation === 'complete') verifyCompletedState(root, pending.nextDescriptor);
+  if (pending.operation === 'complete') verifyCompletedState(root, pending.nextDescriptor, { live: false });
   const current = v2Descriptor(root);
   if (serializeRunDescriptorV2(current) !== serializeRunDescriptorV2(descriptor)) throw refuse('incompatible descriptor revision or reservation');
   fault?.('after-bind', { reservation: pending.id });
@@ -1668,7 +1668,9 @@ function assertVerificationReady(root, descriptor) {
   if (descriptor.blocks.length || readEffectsV2(root, descriptor).unresolved.length) throw refuse('unresolved blocks or effects prevent verification');
   if (descriptor.pending) throw refuse('pending publication prevents verification');
 }
-function verificationContext(root, descriptor, path) {
+// `live: false` reads the recorded baseline instead of the application: only a durable
+// terminal reservation uses it, because its live comparison ran before it was written.
+function verificationContext(root, descriptor, path, { live = true } = {}) {
   assertVerificationReady(root, descriptor);
   const ref = descriptor.currentCycle;
   if (!ref || ref.path !== path) throw refuse('cycle must identify the current verification cycle');
@@ -1678,8 +1680,9 @@ function verificationContext(root, descriptor, path) {
   if (!sameValue(cycle.body.contract, approval.body.contract)) throw refuse('cycle contract is stale');
   assertVerificationEnvironment(contract, cycle.body.environment);
   const snapshot = readRecordV2(root, descriptor, cycle.body.snapshot, 'snapshot').body;
-  const observed = observeRunApplication(root, descriptor);
-  assertBaseline(root, descriptor, observed);
+  let observed;
+  if (live) { observed = observeRunApplication(root, descriptor); assertBaseline(root, descriptor, observed); }
+  else observed = readRecordV2(root, descriptor, descriptor.baseline, 'snapshot').body;
   if (applicationIdentity(snapshot) !== applicationIdentity(observed)) throw refuse('cycle snapshot drift requires a new cycle');
   const session = readRecordV2(root, descriptor, descriptor.verificationSession, 'verification-session');
   if (!sameValue(session.body.cycle, ref)) throw refuse('verification session belongs to another cycle');
@@ -2096,8 +2099,9 @@ function latestSummaryLimits(root, descriptor) {
 }
 function completionInputs(root, descriptor, options) {
   assertTerminalWriters(root, descriptor);
-  const context = verificationContext(root, descriptor, options.cycle);
-  const checkpoint = finalCheckpoint(root, descriptor, context, options.checkpoint);
+  const live = options.live ?? true;
+  const context = verificationContext(root, descriptor, options.cycle, { live });
+  const checkpoint = finalCheckpoint(root, descriptor, context, options.checkpoint, { historical: !live });
   const evidence = verifyEvidenceClosure(root, descriptor);
   const summary = deriveSummary(context, descriptor, verificationObservations(root, descriptor, context), options.limits ?? latestSummaryLimits(root, descriptor));
   requireSuccessfulChecks(summary);
@@ -2107,7 +2111,8 @@ function completeV2(root, descriptor, options) {
   if (options.verification !== undefined) throw refuse('v2 complete forbids --verification; report is derived from evidence');
   if (options.gitCommits !== undefined) throw refuse('--git-commits is allowed only on a return to approval');
   if (!options.cycle || !options.checkpoint) throw refuse('complete requires --cycle and --checkpoint');
-  const { context, checkpoint, evidence, summary: body } = completionInputs(root, descriptor, options);
+  // Complete always compares the live application; only binding its reservation does not.
+  const { context, checkpoint, evidence, summary: body } = completionInputs(root, descriptor, { ...options, live: true });
   const { summary, report, reportRef } = summaryTargets(descriptor, body);
   const completion = newRecordV2(descriptor, 'completion', { approval: context.cycle.body.approval, contract: context.cycle.body.contract,
     cycle: context.ref, snapshot: checkpoint.snapshot, checkpoint: checkpoint.ref, summary: summary.ref, report: reportRef, evidence }, null, 2);
@@ -2128,8 +2133,11 @@ function verifyTerminalReservation(root, descriptor) {
   };
   const completion = plannedRecord(pending.nextDescriptor.completion, 'completion');
   const summary = plannedRecord(completion.body.summary, 'summary');
+  // The reservation is the commit point: complete compared the live application and
+  // Git under the lease before writing it. Binding it re-derives the completion from
+  // recorded evidence only; later drift is verify-complete's application drift.
   const { context, checkpoint, evidence, summary: derived } = completionInputs(root, { ...descriptor, pending: null }, {
-    cycle: completion.body.cycle.path, checkpoint: completion.body.checkpoint.path, limits: summary.body.limits,
+    cycle: completion.body.cycle.path, checkpoint: completion.body.checkpoint.path, limits: summary.body.limits, live: false,
   });
   const report = renderVerificationReport(summary);
   const expected = { approval: context.cycle.body.approval, contract: context.cycle.body.contract, cycle: context.ref,
@@ -2142,7 +2150,7 @@ function verifyTerminalReservation(root, descriptor) {
   }
 }
 
-function verifyCompletedState(root, descriptor, { verifyGovernance = verifyCanonicalGovernance } = {}) {
+function verifyCompletedState(root, descriptor, { verifyGovernance = verifyCanonicalGovernance, live = true } = {}) {
   if (descriptor.phase !== 'complete' || descriptor.status !== 'complete' || descriptor.completion === null) throw refuse('run is not complete');
   assertTerminalWriters(root, descriptor);
   const completion = readRecordV2(root, descriptor, descriptor.completion, 'completion');
@@ -2159,10 +2167,11 @@ function verifyCompletedState(root, descriptor, { verifyGovernance = verifyCanon
   if (![finalSnapshot, baseline].every(value => applicationIdentity(value) === applicationIdentity(snapshot))) throw refuse('completion snapshot mismatch');
   const session = readRecordV2(root, descriptor, descriptor.verificationSession, 'verification-session');
   if (!sameValue(session.body.cycle, body.cycle)) throw refuse('completion session mismatch');
-  let observed = observeApplication(root, { contract: body.contract, roots: contract.roots, exclusions: contract.exclusions });
+  // Binding a terminal reservation checks recorded evidence only (see verifyTerminalReservation).
+  let observed = live ? observeApplication(root, { contract: body.contract, roots: contract.roots, exclusions: contract.exclusions }) : snapshot;
   // The canonical init receipt can certify an exact inverse projection.
   // No provider directory is implicitly excluded here.
-  if (verifyGovernance !== undefined) {
+  if (live && verifyGovernance !== undefined) {
     if (typeof verifyGovernance !== 'function') throw refuse('governance verifier must be a synchronous function');
     const projected = verifyGovernance(root, { descriptor, completion, snapshot, observed });
     if (projected !== null && projected !== undefined) {
@@ -2190,7 +2199,7 @@ function verifyCompletedState(root, descriptor, { verifyGovernance = verifyCanon
     checks: derived.checks.map(({ id, required, type, result }) => ({ id, required, type, result })), coverage: derived.coverage };
 }
 export function verifyComplete(repoRoot, options = {}) {
-  try { const root = resolveRepoRoot(repoRoot); return verifyCompletedState(root, v2Descriptor(root), options); }
+  try { const root = resolveRepoRoot(repoRoot); return verifyCompletedState(root, v2Descriptor(root), { ...options, live: true }); }
   catch (error) { return { ok: false, reason: message(error) }; }
 }
 function completedNextStep(root, descriptor) {

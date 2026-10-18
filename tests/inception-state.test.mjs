@@ -2157,15 +2157,41 @@ test('v2 verification CLI rejects an unsupported run format and uses exact summa
   withCase('legacy-verify-complete', c => { writeDescriptor(c, v1RunDescriptor()); const before = snapshot(c.repo); const result = cli(c, 'verify-complete'); assert.equal(result.status, 1); assert.match(result.output.reason, /run descriptor schema "steepy-inception-run\/v1" is unsupported; supported: steepy-inception-run\/v2/u); assert.equal(result.output.inputPaths, undefined); assert.deepEqual(snapshot(c.repo), before); });
 });
 
-test('v2 terminal recovery rechecks application and proof bytes before publishing reserved targets', () => {
+// The terminal reservation is the commit point: the live application and Git are
+// compared once, under the lease, before it is written. Finishing or resuming it
+// re-derives the completion from recorded evidence only; later drift is reported by
+// the strict read-only verify-complete instead of wedging the pending publication.
+test('v2 terminal reservation completes despite later application drift, which verify-complete reports', () => {
+  for (const event of ['after-reserve', 'after-stage', 'before-bind']) {
+    const root = verificationFixtureV2();
+    try {
+      observePageV2(root); const options = completeOptionsV2(root);
+      // A dev server writes inside the window without interrupting the writer.
+      stateV2.transitionRun(root, { ...options, reservation: 'terminal-window', fault: step => { if (step === event) writeFileSync(join(root, 'app.js'), 'Rewritten by a dev server'); } });
+      assert.equal(readV2(root).status, 'complete');
+      assert.match(stateV2.verifyComplete(root).reason, /application-drift/);
+      writeFileSync(join(root, 'app.js'), 'Application');
+      assert.equal(stateV2.verifyComplete(root).ok, true, stateV2.verifyComplete(root).reason);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+test('v2 terminal recovery binds the reservation after drift but rechecks every proof byte', () => {
   const root = verificationFixtureV2();
   try {
     observePageV2(root); const options = completeOptionsV2(root);
     assert.throws(() => stateV2.transitionRun(root, { ...options, reservation: 'terminal-drift', fault: step => { if (step === 'after-reserve') throw Error('interrupted'); } }), /interrupted/);
-    writeFileSync(join(root, 'app.js'), 'Changed after reservation'); const before = snapshot(root);
-    assert.throws(() => stateV2.resumePublication(root, { reservation: 'terminal-drift' }), /drift/);
+    writeFileSync(join(root, 'app.js'), 'Changed after reservation');
+    const checkpoint = readV2(root).checkpoints.at(-1).path; const proof = readFileSync(join(root, checkpoint));
+    writeFileSync(join(root, checkpoint), proof.toString('utf8').replace('Final verification', 'Final verificatioN')); const before = snapshot(root);
+    assert.throws(() => stateV2.resumePublication(root, { reservation: 'terminal-drift' }), /digest|diverg/);
     assert.deepEqual(snapshot(root), before, 'no reserved output appears after refused recovery');
     assert.notEqual(readV2(root).status, 'complete');
+    writeFileSync(join(root, checkpoint), proof);
+    stateV2.resumePublication(root, { reservation: 'terminal-drift' });
+    assert.equal(readV2(root).status, 'complete');
+    assert.match(stateV2.verifyComplete(root).reason, /application-drift/);
+    writeFileSync(join(root, 'app.js'), 'Application');
+    assert.equal(stateV2.verifyComplete(root).ok, true, stateV2.verifyComplete(root).reason);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 test('v2 complete and verify-complete include captured stdout/stderr and require both proof types', () => {

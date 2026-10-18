@@ -669,6 +669,10 @@ node <engine-root>/scripts/inception-state.mjs transition --repo-root . --to com
 Complete checks approval, cycle/inventory/environment/reuse, final checkpoint, all required types,
 transitive digests, zero uncertain/partial effects, active units, residual blocks and foreign pending
 writes. It publishes immutable report/completion plus `verification/results.md`, then complete state.
+It compares the live application and Git once, before it reserves the completion. An interrupted
+complete is finished with `publish resume`, which rechecks only recorded evidence; if the
+application changed after the reservation, the run still completes and `verify-complete` reports
+the drift. Restore the reported bytes before `init` and `discovery`.
 
 <!-- example:verify-complete -->
 ```bash
