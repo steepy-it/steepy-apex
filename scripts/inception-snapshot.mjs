@@ -32,14 +32,15 @@ const PATHSPEC_ENV = ['GIT_LITERAL_PATHSPECS', 'GIT_GLOB_PATHSPECS', 'GIT_NOGLOB
 export function observeSnapshotGit(root, excluded) {
   const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
   for (const key of PATHSPEC_ENV) delete env[key];
-  const run = args => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', env });
+  // Status of a large untracked tree exceeds the 1 MiB default; match source-observation.mjs.
+  const run = args => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', env, maxBuffer: 128 * 1024 * 1024 });
   const probe = run(['rev-parse', '--show-toplevel']);
   if (probe.error && probe.error.code !== 'ENOENT') throw probe.error;
   if (probe.status !== 0 || fs.realpathSync(probe.stdout.trim()) !== fs.realpathSync(root)) return absentGit();
   const branch = run(['symbolic-ref', '--quiet', '--short', 'HEAD']);
   const head = run(['rev-parse', '--verify', '--quiet', 'HEAD']);
   const status = run(['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.', ...excluded.map(p => `:(exclude,literal)${p}`)]);
-  if (status.error || status.status !== 0) throw new Error('Git provenance observation failed');
+  if (status.error || status.status !== 0) throw new Error(`Git provenance observation failed${status.error ? `: ${status.error.code ?? status.error.message}` : ''}`);
   return validateGit({ present: true, branch: branch.status === 0 ? branch.stdout.trim() : null, head: head.status === 0 ? head.stdout.trim() : null, status: status.stdout.split('\0').filter(Boolean).sort() });
 }
 export function observeApplication(repoRoot, { contract = null, roots = ['.'], exclusions = [], git } = {}) {

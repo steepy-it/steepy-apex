@@ -217,3 +217,14 @@ test('F4 a recognized lease directory that changes during the walk refuses the o
   } finally { fs.readdirSync = original; }
   assert.equal(listed, true);
 }));
+test('Git status larger than the default 1 MiB child buffer is observed in full', () => fixture(root => hermeticGit(() => {
+  const run = (...args) => { const r = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+  run('init', '-q');
+  // About 0.7 KiB per status entry: 1,500 untracked files exceed 1 MiB of porcelain output.
+  const dir = `${'d'.repeat(240)}/${'e'.repeat(240)}`; fs.mkdirSync(join(root, dir), { recursive: true });
+  for (let n = 0; n < 1500; n++) fs.writeFileSync(join(root, dir, `${String(n).padStart(4, '0')}${'f'.repeat(236)}`), '');
+  const snapshot = observeApplication(root);
+  assert.equal(snapshot.files.length, 1500);
+  assert.equal(snapshot.git.status.length, 1500);
+  assert.ok(snapshot.git.status.join('\0').length > 1024 * 1024);
+})));
