@@ -366,7 +366,8 @@ simulations, constraints, components/contracts, sources/versions, reuse and pres
 one representative path, deploy scope and limits. Other flows remain future; never start them as
 a backlog. Write `.apex/inception/project/verification-contract.json` before human approval.
 The contract assigns automatic, manual or both to each check; subject, procedure, expected outcome,
-evidenceRequired, required boolean and applicable command/procedures are explicit. Declare roots,
+evidenceRequired, required boolean and applicable command/procedures are explicit. Declare roots
+(a root that bootstrap creates later may be absent at approval; it holds no files until then),
 exact justified exclusions (dependencies/cache/generated; literal paths, never globs), tools/resources, and coverage for every
 approved decision/component, current or future. Do not exclude pertinent manifests, lockfiles,
 configuration or migrations to conceal failure. Before approval the helper inventories `.`

@@ -228,3 +228,13 @@ test('Git status larger than the default 1 MiB child buffer is observed in full'
   assert.equal(snapshot.git.status.length, 1500);
   assert.ok(snapshot.git.status.join('\0').length > 1024 * 1024);
 })));
+test('a root or root ancestor that does not exist yet contributes no files; a file ancestor still refuses', () => fixture(root => {
+  const git = { present: false, branch: null, head: null, status: [] };
+  put(root, 'src/a'); put(root, 'package.json', '{}');
+  const snapshot = observeApplication(root, { roots: ['src', 'web', 'apps/web', 'Cargo.toml'], git });
+  assert.deepEqual(snapshot.files.map(f => f.path), ['src/a']);
+  assert.deepEqual(snapshot.roots, ['src', 'web', 'apps/web', 'Cargo.toml']);
+  put(root, 'web/index.html');
+  assert.deepEqual(observeApplication(root, { roots: ['src', 'web'], git }).files.map(f => f.path), ['src/a', 'web/index.html']);
+  assert.throws(() => observeApplication(root, { roots: ['package.json/x'], git }), /ENOTDIR|not a directory/);
+}));

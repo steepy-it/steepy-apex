@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { join } from 'node:path';
-import { area, fixture } from './helpers/inception-fixture.mjs';
+import { area, contract, fixture } from './helpers/inception-fixture.mjs';
 
 const ROUTES = {
   'app/[id]/page.tsx': 'Dynamic route\n',
@@ -109,4 +109,24 @@ test('CR2 start refuses malformed or non-literal exclusions before any write', t
   }
   assert.deepEqual(f.snapshot(), before);
   assert.equal(fs.existsSync(join(f.root, '.apex')), false);
+});
+
+// CR9: contract roots name paths bootstrap creates or removes. An absent root is an
+// empty part of the application, never an observation failure.
+test('CR9 roots that do not exist yet are approved, then created and removed by bootstrap units', t => {
+  const f = fixture(t, { phase: 'approval', approvedContract: contract(undefined, { roots: ['apps/web', 'src', 'web'] }) });
+  f.approve(); f.transition('bootstrap');
+  assert.deepEqual(inventory(f, f.descriptor().baseline), ['src/app.js']);
+  f.begin('create-web', { kind: 'bootstrap', allowedPaths: ['web'] });
+  f.put('web/index.html', '<p>Ready</p>\n'); f.report('create-web'); f.finish('create-web');
+  assert.deepEqual(inventory(f, unitAfter(f, 'create-web')), ['src/app.js', 'web/index.html']);
+  f.begin('drop-web', { kind: 'bootstrap', allowedPaths: ['web'] });
+  fs.rmSync(join(f.root, 'web'), { recursive: true }); f.report('drop-web'); f.finish('drop-web');
+  assert.deepEqual(inventory(f, unitAfter(f, 'drop-web')), ['src/app.js']);
+  assert.equal(f.cli('resume-check').ok, true);
+  f.begin('drop-src', { kind: 'bootstrap', allowedPaths: ['src'] });
+  fs.rmSync(join(f.root, 'src'), { recursive: true }); f.report('drop-src');
+  const statement = f.input({ evidence: [`${area}/project/drop-src.md`], reason: 'Source moved', statement: 'I accept removing src.' });
+  assert.equal(f.cli('unit', 'reconcile', '--id', 'drop-src', '--input', statement).ok, true);
+  f.checkpoint();
 });

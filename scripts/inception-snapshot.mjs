@@ -92,12 +92,16 @@ export function observeApplication(repoRoot, { contract = null, roots = ['.'], e
   for (const scope of roots) {
     // Check every scope ancestor before walking so an exact nested root cannot
     // bypass the symlink rejection that a root-wide traversal would enforce.
+    // A root that bootstrap has not created yet, or has removed, holds no files.
     const parts = scope.split('/');
-    for (let n = 1; n < parts.length; n++) {
+    let present = true;
+    for (let n = 1; n < parts.length && present; n++) {
       const parent = parts.slice(0, n).join('/');
-      if (fs.lstatSync(join(root, parent)).isSymbolicLink()) throw new Error(`${parent}: symlink scope ancestor`);
+      const stat = statOrNull(join(root, parent));
+      if (stat === null) present = false;
+      else if (stat.isSymbolicLink()) throw new Error(`${parent}: symlink scope ancestor`);
     }
-    walk(scope);
+    if (present && (scope === '.' || statOrNull(join(root, scope)) !== null)) walk(scope);
   }
   const observedGit = git === undefined ? observeSnapshotGit(root, excluded) : validateGit(git);
   if (JSON.stringify(recognizeProjectScaffoldLeases(root)) !== JSON.stringify(leases)) throw new Error('recognized lease directories changed during observation');
