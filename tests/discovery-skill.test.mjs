@@ -510,6 +510,11 @@ test('discovery inception source (SC12): every decision ends accepted or rejecte
   assert.doesNotMatch(section, /Re-runs follow the new-or-drifted rule/);
   assert.match(section, /The import is one-time\./);
   assert.match(section, /later run's gate refuses the source with `governance output drift`.*ordinary discovery/);
+  // An interrupted interview must not consume the one-time import: writes wait for the last decision.
+  assert.match(section, /Write nothing to the hub until every register decision is decided/);
+  assert.match(section, /next run's gate still passes and the import starts again/);
+  assert.match(section, /record the decision outcomes \(item 6\) and write every accepted preview in one pass, with no question in between/);
+  assert.match(section, /the interrupted run's `\[REPORT_FILE\]` still lists every accepted decision under `## Decision outcomes`/);
   const step4 = flat(sectionBetween(text, '### Step 4', '## Model Selection'));
   assert.match(step4, /inception source[^]*`## Decision outcomes`/, 'Step 4 must report the inception decision outcomes');
 });

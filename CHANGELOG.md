@@ -30,7 +30,8 @@
 - `discovery` offers an inception source for a complete run. Read-only `verify-complete` first
   checks the evidence and the current application, before discovery writes anything; accepted
   decisions go only to `conventions.md`, the routed standards, and `glossary.md`. The import is
-  one-time: a later run sees the certified documents drift and refuses the source.
+  one-time: a later run sees the certified documents drift and refuses the source. Nothing is
+  written until every decision is decided, so an interrupted interview can start again.
 - Breaking (released as a minor version by decision): v1.2.0 drops every compatibility path for older formats.
   - Specialist adapters rendered by v1.0.0–v1.0.6 are no longer recognized. An untouched one is a `customized` conflict: a `validate-hub` error that blocks the Stop hook. Run `init` repair, or `new-surface` with `--resolution <id>=replace` in an active hub, and choose `replace`. `templates/prior/` is gone.
   - Autopilot runs started on task-result protocol 1 cannot resume: the conductor halts with an unsupported-protocol reason. Finish such a run manually or start a fresh run. In autopilot, implementer, fix and reviewer responses carry exactly `status`, `artifact`, `signals`; a response with `changed-paths` is malformed. `skills/implement/reviewer-response.schema.json` is removed. Manual drive keeps its four-field grammar and `- Task` bullets. An in-flight protocol-2 run whose retained reviewer or task responses carried `changed-paths` also halts on resume; finish it manually or start a fresh run.

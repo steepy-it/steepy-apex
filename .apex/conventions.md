@@ -97,7 +97,9 @@ only the current conductor ledger schema and identify unsupported records as inv
   files with more than one link.
 - Discovery's inception source: a `complete` run only, read at the exact bound paths, verified
   before the run writes any hub document, and imported once: a later write-back makes the
-  certified documents drift. Every decision is approved. Three promotion rules:
+  certified documents drift. Nothing is written until every decision is decided, then all accepted
+  previews are written in one pass, so an interrupted interview leaves the source importable.
+  Every decision is approved. Three promotion rules:
   - Approved and verified (`verified`) → may be written as an existing component or rule.
   - Approved but unverified (`unverified`) → written as a design choice, not an existing
     component.

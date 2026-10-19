@@ -191,16 +191,24 @@ directory under it. A stop in this step ends only the inception source; Step 2, 
      component.
    - A future flow (`future`) → written as context in `conventions.md`, never as an implemented
      component, a spec, or a started task.
-5. **Write-back.** Destinations are only `conventions.md`, the routed surface standards, and
-   `glossary.md`: no new hub document and no `_INDEX.md` change. Write-back text never names, cites,
-   or links `.apex/inception/`; the Evidence stays in the interview. Write verbatim the approved
-   preview, additive and diff-gated as in Step 2.5.
+5. **Write-back, in one pass after the interview.** Write nothing to the hub until every register
+   decision is decided; each preview is still accepted, corrected or skipped on its own. An
+   interview interrupted before that point leaves the certified documents unchanged, so the next
+   run's gate still passes and the import starts again. Then record the decision outcomes (item 6)
+   and write every accepted preview in one pass, with no question in between. Destinations are
+   only `conventions.md`, the routed surface standards, and `glossary.md`: no new hub document and
+   no `_INDEX.md` change. Write-back text never names, cites, or links `.apex/inception/`; the
+   Evidence stays in the interview. Write verbatim the approved preview, additive and diff-gated as
+   in Step 2.5.
 6. **Decision outcomes.** Every register decision ends accepted (written) or rejected with a reason.
    Record the outcomes in `[REPORT_FILE]` under `## Decision outcomes`, one line per decision:
    `DR-n — accepted` or `DR-n — rejected: <reason>`. The import is one-time. Once a run writes to
    `conventions.md`, a standard or `glossary.md`, those documents no longer match what `init`
    certified, so a later run's gate refuses the source with `governance output drift`: report it
-   and continue with ordinary discovery.
+   and continue with ordinary discovery. The write pass is the one window left. If it is interrupted,
+   a later run refuses the source the same way; the interrupted run's `[REPORT_FILE]` still lists
+   every accepted decision under `## Decision outcomes`, so the user can see which ones are missing
+   from the hub.
 
 ### Step 3 — Coherence gate
 
