@@ -119,6 +119,7 @@ Before any decision, research, bootstrap, check, publication or transition work,
 An operation with effects is an installation, a generator, a migration, an external resource, a deploy, a commit, or a remote operation. Each one is recorded with its intent before and its outcome after, then checked, then captured in a checkpoint of the application files it changed.
 
 - An uncertain effect (intent without a conclusive outcome, including `partial`) is never repeated. On resume the skill can reconcile automatically only when exact correlation and evidence prove the recorded intent's outcome. Similar resources or free text alone do not prove it. An ambiguous outcome stays uncertain and requires a human decision; reconciliation grants no new remote authorization and replaces no required manual confirmation.
+- An outcome records the observed result even when the effect changed paths outside its declared scope, and the helper names those paths (`outsideScope`). `unit finish` then refuses; only `unit reconcile` with the human's explicit statement accepts them.
 - A checkpoint is immutable. A later change gets its own effect and a new checkpoint.
 - Local commits follow the commit policy you chose when the run started (`allowed` or `forbidden`; `none` without Git). Remote operations (a push, a repository creation, a deploy) are never covered by that answer: each one needs your authorization for that one operation, quoted in the log.
 - Subagent children never run an operation with effects. They list what they need and the coordinator runs it.

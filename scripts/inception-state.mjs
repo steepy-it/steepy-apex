@@ -1167,6 +1167,8 @@ export function finishUnit(repoRoot, { id, evidence = [], expectedRevision, rese
     assertRegistrationInput({ kind: unit.kind, inputs: unit.inputs, outputs: unit.outputs, allowedPaths: unit.allowedPaths });
     if (unit.capture !== null && unit.capture.state !== 'captured') throw refuse('capture is incomplete');
     if (readEffectsV2(root, descriptor).unresolved.length) throw refuse('unresolved effects prevent unit finish');
+    const excess = unitEffectExcess(root, descriptor, id);
+    if (excess.length) throw refuse(effectExcessSummary(excess));
     verifyOpeningUnitInputs(root, unit);
     const targets = unit.outputs.map((output, index) => {
       const content = readPublicationFile(root, output.path);
@@ -1391,13 +1393,35 @@ export function recordEffectOutcome(repoRoot, options = {}) {
     });
     const after = observeRunApplication(root, descriptor);
     const before = readRecordV2(root, descriptor, effect.intent.body.before, 'snapshot').body;
-    if (applicationChanges(before, after).some(c => !withinAllowed(c.path, effect.intent.body.scope))) throw refuse('effect observation cannot explain changes outside intent scope');
+    // The observed result is recorded even when the effect went outside its scope;
+    // accepting those paths stays a human unit reconciliation (unitEffectExcess).
+    const outsideScope = outsideEffectScope(effect.intent.body, before, after);
     const snapshot = newRecordV2(descriptor, 'snapshot', after, unitId);
     const body = { id, intent: effect.ref, result: input.result, observed: input.observed, correlation: input.correlation, evidence: targets.map(t => publicationRef(t.path, t.content)), after: snapshot.ref, method };
     const outcome = newRecordV2(descriptor, 'effect-outcome', body, unitId, 1);
     const next = { ...descriptor, nextRecord: descriptor.nextRecord + 2, effects: [...descriptor.effects, outcome.ref], blocks: input.result === 'partial' ? descriptor.blocks : descriptor.blocks.filter(b => b.id !== effectBlockId(id)) };
-    return { id, outcome: outcome.ref, ...publishMutation(root, descriptor, next, [...targets, snapshot.target, outcome.target], 'effect-outcome', options) };
+    return { id, outcome: outcome.ref, outsideScope, ...publishMutation(root, descriptor, next, [...targets, snapshot.target, outcome.target], 'effect-outcome', options) };
   });
+}
+// Paths an effect changed outside its declared scope, derived from its bound snapshots.
+function outsideEffectScope(intent, before, after) {
+  return applicationChanges(before, after).filter(c => !withinAllowed(c.path, intent.scope)).map(c => c.path);
+}
+// Concluded effects of a unit whose observed changes exceed their own scope:
+// unit finish refuses them, and only a reconciliation with a human statement accepts them.
+function unitEffectExcess(root, descriptor, unitId) {
+  const snapshot = ref => readRecordV2(root, descriptor, ref, 'snapshot').body;
+  return readEffectsV2(root, descriptor).effects
+    .filter(e => e.intent.body.unitId === unitId && e.outcome !== null)
+    .map(e => ({ id: e.id, paths: outsideEffectScope(e.intent.body, snapshot(e.intent.body.before), snapshot(e.outcome.body.after)) }))
+    .filter(e => e.paths.length);
+}
+function effectExcessSummary(excess) {
+  const named = excess.map(({ id, paths }) => {
+    const shown = paths.slice(0, 5).map(path => JSON.stringify(path)).join(', ');
+    return `effect ${id} changed ${paths.length > 5 ? `${shown} and ${paths.length - 5} more` : shown}`;
+  });
+  return `${named.join('; ')} outside its declared scope: only unit reconcile with an explicit human statement accepts them`;
 }
 export function createCheckpoint(repoRoot, options = {}) {
   validateText(options.label, 'checkpoint label');
@@ -1449,7 +1473,7 @@ export function reconcileUnit(repoRoot, options = {}) {
     const after = observeRunApplication(root, descriptor); const changes = applicationChanges(before, after);
     let gitExplained = true;
     try { assertGitExplained(root, descriptor, before, after, id); } catch { gitExplained = false; }
-    const unexplained = changes.some(c => !withinAllowed(c.path, unit.allowedPaths)) || !gitExplained;
+    const unexplained = changes.some(c => !withinAllowed(c.path, unit.allowedPaths)) || !gitExplained || unitEffectExcess(root, descriptor, id).length > 0;
     if (unexplained && input.statement === null) throw refuse('outside-scope or Git drift requires explicit human statement');
     // Only a bound observed-stop closure permits missing interrupted outputs.
     // Human acceptance retains incomplete history and never attests check success.

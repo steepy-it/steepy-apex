@@ -1584,6 +1584,30 @@ test('v2 immutable effects require exact structured correlation, retain partial 
     assert.equal(existsSync(join(root, INCEPTION_AREA, 'effects.jsonl')), false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+test('v2 effect outcome records changes outside its declared scope; only a human unit reconciliation accepts them', () => {
+  const root = fixtureV2();
+  try {
+    // The unit allows extra/, so only the effect's own scope makes extra/tool-output excess.
+    stateV2.beginUnit(root, { id: 'generate', input: { ...unitInputV2('generate'), allowedPaths: ['src', 'extra'] } });
+    stateV2.recordEffectIntent(root, { id: 'build', input: { ...intentV2('build'), kind: 'generator', scope: ['src'] } });
+    mkdirSync(join(root, INCEPTION_AREA, 'project')); mkdirSync(join(root, 'extra'));
+    writeFileSync(join(root, 'extra/tool-output'), 'Unexpected output');
+    const path = `${INCEPTION_AREA}/project/observation.json`;
+    const correlation = [{ name: 'operation', value: 'exact-token' }];
+    for (const result of ['partial', 'failed']) {
+      writeFileSync(join(root, path), JSON.stringify({ id: 'build', procedure: 'Read operation identity', result, correlation, observed: 'Unexpected output' }));
+      const outcome = stateV2.recordEffectOutcome(root, { id: 'build', input: { result, observed: 'Unexpected output', correlation, evidence: [path] } });
+      assert.deepEqual(outcome.outsideScope, ['extra/tool-output']);
+    }
+    assert.deepEqual(stateV2.effectStatusV2(root).unresolved, []);
+    writeFileSync(join(root, INCEPTION_AREA, 'project/generate.md'), reportV2('generate'));
+    assert.throws(() => stateV2.finishUnit(root, { id: 'generate' }), /effect build changed "extra\/tool-output" outside its declared scope/);
+    assert.throws(() => stateV2.reconcileUnit(root, { id: 'generate', input: { evidence: [path], reason: 'Observed output', statement: null } }), /human statement/);
+    stateV2.reconcileUnit(root, { id: 'generate', input: { evidence: [path], reason: 'Observed output', statement: 'I accept extra/tool-output from the failed build.' } });
+    assert.equal(readV2(root).activeUnit, null);
+    assert.equal(readV2(root).units[0].state, 'completed');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 test('v2 effect publication interruption resumes only reserved records and never replays work', () => {
   const root = fixtureV2();
   try {

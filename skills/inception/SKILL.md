@@ -536,6 +536,9 @@ The general sequence is:
 3. `effect outcome --id <id> --input <exact-outcome-json>` supplies exactly result, observed,
    correlation and evidence (exact path list). Results: succeeded/failed/not-started/partial.
    Helper derives intent/before/after and fixes method. Partial remains uncertain, not replayable.
+   Changes outside the intent scope never prevent recording the observed result: the outcome
+   names them in `outsideScope`. Then `unit finish` refuses, and only the human accepts those
+   paths, through `unit reconcile` with their explicit statement.
 4. Check the unit report, effects and observed diff, finish the unit, then
    `checkpoint create --label=<text>`. This snapshots the entire approved inventory and Git after
    authorized commits/checks. No file list or new baseline can hide unexplained changes.
