@@ -191,8 +191,9 @@ directory under it. A stop in this step ends only the inception source; Step 2, 
      component.
    - A future flow (`future`) → written as context in `conventions.md`, never as an implemented
      component, a spec, or a started task.
-5. **Write-back, in one pass after the interview.** Write nothing to the hub until every register
-   decision is decided; each preview is still accepted, corrected or skipped on its own. An
+5. **Write-back, in one pass after the interview.** Unlike Step 2.5, this source batches its
+   writes: write nothing to the hub until every register decision is decided. Each preview is still
+   accepted, corrected or skipped on its own, so every write stays gated by the user. An
    interview interrupted before that point leaves the certified documents unchanged, so the next
    run's gate still passes and the import starts again. Then record the decision outcomes (item 6)
    and write every accepted preview in one pass, with no question in between. Destinations are
@@ -205,10 +206,10 @@ directory under it. A stop in this step ends only the inception source; Step 2, 
    `DR-n — accepted` or `DR-n — rejected: <reason>`. The import is one-time. Once a run writes to
    `conventions.md`, a standard or `glossary.md`, those documents no longer match what `init`
    certified, so a later run's gate refuses the source with `governance output drift`: report it
-   and continue with ordinary discovery. The write pass is the one window left. If it is interrupted,
-   a later run refuses the source the same way; the interrupted run's `[REPORT_FILE]` still lists
-   every accepted decision under `## Decision outcomes`, so the user can see which ones are missing
-   from the hub.
+   and continue with ordinary discovery. The write pass is the one window left. If it is interrupted
+   after its first write, a later run refuses the source the same way; the interrupted run's
+   `[REPORT_FILE]` still lists every accepted decision under `## Decision outcomes`, so the user can
+   see which ones are missing from the hub. If no write landed, the gate still passes.
 
 ### Step 3 — Coherence gate
 
