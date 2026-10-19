@@ -56,6 +56,42 @@ test('M02 approval recovery asks before approval, advances once after approval, 
   assert.equal(f.descriptor().approvals.length, 2);
 });
 
+test('M02 a blocked run with an edited approved document unblocks and returns to approval; forward gates still refuse', t => {
+  const f = fixture(t, { phase: 'bootstrap' });
+  f.transition('blocked');
+  f.put(`${area}/project/decision-register.md`, 'Edited approved decisions');
+  f.transition('active');
+  assert.match(f.refuse('transition', '--to', 'verification', '--reason', 'Stale approval').error, /decision-register\.md: reference digest diverges/);
+  assert.match(f.refuse('verify-approval').error, /decision-register\.md: reference digest diverges/);
+  f.transition('approval'); f.approve(); f.transition('bootstrap');
+  assert.equal(f.descriptor().approvals.length, 2);
+});
+
+test('M02 an older approval verifies its frozen copies after a reapproval changed the working documents', t => {
+  const f = fixture(t, { phase: 'bootstrap' });
+  const older = f.descriptor().approvals[0].path;
+  f.transition('approval');
+  f.put(`${area}/project/decision-register.md`, 'Revised approved decisions');
+  f.approve();
+  assert.equal(f.cli('verify-approval').ok, true);
+  assert.equal(f.cli('verify-approval', '--approval', older).ok, true);
+  // Control: the older approval still authenticates its own frozen copy.
+  const frozen = f.read(older).body.frozenDocuments.find(d => d.sourcePath.endsWith('decision-register.md')).artifact.path;
+  f.put(frozen, 'Forged frozen copy');
+  assert.match(f.refuse('verify-approval', '--approval', older).error, /reference digest diverges/);
+});
+
+test('M11 a terminal reservation binds after an approved working document changes; verify-complete reports it', t => {
+  const f = fixture(t, { phase: 'verification' }); f.manual('verified', ['app']); const checkpoint = f.checkpoint();
+  f.crash('inception-state', `api.transitionRun(root,{to:'complete',reason:'Verified',cycle:${JSON.stringify(f.cycle())},checkpoint:${JSON.stringify(checkpoint)},reservation:'terminal',fault:event=>{if(event==='after-reserve')process.exit(73)}});`);
+  f.put(`${area}/project/decision-register.md`, 'Changed after the terminal commit point');
+  f.cli('publish', 'resume', '--reservation', 'terminal');
+  assert.equal(f.descriptor().status, 'complete'); assert.equal(f.descriptor().pending, null);
+  const verified = f.refuse('verify-complete');
+  assert.equal(verified.ok, false);
+  assert.match(verified.reason, /decision-register\.md: reference digest diverges/);
+});
+
 for (const type of ['automatic', 'manual', 'both']) {
   test(`M03 required ${type} missing/red refuses complete; optional red survives successful closure`, t => {
     const required = check('required', type, type === 'manual' ? {} : { automatic: command('process.exit(7)') });

@@ -265,6 +265,8 @@ test('pre-merge rules agree across skills and guides', () => {
   assert.match(inception, /Single-quote every path argument/);
   assert.match(inception, /git add -- ':\(literal\)<path>'/);
   assert.match(inception, /new decision document[\s\S]*only in the approval phase/i);
+  assert.match(inception, /A blocked run with a divergent approval still takes `transition --to active` and then `transition --to approval`: neither compares the working documents/);
+  assert.match(inception, /Older approvals and a reserved completion verify their frozen copies/);
   assert.match(inception, /Changes outside the intent scope never prevent recording the observed result/);
   assert.match(inception, /only the human accepts those paths, through `unit reconcile` with their explicit statement/);
   const discovery = norm(read('skills', 'discovery', 'SKILL.md'));
@@ -277,6 +279,7 @@ test('pre-merge rules agree across skills and guides', () => {
   assert.match(guide, /the helper never reads a path, exclusion or allowed path as a pattern/);
   assert.match(guide, /covered by the latest approval/);
   assert.match(guide, /outcome records the observed result even when the effect changed paths outside its declared scope/);
+  assert.match(guide, /a blocked run with an edited approved document can still return to approval; a reserved completion binds from the frozen copies/);
   assert.match(guide, /inception-governance\.mjs documents/);
   assert.doesNotMatch(guide, /recognized active lease/);
   const architecture = read('docs', 'architecture.md').split('\n');
@@ -298,6 +301,7 @@ test('hub promotes the pre-merge inception rules', () => {
   assert.match(section, /Git status excludes the same set as the inventory/i);
   assert.match(section, /covered by the latest approval/i);
   assert.match(section, /outside its declared scope; unit finish refuses those paths, and only a unit reconciliation with an explicit human statement accepts them/);
+  assert.match(section, /Only the latest approval read as current compares the working documents: older approvals and a reserved completion read the frozen copies/);
   assert.match(section, /documents[\s\S]*0644/);
   const scripts = read('.apex', 'standards', 'scripts.md');
   assert.match(scripts, /recognized scaffold leases/);

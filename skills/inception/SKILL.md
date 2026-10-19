@@ -250,8 +250,10 @@ node <engine-root>/scripts/inception-state.mjs resume-check --repo-root .
 4. Approval has three cases: **absent** means continue the persisted preapproval phase, never
    require a nonexistent approval or jump to bootstrap; **valid** means retain it without asking
    again; **divergent** means stop writers, explain the exact change, return explicitly to approval,
-   then use a decision unit and targeted reapproval of the complete current project. A hash alone
-   does not prove a human confirmation. Git branch/HEAD/status drift also needs evidenced
+   then use a decision unit and targeted reapproval of the complete current project. A blocked
+   run with a divergent approval still takes `transition --to active` and then
+   `transition --to approval`: neither compares the working documents. Older approvals and a
+   reserved completion verify their frozen copies. A hash alone does not prove a human confirmation. Git branch/HEAD/status drift also needs evidenced
    reconciliation; a reconciled content-identical commit alone does not create a new cycle.
 5. Resolve only the named block via `block resolve`, recording the human statement and evidence.
    A proven reconciliation can clear its own block, never unrelated blocks. Only after zero

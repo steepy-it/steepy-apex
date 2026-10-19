@@ -1216,7 +1216,9 @@ function transitionV2(repoRoot, options) {
   return withV2Mutation(repoRoot, options, (root, descriptor) => {
     if (options.to === 'complete') return completeV2(root, descriptor, options);
     if (options.cycle !== undefined) throw refuse('--cycle is allowed only on verification -> complete');
-    if (descriptor.phase !== 'approval' && !['approval', 'blocked'].includes(options.to) && descriptor.approvals.length) readApprovalV2(root, descriptor, descriptor.approvals.at(-1));
+    // Blocking, unblocking and returning to approval advance no work, so an edited
+    // approved document cannot strand them; forward transitions compare the working copies.
+    if (descriptor.phase !== 'approval' && !['approval', 'blocked', 'active'].includes(options.to) && descriptor.approvals.length) readApprovalV2(root, descriptor, descriptor.approvals.at(-1));
     if (options.to !== 'blocked') {
       if (descriptor.blocks.length || readEffectsV2(root, descriptor).unresolved.length) throw refuse('unresolved blocks or effects prevent transition');
       assertBaseline(root, descriptor, observeRunApplication(root, descriptor));
@@ -1630,17 +1632,19 @@ function readApprovalV2(root, descriptor, ref, { historical = false } = {}) {
   const { body } = record;
   if (!body.documents.some(d => d.path === DECISION_REGISTER_PATH)
     || !body.documents.some(d => sameValue(d, body.contract))) throw refuse('approval must include decision register and contract');
+  // Only the latest approval read as current compares the working documents and must
+  // cover every registered decision; historical reads and earlier approvals verify
+  // their frozen copies and keep their recorded scope.
+  const current = !historical && sameValue(ref, descriptor.approvals.at(-1));
   let contract;
   for (const frozen of body.frozenDocuments) {
     const source = body.documents.find(d => d.path === frozen.sourcePath);
     if (!source.path.startsWith(PROJECT_PREFIX)) throw refuse('approval document must be in project scope');
     const bytes = readRefV2(root, frozen.artifact);
-    if (!historical) readRefV2(root, source);
+    if (current) readRefV2(root, source);
     if (source.path === body.contract.path) contract = parseVerificationContract(bytes);
   }
-  // Only the latest approval read as current must cover every registered
-  // decision; historical reads and earlier approvals keep their recorded scope.
-  if (!historical && sameValue(ref, descriptor.approvals.at(-1))) {
+  if (current) {
     const covered = new Set(body.documents.map(d => d.path));
     const uncovered = projectDecisionPaths(descriptor).find(path => !covered.has(path));
     if (uncovered !== undefined) throw refuse(`${uncovered}: registered project decision is not covered by the latest approval`);
@@ -1705,15 +1709,16 @@ function assertVerificationReady(root, descriptor) {
   if (descriptor.blocks.length || readEffectsV2(root, descriptor).unresolved.length) throw refuse('unresolved blocks or effects prevent verification');
   if (descriptor.pending) throw refuse('pending publication prevents verification');
 }
-// `live: false` reads the recorded baseline instead of the application: only a durable
-// terminal reservation uses it, because its live comparison ran before it was written.
+// `live: false` reads the recorded baseline instead of the application, and the approval's
+// frozen copies instead of the working documents: only a durable terminal reservation
+// uses it, because its live comparison ran before it was written.
 function verificationContext(root, descriptor, path, { live = true } = {}) {
   assertVerificationReady(root, descriptor);
   const ref = descriptor.currentCycle;
   if (!ref || ref.path !== path) throw refuse('cycle must identify the current verification cycle');
   const cycle = readRecordV2(root, descriptor, ref, 'cycle');
   if (!sameValue(cycle.body.approval, descriptor.approvals.at(-1))) throw refuse('cycle approval is stale');
-  const { record: approval, contract } = readApprovalV2(root, descriptor, cycle.body.approval);
+  const { record: approval, contract } = readApprovalV2(root, descriptor, cycle.body.approval, { historical: !live });
   if (!sameValue(cycle.body.contract, approval.body.contract)) throw refuse('cycle contract is stale');
   assertVerificationEnvironment(contract, cycle.body.environment);
   const snapshot = readRecordV2(root, descriptor, cycle.body.snapshot, 'snapshot').body;
@@ -2193,7 +2198,7 @@ function verifyCompletedState(root, descriptor, { verifyGovernance = verifyCanon
   const completion = readRecordV2(root, descriptor, descriptor.completion, 'completion');
   const body = completion.body;
   if (!sameValue(body.approval, descriptor.approvals.at(-1)) || !sameValue(body.cycle, descriptor.currentCycle)) throw refuse('completion approval or cycle mismatch');
-  const { record: approval, contract } = readApprovalV2(root, descriptor, body.approval);
+  const { record: approval, contract } = readApprovalV2(root, descriptor, body.approval, { historical: !live });
   if (!sameValue(body.contract, approval.body.contract)) throw refuse('completion contract mismatch');
   const cycle = readRecordV2(root, descriptor, body.cycle, 'cycle');
   if (!sameValue(cycle.body.approval, body.approval) || !sameValue(cycle.body.contract, body.contract)) throw refuse('completion cycle binding mismatch');
