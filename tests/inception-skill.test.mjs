@@ -110,7 +110,8 @@ test('helper table covers v2 recovery, unit, effect, verification and terminal c
 test('the classify table names exactly the rows the helper emits', () => {
   const source = readFileSync(join(root, 'scripts/inception-state.mjs'), 'utf8');
   const classify = source.slice(source.indexOf('export function classifyState'), source.indexOf('// Version inspection reads'));
-  const emitted = new Set([...classify.matchAll(/'([a-z]+(?:-[a-z]+)+)'/g)].map(m => m[1]));
+  // A row is a returned, ternary or `row:` literal; comparisons and messages are not rows.
+  const emitted = new Set([...classify.matchAll(/(?:return |\? |: )'([a-z]+(?:-[a-z]+)+)'/g)].map(m => m[1]));
   const table = sectionBetween(skill, 'Act on the `row` field', '### Step 1');
   const documented = new Set([...table.matchAll(/^\| `([a-z-]+)` \|/gm)].map(m => m[1]));
   assert.ok(emitted.has('resume-abandon'));

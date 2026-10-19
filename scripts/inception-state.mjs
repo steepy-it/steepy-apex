@@ -1171,8 +1171,9 @@ export function finishUnit(repoRoot, { id, evidence = [], expectedRevision, rese
     const unit = descriptor.units.find(u => u.id === id);
     assertRegistrationInput({ kind: unit.kind, inputs: unit.inputs, outputs: unit.outputs, allowedPaths: unit.allowedPaths });
     if (unit.capture !== null && unit.capture.state !== 'captured') throw refuse('capture is incomplete');
-    if (readEffectsV2(root, descriptor).unresolved.length) throw refuse('unresolved effects prevent unit finish');
-    const excess = unitEffectExcess(root, descriptor, id);
+    const effects = readEffectsV2(root, descriptor);
+    if (effects.unresolved.length) throw refuse('unresolved effects prevent unit finish');
+    const excess = unitEffectExcess(root, descriptor, effects, id);
     if (excess.length) throw refuse(effectExcessSummary(excess));
     verifyOpeningUnitInputs(root, unit);
     const targets = unit.outputs.map((output, index) => {
@@ -1269,11 +1270,13 @@ function observeRunApplication(root, descriptor) {
   return observeApplication(root, { exclusions: descriptor.preapprovalExclusions });
 }
 // Name the drifted paths so they can be restored or reconciled; JSON keeps each one line.
+function namePaths(paths) {
+  const shown = paths.slice(0, 5).map(path => JSON.stringify(path)).join(', ');
+  return paths.length > 5 ? `${shown} and ${paths.length - 5} more` : shown;
+}
 function driftSummary(before, after) {
   const changes = applicationChanges(before, after);
-  if (changes.length === 0) return 'roots or exclusions';
-  const shown = changes.slice(0, 5).map(change => JSON.stringify(change.path)).join(', ');
-  return changes.length > 5 ? `${shown} and ${changes.length - 5} more` : shown;
+  return changes.length === 0 ? 'roots or exclusions' : namePaths(changes.map(change => change.path));
 }
 function assertBaseline(root, descriptor, observed) {
   if (descriptor.baseline === null) return;
@@ -1416,18 +1419,15 @@ function outsideEffectScope(intent, before, after) {
 }
 // Concluded effects of a unit whose observed changes exceed their own scope:
 // unit finish refuses them, and only a reconciliation with a human statement accepts them.
-function unitEffectExcess(root, descriptor, unitId) {
+function unitEffectExcess(root, descriptor, effects, unitId) {
   const snapshot = ref => readRecordV2(root, descriptor, ref, 'snapshot').body;
-  return readEffectsV2(root, descriptor).effects
+  return effects.effects
     .filter(e => e.intent.body.unitId === unitId && e.outcome !== null)
     .map(e => ({ id: e.id, paths: outsideEffectScope(e.intent.body, snapshot(e.intent.body.before), snapshot(e.outcome.body.after)) }))
     .filter(e => e.paths.length);
 }
 function effectExcessSummary(excess) {
-  const named = excess.map(({ id, paths }) => {
-    const shown = paths.slice(0, 5).map(path => JSON.stringify(path)).join(', ');
-    return `effect ${id} changed ${paths.length > 5 ? `${shown} and ${paths.length - 5} more` : shown}`;
-  });
+  const named = excess.map(({ id, paths }) => `effect ${id} changed ${namePaths(paths)}`);
   return `${named.join('; ')} outside its declared scope: only unit reconcile with an explicit human statement accepts them`;
 }
 export function createCheckpoint(repoRoot, options = {}) {
@@ -1473,14 +1473,15 @@ export function reconcileUnit(repoRoot, options = {}) {
       if (descriptor.activeUnit !== null) throw refuse('closed-incomplete acceptance requires no active writer');
       verifyClosedUnitObservation(root, descriptor, unit);
     } else if (unit.capture !== null && unit.capture.state !== 'captured') throw refuse('writer stop must be established before reconciliation');
-    if (readEffectsV2(root, descriptor).unresolved.length) throw refuse('uncertain effects require effect observation, not unit reconciliation');
+    const effects = readEffectsV2(root, descriptor);
+    if (effects.unresolved.length) throw refuse('uncertain effects require effect observation, not unit reconciliation');
     verifyOpeningUnitInputs(root, unit);
     const beforeRef = unfinished ? unit.before : descriptor.baseline;
     const before = readRecordV2(root, descriptor, beforeRef, 'snapshot').body;
     const after = observeRunApplication(root, descriptor); const changes = applicationChanges(before, after);
     let gitExplained = true;
     try { assertGitExplained(root, descriptor, before, after, id); } catch { gitExplained = false; }
-    const unexplained = changes.some(c => !withinAllowed(c.path, unit.allowedPaths)) || !gitExplained || unitEffectExcess(root, descriptor, id).length > 0;
+    const unexplained = changes.some(c => !withinAllowed(c.path, unit.allowedPaths)) || !gitExplained || unitEffectExcess(root, descriptor, effects, id).length > 0;
     if (unexplained && input.statement === null) throw refuse('outside-scope or Git drift requires explicit human statement');
     // Only a bound observed-stop closure permits missing interrupted outputs.
     // Human acceptance retains incomplete history and never attests check success.
