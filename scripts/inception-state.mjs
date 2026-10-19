@@ -993,8 +993,10 @@ function v2Descriptor(root) {
 function withV2SnapshotLease(root, observed, action) {
   const currentDescriptor = () => {
     // A prepared abandon binds the descriptor digest: a writer that changed it would
-    // leave abandon --resume refusing its own intent.
-    if (inspectAbandon(root)?.intent.status === 'prepared') throw refuse('pending abandon intent: finish it with abandon --resume');
+    // leave abandon --resume refusing its own intent. Only the intent's status is read;
+    // a completed archive is the abandon reader's to verify, not every writer's.
+    const intent = readPublicationFile(root, ABANDON_INTENT_PATH, { missing: true });
+    if (intent !== null && parseAbandonRecordV2(intent).status === 'prepared') throw refuse('pending abandon intent: finish it with abandon --resume');
     const descriptor = v2Descriptor(root);
     if (descriptor.runId !== observed.runId || descriptor.revision !== observed.revision) throw refuse('incompatible descriptor revision or run identity');
     return descriptor;

@@ -115,7 +115,7 @@ test('the classify table names exactly the rows the helper emits', () => {
   const documented = new Set([...table.matchAll(/^\| `([a-z-]+)` \|/gm)].map(m => m[1]));
   assert.ok(emitted.has('resume-abandon'));
   assert.deepEqual([...documented].sort(), [...emitted].sort());
-  assert.match(flat(table), /`resume-abandon` \| An interrupted abandon left a prepared intent\. Run `abandon --resume` to finish it/);
+  assert.match(flat(table), /`resume-abandon` \| An interrupted abandon left a prepared intent\. Run `abandon --resume` to finish it; every other `inception-state\.mjs` writer refuses until then/);
 });
 
 test('resume authority is descriptor refs and resume-check, with three approval cases and unsupported run format refusal', () => {

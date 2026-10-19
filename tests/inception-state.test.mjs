@@ -2444,6 +2444,17 @@ test('C7 a prepared abandon intent refuses every v2 writer before the descriptor
   assert.equal(existsSync(join(c.repo, RUN_DESCRIPTOR_PATH)), false);
 }));
 
+test('C7 a completed archive disturbed after abandon does not block the next run\'s writers', () => withCase('abandon-complete-writers', c => {
+  writeDescriptor(c, createRunDescriptorV2({ runId: RUN_ID, harnessName: 'codex', git: { present: false, branch: null, commits: 'none' } }));
+  stateV2.abandonRun(c.repo, { reason: 'Stop' });
+  assert.equal(cli(c, ...startArgs()).status, 0);
+  // Finder writes .DS_Store into any folder it opens; the writer guard reads only the intent's status.
+  writeFile(c, `${ABANDONED}/${RUN_ID}/.DS_Store`, 'Finder metadata');
+  stateV2.writeResumeNote(c.repo, { next: 'Continue' });
+  stateV2.transitionRun(c.repo, { to: 'architecture', reason: 'Continue' });
+  assert.equal(readV2(c.repo).phase, 'architecture');
+}));
+
 test('C7 readers inspect only immediate declared archive names and never open child report bodies', () => withCase('abandon-read-scope', c => {
   writeDescriptor(c, baseDescriptor()); writeFile(c, `${INCEPTION_AREA}/project/opaque.bin`, 'Do not open');
   assert.equal(crashAbandon(c, 'after-move', 'run.json').status, 73);

@@ -190,7 +190,7 @@ Act on the `row` field:
 | `propose-init-discovery` | The application is mature. Propose the `init` skill, then the `discovery` skill. Start nothing. |
 | `ordinary-workflow` | The hub exists and there is no run. Use the ordinary workflow, for example the `brainstorm` skill. Start nothing. |
 | `resume-run` | Resume the active or blocked run in Step 1. |
-| `resume-abandon` | An interrupted abandon left a prepared intent. Run `abandon --resume` to finish it; every other writer refuses until then. Start nothing. |
+| `resume-abandon` | An interrupted abandon left a prepared intent. Run `abandon --resume` to finish it; every other `inception-state.mjs` writer refuses until then. Start nothing. |
 | `report-next-steps` | The run is complete and the hub does not exist yet. Report the next steps: the `init` skill, then the `discovery` skill. |
 | `run-complete-ordinary-workflow` | Report "run complete, use the ordinary workflow". |
 | `conflict-run-beside-hub` | Report the conflict: an unfinished run sits beside a hub, for example because `init` ran too early. There is no automatic resume; the user decides. |

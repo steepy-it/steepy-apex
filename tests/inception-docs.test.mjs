@@ -280,7 +280,7 @@ test('pre-merge rules agree across skills and guides', () => {
   assert.match(guide, /covered by the latest approval/);
   assert.match(guide, /outcome records the observed result even when the effect changed paths outside its declared scope/);
   assert.match(guide, /a blocked run with an edited approved document can still return to approval; a reserved completion binds from the frozen copies/);
-  assert.match(guide, /While that intention is prepared, `classify` reports `resume-abandon` and every other writer refuses/);
+  assert.match(guide, /While that intention is prepared, `classify` reports `resume-abandon` and every other `inception-state\.mjs` writer refuses/);
   assert.match(guide, /It writes nothing until the last decision, then writes every accepted one in a single pass/);
   assert.match(guide, /inception-governance\.mjs documents/);
   assert.doesNotMatch(guide, /recognized active lease/);
@@ -304,7 +304,7 @@ test('hub promotes the pre-merge inception rules', () => {
   assert.match(section, /covered by the latest approval/i);
   assert.match(section, /outside its declared scope; unit finish refuses those paths, and only a unit reconciliation with an explicit human statement accepts them/);
   assert.match(section, /Only the latest approval read as current compares the working documents: older approvals and a reserved completion read the frozen copies/);
-  assert.match(section, /While that intention is prepared every other writer refuses/);
+  assert.match(section, /While that intention is prepared every other inception-state writer refuses/);
   assert.match(section, /Nothing is written until every decision is decided, then all accepted previews are written in one pass/);
   assert.match(section, /documents[\s\S]*0644/);
   const scripts = read('.apex', 'standards', 'scripts.md');
