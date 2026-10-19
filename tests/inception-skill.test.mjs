@@ -107,6 +107,17 @@ test('helper table covers v2 recovery, unit, effect, verification and terminal c
   assert.match(helper, /Exit `0`/); assert.match(helper, /Exit `1`/); assert.match(helper, /Exit `2`/);
 });
 
+test('the classify table names exactly the rows the helper emits', () => {
+  const source = readFileSync(join(root, 'scripts/inception-state.mjs'), 'utf8');
+  const classify = source.slice(source.indexOf('export function classifyState'), source.indexOf('// Version inspection reads'));
+  const emitted = new Set([...classify.matchAll(/'([a-z]+(?:-[a-z]+)+)'/g)].map(m => m[1]));
+  const table = sectionBetween(skill, 'Act on the `row` field', '### Step 1');
+  const documented = new Set([...table.matchAll(/^\| `([a-z-]+)` \|/gm)].map(m => m[1]));
+  assert.ok(emitted.has('resume-abandon'));
+  assert.deepEqual([...documented].sort(), [...emitted].sort());
+  assert.match(flat(table), /`resume-abandon` \| An interrupted abandon left a prepared intent\. Run `abandon --resume` to finish it/);
+});
+
 test('resume authority is descriptor refs and resume-check, with three approval cases and unsupported run format refusal', () => {
   const s = section('### Step 1');
   for (const pattern of [/resume-check/, /before any new writer/, /absent/, /valid/, /divergent/, /verification resume/, /publish resume/, /last note is not authority/, /unsupported run format/, /Never repeat a concluded or uncertain effect/]) assert.match(s, pattern);

@@ -2431,6 +2431,19 @@ test('C7 refuses abandonment by a foreign writer while a v2 unit owns mutations'
   assert.deepEqual(snapshot(c.repo), before);
 }));
 
+test('C7 a prepared abandon intent refuses every v2 writer before the descriptor changes, so abandon --resume completes', () => withCase('abandon-prepared-writers', c => {
+  writeDescriptor(c, createRunDescriptorV2({ runId: RUN_ID, harnessName: 'codex', git: { present: false, branch: null, commits: 'none' } }));
+  assert.throws(() => stateV2.abandonRun(c.repo, { reason: 'Stop', fault: event => { if (event === 'after-intent') throw new Error('interrupted'); } }), /interrupted/);
+  const before = snapshot(c.repo);
+  assert.throws(() => stateV2.writeResumeNote(c.repo, { next: 'Continue' }), /pending abandon intent/);
+  assert.throws(() => stateV2.beginUnit(c.repo, { id: 'writer', input: unitInputV2('writer') }), /pending abandon intent/);
+  assert.throws(() => stateV2.transitionRun(c.repo, { to: 'architecture', reason: 'Continue' }), /pending abandon intent/);
+  assert.deepEqual(snapshot(c.repo), before);
+  const resumed = cli(c, 'abandon', '--resume');
+  assert.equal(resumed.status, 0, JSON.stringify(resumed.output));
+  assert.equal(existsSync(join(c.repo, RUN_DESCRIPTOR_PATH)), false);
+}));
+
 test('C7 readers inspect only immediate declared archive names and never open child report bodies', () => withCase('abandon-read-scope', c => {
   writeDescriptor(c, baseDescriptor()); writeFile(c, `${INCEPTION_AREA}/project/opaque.bin`, 'Do not open');
   assert.equal(crashAbandon(c, 'after-move', 'run.json').status, 73);
