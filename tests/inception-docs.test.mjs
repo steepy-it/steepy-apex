@@ -149,6 +149,17 @@ test('architecture doc counts ten skills, lists the helper, and has the effects 
   assert.doesNotMatch(read('docs', 'installation.md'), /\bnine\b/i);
 });
 
+test('installation guide gives inception syntax for every harness and an upgrade section', () => {
+  const installation = read('docs', 'installation.md');
+  const firstRun = installation.slice(installation.indexOf('## First run and troubleshooting'));
+  for (const command of ['`/steepy-apex:inception`', '`$inception`', '`/steepy-apex-inception`', '`/skill:inception`', '`skill: "inception"`']) {
+    assert.ok(firstRun.includes(command), `first-run table gives ${command}`);
+  }
+  assert.match(installation, /## Upgrading an existing hub[\s\S]*is customized[\s\S]*`replace`/);
+  assert.match(readme, /\(docs\/installation\.md#upgrading-an-existing-hub\)/);
+  assert.doesNotMatch(readme, /\*\*Version \d/, 'README must not pin a version that the bump does not update');
+});
+
 test('inception guide covers the flow, helper, harnesses, and limits', () => {
   const guide = norm(guideDoc());
   for (const harness of ['Claude Code', 'Codex', 'OpenCode', 'Pi', 'DeepSeek Harness']) {
