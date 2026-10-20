@@ -157,3 +157,5 @@ The full [privacy policy](PRIVACY.md) repeats this table.
 - [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 license](LICENSE)
 
 Zero third-party runtime dependencies. Commands can write files, run Git/tests, and invoke providers; review their documented effects and plugin hooks before use. Automatic surface detection covers JavaScript workspaces; other stacks can declare their surfaces during setup.
+
+Made by [Steepy](https://www.steepy.it).
