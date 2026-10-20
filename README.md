@@ -16,10 +16,11 @@
 
 Context engineering and governed workflows for AI coding agents. Keep project knowledge coherent, route work to specialists, and scale from small fixes to bounded autonomous loops.
 
-**Version 1.0.0.** Requires **Node.js >= 24** and a supported coding agent: Claude Code, Codex, OpenCode, Pi, or DeepSeek Harness.
+Requires **Node.js >= 24** and a supported coding agent: Claude Code, Codex, OpenCode, Pi, or DeepSeek Harness. Release notes are in the [changelog](CHANGELOG.md).
 
 ## What it does
 
+- **Start from an idea:** turn an idea, a design, or a prototype into a verified, runnable first version, then govern it with the hub.
 - **Map your project:** a versioned `.apex/` hub with standards, domain vocabulary, and specialist routing.
 - **Catch documentation drift:** validate links, routing, and code anchors; refresh knowledge through discovery.
 - **Scale the workflow:** small fixes, spec-to-review development, or bounded autonomous loops with explicit authorization.
@@ -106,6 +107,8 @@ Use your harness's [command syntax](docs/installation.md#first-run-and-troublesh
 
 Starting from an idea or a prototype? Run `/steepy-apex:inception` first. It ends by pointing to `/steepy-apex:init` and `/steepy-apex:discovery`. See the [inception guide](docs/inception.md).
 
+Upgrading from an earlier version? Read [Upgrading an existing hub](docs/installation.md#upgrading-an-existing-hub) first.
+
 The generated bootstrap reads `AGENTS.md`, follows `.apex/_INDEX.md` routing, and invokes workflows by semantic skill name.
 
 ## Skills
@@ -116,7 +119,7 @@ Claude Code syntax is shown below; see the [installation guide](docs/installatio
 |---|---|
 | [`/steepy-apex:inception`](docs/inception.md) | Turn an idea and its materials into a verified first version before the hub exists. |
 | `/steepy-apex:init` | Set up the project hub. |
-| `/steepy-apex:discovery` | Populate or refresh project knowledge. |
+| `/steepy-apex:discovery` | Populate or refresh project knowledge. After inception, import its decisions once. |
 | `/steepy-apex:check` | Check documentation coherence. |
 | `/steepy-apex:new-surface` | Register a project area and its specialist. |
 | `/steepy-apex:brainstorm` | Turn an idea into a spec. |
@@ -146,7 +149,8 @@ The full [privacy policy](PRIVACY.md) repeats this table.
 
 ## Documentation
 
-- [Installation](docs/installation.md) — all harnesses, requirements, and troubleshooting.
+- [Installation](docs/installation.md) — all harnesses, requirements, upgrading, and troubleshooting.
+- [Inception](docs/inception.md) — start a project from an idea, before the hub exists.
 - [Release checklist](RELEASE.md) — preflight, distribution channels, and rollback.
 - [docs/workflow.md](docs/workflow.md) — workflow selection, context efficiency, and live observability.
 - [docs/architecture.md](docs/architecture.md) — internals, usage reports, and the Command-family effects matrix: filesystem reads–writes–subprocesses–temporary state–providers/network.

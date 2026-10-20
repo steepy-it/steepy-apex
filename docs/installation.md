@@ -114,15 +114,16 @@ The adapter registers ten `steepy-<skill>` commands, a model-invocable `steepy_s
 ## First run and troubleshooting
 
 Open the repository you want to govern, then run `init`, `discovery` (for an existing
-codebase), and `check` using your harness's syntax:
+codebase), and `check` using your harness's syntax. Starting from an idea or a prototype,
+run `inception` first; see the [inception guide](inception.md).
 
-| Harness | Initialize | Discover | Check |
-|---|---|---|---|
-| Claude Code | `/steepy-apex:init` | `/steepy-apex:discovery` | `/steepy-apex:check` |
-| Codex | `$init` | `$discovery` | `$check` |
-| OpenCode | `/steepy-apex-init` | `/steepy-apex-discovery` | `/steepy-apex-check` |
-| Pi | `/skill:init` | `/skill:discovery` | `/skill:check` |
-| DeepSeek Harness | Ask the model to call `steepy_skill` with `skill: "init"` | Use `skill: "discovery"` | Use `skill: "check"` |
+| Harness | Start from an idea | Initialize | Discover | Check |
+|---|---|---|---|---|
+| Claude Code | `/steepy-apex:inception` | `/steepy-apex:init` | `/steepy-apex:discovery` | `/steepy-apex:check` |
+| Codex | `$inception` | `$init` | `$discovery` | `$check` |
+| OpenCode | `/steepy-apex-inception` | `/steepy-apex-init` | `/steepy-apex-discovery` | `/steepy-apex-check` |
+| Pi | `/skill:inception` | `/skill:init` | `/skill:discovery` | `/skill:check` |
+| DeepSeek Harness | Ask the model to call `steepy_skill` with `skill: "inception"` | Use `skill: "init"` | Use `skill: "discovery"` | Use `skill: "check"` |
 
 In Codex, select the skill belonging to **steepy-apex** if another plugin uses the
 same name. Restart the harness after installation if skills are not visible.
@@ -139,6 +140,30 @@ A successful `init` creates `.apex/_INDEX.md`, project instructions, and the loc
 for subsequent tasks and [architecture](architecture.md) for command effects, hooks,
 and adapter boundaries. Pi and DeepSeek have no Steepy deterministic runner for
 Gear-3 autopilot or Gear-4 loops.
+
+## Upgrading an existing hub
+
+After you update the plugin, run `check` in each repository it governs.
+
+### To v1.2.0
+
+v1.2.0 drops every compatibility path for older formats, so some state left by earlier
+versions stops working:
+
+- **Specialist adapters from v1.0.0–v1.0.6.** `check` and the Stop hook report
+  `<agent> <harness> adapter at <path> is customized`, and the Stop hook blocks. Run `init`:
+  it repairs the existing hub and asks about each conflict. Choose `replace`: it rewrites the
+  adapter to the current rendering, so copy out any hand edits first.
+- **An in-flight autopilot run from an earlier version.** A run on task-result protocol 1, or
+  one whose saved responses carry `changed-paths`, cannot resume: the conductor halts. Finish
+  it manually or start a fresh run.
+- **An inception run from a pre-release build** (`steepy-inception-run/v1`). Every command
+  refuses it. Move `.apex/inception/` out of the repository by hand, including
+  `abandon-intent.json` and `abandoned/`, then start a fresh run.
+- **Custom autopilot status markers.** A child status note that carries `phase=` no longer
+  completes a phase. Write only `run-id` and `attempt`.
+
+The [changelog](../CHANGELOG.md) lists every change by version.
 
 ## Upstream references
 

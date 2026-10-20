@@ -4,7 +4,7 @@ This protocol is a release gate after review. It is not a review criterion: revi
 
 ## Setup rule
 
-Every run loads the branch's packaged plugin, with the installed steepy-apex release disabled. An older installed Stop hook reports `missing _INDEX.md` on every inception turn and spoils the evidence. Record the loaded plugin commit in the matrix.
+Every run loads the packaged plugin under test (a branch or a release tag), with the installed steepy-apex release disabled. An older installed Stop hook reports `missing _INDEX.md` on every inception turn and spoils the evidence. Record the loaded plugin commit in the matrix.
 
 ## Scenarios
 
@@ -24,9 +24,9 @@ On Claude Code, scenario A includes one unplanned interruption: stop the session
 2. Run the `inception` skill; the existing material is reconnaissance input, not a decision.
 3. Reach `complete`, then run the `init` skill and the `discovery` skill with the inception source.
 
-### Scenario C
+### Scenario C: asynchronous boundary or strong compatibility constraint
 
-Scenario C is deferred out of v1. It has no row in the matrix.
+A project with an asynchronous boundary or a strong compatibility constraint, possibly outside the JavaScript ecosystem. Scenario C is deferred out of v1. It has no row in the matrix.
 
 ## Recovery and verification scenarios
 
