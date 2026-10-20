@@ -11,8 +11,6 @@
   adapter triad `surface-agent-claude.md` / `surface-agent-codex.toml` /
   `surface-agent-opencode.md`, and the hub-building sources `_INDEX.md`, `routing-row.md`,
   `surface-standard.md`, and `surface-standard-core.md`.
-- The digest-pinned prior sources under `templates/prior/v1.0/` are part of the package but are
-  never rendered as output.
 - Does NOT own: the project-model values fed to templates (→ `skills` interview), the rendering
   implementation (→ `scripts`), or the target project's hub content.
 - Exemplar: `templates/surface-standard.md`
@@ -24,10 +22,9 @@
 - Entirely generated v1 Markdown places `<!-- steepy:generated:<artifact-id>:v1 -->` immediately
   after frontmatter (or on the first line without frontmatter); generated TOML places the equivalent
   `# steepy:generated:<artifact-id>:v1` on its first line.
-- Generated provenance is `v1`. When a released generated template changes, it keeps `v1`. Its
-  exact released source is copied to `templates/prior/<release line>/`. The scripts' prior registry
-  pins that source by sha256 and keys it by adapter kind, so an untouched earlier rendering is
-  recognized as stale, not customized. Never edit a registered prior source.
+- Generated provenance is `v1`. When a released generated template changes, it keeps `v1`, and
+  every earlier rendering becomes a `customized` conflict that only an explicit `replace` resolves.
+  No prior copies are kept, and the CHANGELOG announces the template change as breaking.
 - The canonical project bootstrap is a harness-neutral navigation router: it reads `AGENTS.md` and
   `.apex/_INDEX.md`, resolves minimum surface docs and the specialist, and invokes workflows by
   semantic skill name; coverage, gear, ratification, branch, and workflow-state ceremony stay in
@@ -52,6 +49,7 @@
 - The Codex adapter omits the `model` field so the spawned session inherits its model; no sentinel
   string represents inheritance. Claude keeps consuming the shared native `{{model}}` value.
 - Rendering is idempotent and the generated Markdown lints green.
+- Inception renders no template and nothing renders into `.apex/inception/`; the hub and its bootstrap come only from `init` (conventions.md → "Inception (pre-hub)").
 
 ### Generated-bootstrap work boundary
 

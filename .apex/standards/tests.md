@@ -19,7 +19,7 @@ the checklist's reference links explicit. Historical observations do not certify
 
 ## Native evidence boundary
 
-Hermetic fake-harness cases may prove parser, redaction, identity, and false-PASS rejection behavior. They cannot prove a loaded plugin, a skill invocation, generated bootstrap use, or native specialist behavior. Structural locks must keep the nine-skill, five-harness inventory current and keep Pi/DSH out of invented Steepy headless support; release evidence records those capabilities only after the reproducible native protocol.
+Hermetic fake-harness cases may prove parser, redaction, identity, and false-PASS rejection behavior. They cannot prove a loaded plugin, a skill invocation, generated bootstrap use, or native specialist behavior. Structural locks must keep the ten-skill, five-harness inventory current and keep Pi/DSH out of invented Steepy headless support; release evidence records those capabilities only after the reproducible native protocol.
 
 ## Conventions
 - `node --test` with the built-in runner; no third-party framework.
@@ -100,9 +100,10 @@ Hermetic fake-harness cases may prove parser, redaction, identity, and false-PAS
   deterministic behavioral evidence, not a provider acceptance result. The five-provider LIVE
   matrix remains APEX-P1-04 and stays open while Pi and DeepSeek are `runner-unavailable`.
 
-- Autopilot task-receipt coverage uses real Git and the actual conductor to verify exact Next route, punctuation, whitespace, Unicode, and newline filenames; cumulative fixes; captured-writer restart; report/source drift refusal; and latest-execution approval binding. Subprocess publication crashes prove durable capture resumes without writer redispatch. Legacy run tests prohibit silent upgrade and historical baseline fabrication. Doc locks retain manual/Gear-4 grammar and v1 correction while selecting v2 semantic transport. Packaging includes both receipt helpers, protocol prose, and both reviewer schemas. These are deterministic regression results, not native model or product-correctness evidence.
+- Autopilot task-receipt coverage uses real Git and the actual conductor to verify exact Next route, punctuation, whitespace, Unicode, and newline filenames; cumulative fixes; captured-writer restart; report/source drift refusal; and latest-execution approval binding. Subprocess publication crashes prove durable capture resumes without writer redispatch. Resume tests halt runs lacking protocol 2 before dispatch, with no marker and no upgrade. Doc locks retain manual/Gear-4 grammar and lock the three-field autopilot transport. Packaging includes both receipt helpers, protocol prose, and the v2 reviewer schema. These are deterministic regression results, not native model or product-correctness evidence.
 
 ## Anti-patterns
+- Inception regression/doc locks preserve exact unit/publication recovery without replay, correlation versus ambiguous human recovery, full snapshots, all required automatic/manual checks after fixes, cycle/session reuse, collector red-versus-captured outcomes, complete→init provenance→discovery drift refusal and descriptor-independent archive resume. They also lock umask-independent certified documents, Git status under approved exclusions, every recognized lease family for readers and leased observers, and decision coverage after approval. Native inception acceptance remains NOT RUN until real skill-driven harness evidence; synthetic or content tests cannot certify native behavior.
 - Don't assert on internal/private structure — an internal refactor with unchanged behavior
   would break such a test; assert observable behavior (exit codes, file contents, emitted
   violations) instead.
@@ -126,12 +127,12 @@ Hermetic fake-harness cases may prove parser, redaction, identity, and false-PAS
   `MODEL_SECTION_WITHOUT_REVIEW` canonical strings, which byte-lock the five chain SKILL.mds
   from one test file.
 - Reviewer-response regression uses real Git, the real conductor and synthetic reviewer responses:
-  malformed approval resumes once, advances to the next task, preserves prior logs/progress, and
-  blocks code changes, invalid corrections, receipt bypass, and corrupted replay. V2 coverage includes explicit NEEDS_CONTEXT retries preserving partial work and rejection of invalid ancestor provenance hidden behind a valid fix. Coverage also resumes retained final approval, advances final-review iterations, and rejects changed plan requirements while permitting exact lifecycle transitions. It does not prove native model compliance.
+  a malformed approval blocks while prior logs/progress are preserved; code changes, receipt bypass,
+  and corrupted replay block; it refuses version-3 baselines and reserved/corrected evidence. V2 coverage includes explicit NEEDS_CONTEXT retries preserving partial work and rejection of invalid ancestor provenance hidden behind a valid fix. Coverage also resumes retained final approval, advances final-review iterations, and rejects changed plan requirements while permitting exact lifecycle transitions. It does not prove native model compliance.
 - Autopilot resume coverage composes the real conductor with a synthetic three-task child:
-  completed tasks 1–2, task 3 issues and halt, explicit ledger/index capabilities on a new attempt, then simulated correction and approval. It verifies fresh absence, resumed availability and
+  completed tasks 1–2, task 3 issues and halt, explicit ledger/index capabilities on a new attempt, then simulated fix and approval. It verifies fresh absence, resumed availability and
   immutable earlier manifest/log bytes; it does not certify native skill/reviewer behavior.
-- Explicit resume-input coverage instruments body reads and directory listing, rejects absent/aliased/foreign/linked paths before conductor mutation, and drives a repeated-option CLI resume through the real conductor with synthetic task evidence. Simulated physical aliases cover duplicate and ledger/index rejection before lease acquisition on every platform; native filesystem cases distinguish case aliases from physically distinct case variants. It preserves old attempt bytes, legacy protocol selection, and reviewer recovery rejection for invalid corrections or source mutation. This proves capability transport, not native model compliance.
+- Explicit resume-input coverage instruments body reads and directory listing, rejects absent/aliased/foreign/linked paths before conductor mutation, and drives a repeated-option CLI resume through the real conductor with synthetic task evidence. Simulated physical aliases cover duplicate and ledger/index rejection before lease acquisition on every platform; native filesystem cases distinguish case aliases from physically distinct case variants. It preserves old attempt bytes, unsupported-protocol refusal, and source-mutation rejection. This proves capability transport, not native model compliance.
 - Autopilot coverage includes comparative reachability and an irrelevant-absence fixture for
   manifests. Each plan/implement/review footprint comparison uses its own matching baseline eager
   inventory and baseline generated prompt, never a shared union baseline or combined arithmetic that
@@ -144,7 +145,6 @@ Hermetic fake-harness cases may prove parser, redaction, identity, and false-PAS
 
 ## Testing
 Narrowest validation that can falsify a change here:
-
 ```sh
 node --test tests/<the-suite-you-changed>.test.mjs
 ```

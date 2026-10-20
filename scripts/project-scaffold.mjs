@@ -244,26 +244,6 @@ function readTemplate(templatesDir, name) {
   return decodeTemplate(readFileSync(join(templatesDir, name)), name);
 }
 
-// Closed registry of prior canonical adapter templates, keyed by adapter kind.
-// A released generated template that changes keeps its `v1` provenance; its
-// released source is kept under `templates/prior/` and pinned by digest here.
-// An observed adapter whose bytes exactly equal a pinned prior rendering is
-// `stale`; any other byte is `customized`. There is no fuzzy matching, and the
-// prior sources are only compared against, never rendered as output.
-const PRIOR_CANONICAL_TEMPLATES = deepFreeze({
-  claude: [{ releases: 'v1.0.0-v1.0.6', template: 'prior/v1.0/surface-agent-claude.md',
-    sha256: '2bcbe06e50cc842e01c0e4a7a57420795847946599bc0ac688dbb4954f5cd4ff' }],
-  codex: [{ releases: 'v1.0.0-v1.0.6', template: 'prior/v1.0/surface-agent-codex.toml',
-    sha256: 'b69fe9f276853c0c607f69d1445d18e8dcf6db0f62be74bd3cc7d2a6eb980c0b' }],
-  opencode: [{ releases: 'v1.0.0-v1.0.6', template: 'prior/v1.0/surface-agent-opencode.md',
-    sha256: '663a2149cf58c18c2793b8c3aafe29ae408ddb66d068d10d11809f9b45db33a5' }],
-});
-
-function priorRegistryKey(artifactId) {
-  const adapter = adapterIdentity(artifactId)?.adapter;
-  return adapter !== undefined && Object.hasOwn(PRIOR_CANONICAL_TEMPLATES, adapter) ? adapter : null;
-}
-
 function surfaceForArtifact(artifactId, model) {
   return model.surfaces.find((surface) => (
     artifactId === `${surface.agent}-claude`
@@ -288,25 +268,6 @@ export function renderProjectArtifact(artifactId, normalized, templatesDir = DEF
   const model = normalizedModel(normalized);
   const [templateName, surface] = templateForArtifact(artifactId, model);
   return renderTemplate(readTemplate(templatesDir, templateName), renderVars(model, surface));
-}
-
-// Returns the release label of the pinned prior canonical template whose rendering
-// equals `text` byte for byte, or null. Non-adapter artifacts never consult the registry.
-export function priorCanonicalRelease(artifactId, text, normalized, templatesDir = DEFAULT_TEMPLATES_DIR) {
-  const key = priorRegistryKey(artifactId);
-  if (key === null) return null;
-  const model = normalizedModel(normalized);
-  const [, surface] = templateForArtifact(artifactId, model);
-  for (const { releases, template, sha256 } of PRIOR_CANONICAL_TEMPLATES[key]) {
-    const bytes = readFileSync(join(templatesDir, template));
-    if (digest(bytes) !== sha256) {
-      throw new Error(`prior canonical template ${template} does not match its pinned digest`);
-    }
-    if (renderTemplate(decodeTemplate(bytes, template), renderVars(model, surface)) === text) {
-      return releases;
-    }
-  }
-  return null;
 }
 
 // Recover the exact public Project identity stored in the managed AGENTS.md block.
@@ -525,6 +486,12 @@ function removeActiveUnmanagedClaudeImports(text) {
   return result;
 }
 
+// Adoption of an unmarked import: drop each active `@AGENTS.md` line and append the
+// canonical block. Governance certifies exactly this output as an init-only change.
+export function adoptUnmanagedClaudeImport(text, block) {
+  return appendManaged(removeActiveUnmanagedClaudeImports(text), block, lineEnding(text));
+}
+
 function preserveExtraClaudeImports(existing) {
   const markers = PROJECT_MARKERS['claude-import'];
   const start = existing.indexOf(markers.start);
@@ -609,11 +576,10 @@ function classifyMixed(observed, artifact, model) {
       return { priorState: 'malformed', reason: /:v(?!1:)/u.test(text) ? 'unknown-version' : 'malformed-markers', replacement: content };
     }
     if (artifactId === 'claude-import' && countActiveClaudeImports(text) > 0) {
-      const remainder = removeActiveUnmanagedClaudeImports(text);
       return {
         priorState: 'unmarked',
         reason: 'unmanaged-import',
-        replacement: appendManaged(remainder, content, lineEnding(text)),
+        replacement: adoptUnmanagedClaudeImport(text, content),
       };
     }
     return { priorState: 'unmarked', reason: null, replacement: appendManaged(text, content) };
@@ -658,7 +624,7 @@ function expectedGeneratedMarkerId(artifact, model) {
   return artifact.artifactId;
 }
 
-function classifyGenerated(observed, artifact, model, templatesDir) {
+function classifyGenerated(observed, artifact, model) {
   if (observed.text === artifact.content) {
     return { priorState: 'current', reason: null, replacement: null };
   }
@@ -678,14 +644,11 @@ function classifyGenerated(observed, artifact, model, templatesDir) {
         : 'wrong-target';
       return { priorState: 'malformed', reason, replacement: artifact.content };
     }
-    if (priorCanonicalRelease(artifact.artifactId, observed.text, model, templatesDir) !== null) {
-      return { priorState: 'stale', reason: null, replacement: artifact.content };
-    }
   }
   return { priorState: 'customized', reason: 'customized', replacement: artifact.content };
 }
 
-function classifyInternal({ hubRoot, artifact, normalizedModel: model, templatesDir = DEFAULT_TEMPLATES_DIR }) {
+function classifyInternal({ hubRoot, artifact, normalizedModel: model }) {
   const observed = readObserved(hubRoot, artifact.path);
   if (!observed.exists) {
     return deepFreeze({ priorState: 'absent', priorDigest: null, reason: null, replacement: artifact.content });
@@ -696,7 +659,7 @@ function classifyInternal({ hubRoot, artifact, normalizedModel: model, templates
   }
   const classified = artifact.type === 'mixed'
     ? classifyMixed(observed, artifact, model)
-    : classifyGenerated(observed, artifact, model, templatesDir);
+    : classifyGenerated(observed, artifact, model);
   return deepFreeze({ priorDigest, ...classified });
 }
 
@@ -753,6 +716,9 @@ function boundedGeneratedEntries(hubRoot) {
   let reservedWork;
   try { reservedWork = lstatSync(join(hubRoot, '.apex', 'work')); }
   catch { /* Work is excluded local state, never a required planner input. */ }
+  let reservedInception;
+  try { reservedInception = lstatSync(join(hubRoot, '.apex', 'inception')); }
+  catch { /* The inception run area is excluded local state, like work. */ }
   const visit = (absolute, logical) => {
     let stat;
     try {
@@ -763,6 +729,7 @@ function boundedGeneratedEntries(hubRoot) {
     }
     if (stat.isSymbolicLink() || !stat.isDirectory()) return;
     if (reservedWork && stat.dev === reservedWork.dev && stat.ino === reservedWork.ino) return;
+    if (reservedInception && stat.dev === reservedInception.dev && stat.ino === reservedInception.ino) return;
     for (const entry of readdirSync(absolute, { withFileTypes: true })) {
       const path = logical ? `${logical}/${entry.name}` : entry.name;
       const target = join(absolute, entry.name);
@@ -843,10 +810,10 @@ function assertResolutionSet(resolutions, offered) {
   }
 }
 
-function planArtifacts({ hubRoot, normalized, artifacts, includeOrphans, templatesDir }) {
+function planArtifacts({ hubRoot, normalized, artifacts, includeOrphans }) {
   const candidates = [];
   for (const artifact of artifacts) {
-    const classification = classifyInternal({ hubRoot, artifact, normalizedModel: normalized, templatesDir });
+    const classification = classifyInternal({ hubRoot, artifact, normalizedModel: normalized });
     if (classification.priorState === 'current') continue;
     if (classification.reason) {
       candidates.push({
@@ -914,7 +881,6 @@ export function planProjectScaffold({ hubRoot, model, templatesDir = DEFAULT_TEM
     normalized,
     artifacts,
     includeOrphans: true,
-    templatesDir,
   });
 }
 
@@ -927,7 +893,6 @@ export function planRootInstructions({ hubRoot, model, templatesDir = DEFAULT_TE
     normalized,
     artifacts: rootInstructionArtifacts(normalized, templatesDir),
     includeOrphans: false,
-    templatesDir,
   });
 }
 
@@ -989,7 +954,7 @@ const ROOT_OPERATION_ORDER = new Map([
   ['claude-bootstrap-stub', 3],
 ]);
 const ADAPTER_ORDER = new Map([['claude', 0], ['codex', 1], ['opencode', 2]]);
-const PRIOR_STATES = new Set(['absent', 'unmarked', 'customized', 'malformed', 'stale']);
+const PRIOR_STATES = new Set(['absent', 'unmarked', 'customized', 'malformed']);
 const CONFLICT_REASONS = new Set([
   'unmanaged-import', 'customized', 'malformed-markers', 'unknown-version', 'duplicate',
   'wrong-target', 'surface-mismatch', 'orphan', 'symlink', 'unsafe-path',
@@ -1199,10 +1164,6 @@ function validateOperationContract(operation, index) {
       throw new TypeError(`${label}.priorDigest must be a SHA-256 digest`);
     }
     if (operation.kind === 'create') throw new TypeError(`${label} has incoherent replacement kind`);
-  }
-  if (operation.priorState === 'stale'
-      && (operation.kind !== 'replace-generated' || priorRegistryKey(operation.artifactId) === null)) {
-    throw new TypeError(`${label} has incoherent stale provenance`);
   }
 
   if (operation.artifactId === 'project-instructions') {
@@ -1778,6 +1739,74 @@ function prepareProjectScaffoldLock(root) {
     try { rmdirSync(path); } catch { /* Preserve the preparation error. */ }
     throw error;
   }
+}
+
+const LEASE_PREFIX = PROJECT_SCAFFOLD_LOCK.replaceAll('.', '\\.');
+const LEASE_TOKEN = LOCK_TOKEN.source.slice(1, -1); // LOCK_TOKEN grammar without its anchors
+const LEASE_NAME_SHAPES = [
+  { kind: 'canonical', pattern: new RegExp(`^${LEASE_PREFIX}$`) },
+  { kind: 'stale', pattern: new RegExp(`^${LEASE_PREFIX}\\.stale-(${LEASE_TOKEN})$`) },
+  { kind: 'retired', pattern: new RegExp(`^${LEASE_PREFIX}\\.retired-(${LEASE_TOKEN})$`) },
+  { kind: 'candidate', pattern: new RegExp(`^${LEASE_PREFIX}\\.candidate-([1-9][0-9]*)-(${LEASE_TOKEN})$`) },
+];
+
+function leaseNameShape(name) {
+  for (const { kind, pattern } of LEASE_NAME_SHAPES) {
+    const match = pattern.exec(name);
+    if (match) {
+      if (kind === 'candidate') return { kind, pid: Number(match[1]), token: match[2] };
+      return { kind, token: match[1] };
+    }
+  }
+  return null;
+}
+
+// Read-only structural recognition of lease directories directly under `root`.
+// Liveness is deliberately not consulted; any malformed entry is silently excluded.
+export function recognizeProjectScaffoldLeases(root) {
+  const recognized = [];
+  for (const name of readdirSync(root).sort()) {
+    const shape = leaseNameShape(name);
+    if (shape === null) continue;
+    if (shape.pid !== undefined && !Number.isSafeInteger(shape.pid)) continue;
+    let fd;
+    try {
+      const path = join(root, name);
+      const directory = lstatSync(path, { bigint: true });
+      if (directory.isSymbolicLink() || !directory.isDirectory()) continue;
+      const entries = readdirSync(path);
+      if (entries.length !== 1 || entries[0] !== PROJECT_SCAFFOLD_LOCK_OWNER) continue;
+      const ownerPath = join(path, PROJECT_SCAFFOLD_LOCK_OWNER);
+      const before = lstatSync(ownerPath, { bigint: true });
+      if (before.isSymbolicLink() || !before.isFile() || before.nlink !== 1n
+          || (before.mode & 0o7777n) !== 0o600n) continue;
+      fd = openSync(ownerPath, FS_CONSTANTS.O_RDONLY | FS_CONSTANTS.O_NOFOLLOW);
+      const opened = fstatSync(fd, { bigint: true });
+      const text = readFileSync(fd, 'utf8');
+      const after = lstatSync(ownerPath, { bigint: true });
+      if (!opened.isFile() || statIdentity(opened) !== statIdentity(before)
+          || statIdentity(after) !== statIdentity(before)) continue;
+      const record = JSON.parse(text);
+      assertLockRecord(record, 'project scaffold lease owner record');
+      if (text !== lockRecordBytes({ schemaVersion: 1, pid: record.pid, token: record.token })) continue;
+      if (shape.token !== undefined && shape.token !== record.token) continue;
+      if (shape.pid !== undefined && shape.pid !== record.pid) continue;
+      recognized.push({
+        name,
+        pid: record.pid,
+        token: record.token,
+        directoryIdentity: statIdentity(directory),
+        ownerIdentity: statIdentity(before),
+      });
+    } catch {
+      continue;
+    } finally {
+      if (fd !== undefined) {
+        try { closeSync(fd); } catch { /* Read-only recognition ignores close failures. */ }
+      }
+    }
+  }
+  return Object.freeze(recognized);
 }
 
 function contentionRenameError(error) {

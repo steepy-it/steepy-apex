@@ -8,11 +8,9 @@
 ## Step 0 — phase manifest, scalars, and correlation
 
 Read `manifest.contract.taskResultProtocol` as a pinned scalar alongside verdict/gear/drive.
-For value `2`, read `task-results-protocol.md` before any writer dispatch; its begin, capture,
-resume, projection, and semantic response rules take precedence over all legacy four-field
-and `- Task` bullet examples. The conductor records `TASK_RESULT_PROTOCOL` for fresh runs.
-Legacy runs retain protocol 1, with no silent mid-run upgrade or manufactured historical baseline.
-Manual drive and Gear 4 are unaffected.
+`taskResultProtocol` is always `2`; read `task-results-protocol.md` before any writer dispatch; the
+four-field and `- Task` examples in SKILL.md are manual-drive grammar. The conductor records
+`TASK_RESULT_PROTOCOL` for fresh runs. Manual drive and Gear 4 are unaffected.
 
 **Autopilot preflight:** When the conductor's `phasePrompt` supplies a conductor-supplied phase manifest,
 read that manifest before any other task input. Validate its role and scope against the implement phase
@@ -63,9 +61,9 @@ the contract. Branch: the contract's `branch` field names the working branch —
 `git branch --show-current` matches it; a mismatch, or being on `main`/`master`, is unresolvable →
 append `<ISO timestamp> — implement — BLOCKED — run-id=<conductor-supplied> attempt=<positive supplied> <reason>` to
 `.apex/work/tasks/<spec-basename>/autopilot-status.md` and exit non-zero. Commit authorization: the
-contract's `commit-auth: per-task` selects the **Yes** path. Protocol 1 commits after each
-reviewed-clean task. Protocol 2 completes an authorized task commit inside the observed writer
-execution before capture, then reviews that captured state; never add an unobserved commit.
+contract's `commit-auth: per-task` selects the **Yes** path. Complete an authorized task commit
+inside the observed writer execution before capture, then review that captured state; never add an
+unobserved commit.
 
 ## Step 2.5 — pre-flight scan
 
@@ -74,11 +72,11 @@ artifacts is unresolvable: append the correlated `BLOCKED` marker from Step 0 an
 
 ## Step 3 — per-task loop (dispatch manifests)
 
-For protocol 2, begin the exact execution receipt before every implementer/fix dispatch and record
+Begin the exact execution receipt before every implementer/fix dispatch and record
 its response afterward using `task-results-protocol.md`. Record the state prefix in the authorized
 ledger before dispatch. On restart inspect/resume that exact state and continue captured work at
-review-pending without another implementation. Project the index from receipts rather than writing
-legacy bullets; projection alone never marks a task complete. A whole-branch fix uses both the
+review-pending without another implementation. Project the index from receipts rather than
+writing `- Task` bullets; projection alone never marks a task complete. A whole-branch fix uses both the
 same-task previous execution and latest global parent execution, then refreshes any obsolete task
 review approval before the new final review.
 For a valid captured NEEDS_CONTEXT or BLOCKED with `retryable: true`, follow the explicit remedy and
@@ -131,17 +129,16 @@ use these deterministic output paths:
 - fix: `task-N-fix-<iteration>.json`;
 - final reviewer: `final-review-<iteration>.json`.
 
-The command examples below show protocol 1. For a phase pinned to protocol 2, add
-`--task-result-protocol 2` to every role command, including both reviewer roles. Never choose the
-version from a child response, report, or an inferred most-recent artifact.
+Never choose the task-result protocol from a child response, report, or an inferred most-recent
+artifact.
 
 The canonical command shapes are:
 
 ```sh
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role implementer --run-id <supplied-run-id> --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --standard <exact-standard-path-from-routing> --artifact-output .apex/work/tasks/<plan-basename>/task-N-report.md --output .apex/work/tasks/<plan-basename>/context/task-N-implement.json
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role task-reviewer --run-id <supplied-run-id> --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --report .apex/work/tasks/<plan-basename>/task-N-report.md --task-diff .apex/work/tasks/<plan-basename>/task-N-diff.txt --standard <exact-standard-path-from-routing> --hub-index .apex/_INDEX.md --artifact-output .apex/work/tasks/<plan-basename>/task-N-review.md --artifact-output .apex/work/tasks/<plan-basename>/task-N-issues.md --output .apex/work/tasks/<plan-basename>/context/task-N-review-<iteration>.json
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role fix --run-id <supplied-run-id> --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --issue .apex/work/tasks/<plan-basename>/task-N-issues.md --task-diff .apex/work/tasks/<plan-basename>/task-N-diff.txt --standard <exact-standard-path-from-routing> --artifact-output .apex/work/tasks/<plan-basename>/task-N-report.md --output .apex/work/tasks/<plan-basename>/context/task-N-fix-<iteration>.json
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role final-review --run-id <supplied-run-id> --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --criteria .apex/work/tasks/<plan-basename>/success-criteria.md --task-result-index .apex/work/tasks/<plan-basename>/task-result-index.md --branch-diff .apex/work/tasks/<plan-basename>/branch-diff.txt --standard <exact-standard-path-from-routing> --artifact-output .apex/work/tasks/<plan-basename>/final-review.md --artifact-output .apex/work/tasks/<plan-basename>/final-review-issues.md --output .apex/work/tasks/<plan-basename>/context/final-review-<iteration>.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role implementer --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --standard <exact-standard-path-from-routing> --artifact-output .apex/work/tasks/<plan-basename>/task-N-report.md --output .apex/work/tasks/<plan-basename>/context/task-N-implement.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role task-reviewer --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --report .apex/work/tasks/<plan-basename>/task-N-report.md --task-diff .apex/work/tasks/<plan-basename>/task-N-diff.txt --standard <exact-standard-path-from-routing> --hub-index .apex/_INDEX.md --artifact-output .apex/work/tasks/<plan-basename>/task-N-review.md --artifact-output .apex/work/tasks/<plan-basename>/task-N-issues.md --output .apex/work/tasks/<plan-basename>/context/task-N-review-<iteration>.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role fix --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --issue .apex/work/tasks/<plan-basename>/task-N-issues.md --task-diff .apex/work/tasks/<plan-basename>/task-N-diff.txt --standard <exact-standard-path-from-routing> --artifact-output .apex/work/tasks/<plan-basename>/task-N-report.md --output .apex/work/tasks/<plan-basename>/context/task-N-fix-<iteration>.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role final-review --run-id <supplied-run-id> --task-result-protocol 2 --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --criteria .apex/work/tasks/<plan-basename>/success-criteria.md --task-result-index .apex/work/tasks/<plan-basename>/task-result-index.md --branch-diff .apex/work/tasks/<plan-basename>/branch-diff.txt --standard <exact-standard-path-from-routing> --artifact-output .apex/work/tasks/<plan-basename>/final-review.md --artifact-output .apex/work/tasks/<plan-basename>/final-review-issues.md --output .apex/work/tasks/<plan-basename>/context/final-review-<iteration>.json
 ```
 
 Repeat `--standard` with `<exact-standard-path-from-routing>` once for the routed core/single standard and

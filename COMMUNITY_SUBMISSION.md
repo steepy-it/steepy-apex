@@ -21,7 +21,7 @@ steepy-apex creates a navigable `.apex/` documentation graph, routes work by sur
 
 ## What the plugin includes
 
-- Nine canonical skills: `/steepy-apex:init`, `/steepy-apex:new-surface`, `/steepy-apex:check`, `/steepy-apex:brainstorm`, `/steepy-apex:plan`, `/steepy-apex:implement`, `/steepy-apex:review`, `/steepy-apex:discovery`, and `/steepy-apex:loop-engineer`.
+- Ten canonical skills: `/steepy-apex:inception`, `/steepy-apex:init`, `/steepy-apex:new-surface`, `/steepy-apex:check`, `/steepy-apex:brainstorm`, `/steepy-apex:plan`, `/steepy-apex:implement`, `/steepy-apex:review`, `/steepy-apex:discovery`, and `/steepy-apex:loop-engineer`.
 - A Stop hook that runs the hub linter quietly when the hub is green.
 - Node.js 24+ scripts for stack detection, hub validation, project scaffolding, and workflow controllers.
 - Templates for `.apex/` hub files, surface standards, specialist agents, routing-table rows, a managed `AGENTS.md` root, a thin `CLAUDE.md` import, and a canonical project bootstrap skill.
@@ -30,7 +30,7 @@ steepy-apex creates a navigable `.apex/` documentation graph, routes work by sur
 
 - steepy-apex has five native harnesses: Claude Code, Codex, OpenCode, Pi, and DeepSeek Harness.
 - It uses Node built-ins and has zero third-party runtime dependencies.
-- **Command-family effects matrix:** filesystem reads–writes–subprocesses–temporary state–providers/network are command-specific. Local validation/scaffolding, session-store reporting, version writes, review/controllers, release evidence, live model mapping, and native installation/canaries have distinct effects.
+- **Command-family effects matrix:** filesystem reads–writes–subprocesses–temporary state–providers/network are command-specific. Local validation/scaffolding, session-store reporting, version writes, review/controllers, inception runs, release evidence, live model mapping, and native installation/canaries have distinct effects.
 - Users should review the Stop hook during Claude Code plugin trust review.
 
 ## Validation before submission
