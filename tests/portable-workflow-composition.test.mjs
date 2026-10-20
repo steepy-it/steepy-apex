@@ -161,10 +161,8 @@ function captureValidateHub(argv) {
   }
 }
 
-// Literal v1.0.0-v1.0.6 adapter renderings for the baseModel() triad, keyed by path.
-// A deliberate copy of the same constant in tests/validate-hub.test.mjs: rendered once
-// from `git show v1.0.0:templates/<name>` with `model: 'inherit'`, never computed from
-// templates/prior/ at test time.
+// Literal v1.0.0-v1.0.6 adapter renderings for the baseModel() triad, keyed by path:
+// literals copied from the released v1.0.0 templates, rendered once with `model: 'inherit'`.
 const V1_0_PORTABLE_DEMO_ADAPTERS = {
   '.claude/agents/web-agent.md': [
     '---',
@@ -221,14 +219,14 @@ function seedV1_0Hub(model = baseModel()) {
   return hubRoot;
 }
 
-// GC10 warn text for one untouched v1.0.0-v1.0.6 web-agent adapter.
-const WEB_AGENT_STALE_WARNS = [
+// Error text for one untouched v1.0.0-v1.0.6 web-agent adapter in a bound hub.
+const WEB_AGENT_CUSTOMIZED_ERRORS = [
   ['claude', '.claude/agents/web-agent.md'],
   ['codex', '.codex/agents/web-agent.toml'],
   ['opencode', '.opencode/agents/web-agent.md'],
 ].map(([adapter, path]) => ({
-  level: 'warn',
-  msg: `portable-v1: web-agent ${adapter} adapter at ${path} is the v1.0.0-v1.0.6 rendering; init repair updates it to the current rendering`,
+  level: 'error',
+  msg: `portable-v1: web-agent ${adapter} adapter at ${path} is customized`,
 }));
 
 function portableEntries(violations) {
@@ -615,23 +613,48 @@ test('generated-adapter CRLF drift is customized in both validator and planner',
   });
 });
 
-test('linter and planner treat an untouched v1.0 adapter triad as stale', () => {
+const WEB_AGENT_TRIAD = [
+  ['claude', '.claude/agents/web-agent.md'],
+  ['codex', '.codex/agents/web-agent.toml'],
+  ['opencode', '.opencode/agents/web-agent.md'],
+];
+
+function replaceResolutions() {
+  return WEB_AGENT_TRIAD.flatMap(([adapter]) => [
+    '--resolution', `v1:web-agent-${adapter}:customized=replace`,
+  ]);
+}
+
+test('linter and planner treat an untouched v1.0 adapter triad as a customized conflict', () => {
   const model = baseModel();
   const hubRoot = seedV1_0Hub(model);
   try {
-    assert.deepEqual(portableEntries(collectViolations(hubRoot)), WEB_AGENT_STALE_WARNS);
+    assert.deepEqual(portableEntries(collectViolations(hubRoot)), WEB_AGENT_CUSTOMIZED_ERRORS);
 
     const plan = planProjectScaffold({ hubRoot, model, templatesDir });
-    assert.deepEqual(plan.conflicts, []);
-    const paths = ['.claude/agents/web-agent.md', '.codex/agents/web-agent.toml', '.opencode/agents/web-agent.md'];
-    assert.deepEqual(previewProjectScaffold(plan), ['claude', 'codex', 'opencode'].map((adapter, index) => ({
+    assert.deepEqual(plan.conflicts, WEB_AGENT_TRIAD.map(([adapter, path]) => ({
+      id: `v1:web-agent-${adapter}:customized`,
+      artifactId: `web-agent-${adapter}`,
+      path,
+      reason: 'customized',
+      choices: ['replace', 'abort'],
+    })));
+    assert.equal(plan.operations.some((operation) => operation.artifactId.startsWith('web-agent-')), false);
+
+    const resolutions = Object.fromEntries(WEB_AGENT_TRIAD.map(([adapter]) => [`v1:web-agent-${adapter}:customized`, 'replace']));
+    const replacing = planProjectScaffold({ hubRoot, model: { ...model, resolutions }, templatesDir });
+    assert.deepEqual(replacing.conflicts, []);
+    assert.deepEqual(previewProjectScaffold(replacing), WEB_AGENT_TRIAD.map(([adapter, path]) => ({
       id: `v1:op:web-agent-${adapter}`,
       kind: 'replace-generated',
       artifactId: `web-agent-${adapter}`,
-      path: paths[index],
-      priorState: 'stale',
+      path,
+      priorState: 'customized',
     })));
-    assert.deepEqual(applyProjectScaffold({ hubRoot, plan }), { applied: 3, paths });
+    assert.deepEqual(applyProjectScaffold({ hubRoot, plan: replacing }), {
+      applied: 3,
+      paths: WEB_AGENT_TRIAD.map(([, path]) => path),
+    });
 
     assert.deepEqual(portableEntries(collectViolations(hubRoot)), []);
     const before = fileState(hubRoot);
@@ -645,36 +668,10 @@ test('linter and planner treat an untouched v1.0 adapter triad as stale', () => 
   }
 });
 
-test('new-surface repairs and extends a v1.0 hub without an adapter conflict', () => {
+test('new-surface extends a canonical hub with an explicit root replacement', () => {
   const model = baseModel();
-  const repairHub = seedV1_0Hub(model);
-  const extendHub = seedV1_0Hub(model);
+  const extendHub = seedHub(model);
   try {
-    const repaired = captureNewSurface([
-      '--name', 'web', '--path', 'apps/web', '--agent', 'web-agent', '--hub', repairHub,
-      '--test', 'npm test', '--repair',
-    ]);
-    assert.equal(repaired.code, 0, repaired.stderr);
-    const normalized = normalizeProjectModel(model);
-    const webTriad = [
-      ['claude', '.claude/agents/web-agent.md'],
-      ['codex', '.codex/agents/web-agent.toml'],
-      ['opencode', '.opencode/agents/web-agent.md'],
-    ];
-    for (const [adapter, path] of webTriad) {
-      assert.equal(
-        readFileSync(join(repairHub, path), 'utf8'),
-        renderProjectArtifact(`web-agent-${adapter}`, normalized, templatesDir),
-        path,
-      );
-      // A replaced stale adapter is reported as updated, never as created.
-      assert.ok(repaired.stdout.split('\n').some((line) => (
-        line.startsWith('updated ') && line.includes(path)
-      )), `${path} must be reported as updated:\n${repaired.stdout}`);
-    }
-    assert.doesNotMatch(repaired.stdout, /^created /mu);
-    assert.deepEqual(portableEntries(collectViolations(repairHub)), []);
-
     // The new surface's owning directory exists before new-surface runs (check 10).
     mkdirSync(join(extendHub, 'services', 'api'), { recursive: true });
     const addition = [
@@ -692,19 +689,46 @@ test('new-surface repairs and extends a v1.0 hub without an adapter conflict', (
     ]);
     assert.equal(extended.code, 0, extended.stderr);
     assert.doesNotMatch(extended.stderr, /web-agent-/u);
-    // Adding `api` also rewrites the other surface's stale triad; every rewrite is listed.
-    const extendedLines = extended.stdout.split('\n');
-    for (const [, path] of webTriad) {
-      assert.ok(extendedLines.some((line) => line.startsWith('updated ') && line.includes(path)),
-        `${path} must be reported as updated:\n${extended.stdout}`);
-    }
-    assert.ok(extendedLines.some((line) => (
+    assert.ok(extended.stdout.split('\n').some((line) => (
       line.startsWith('created ') && line.includes('.claude/agents/api-agent.md')
     )), extended.stdout);
     assert.deepEqual(portableEntries(collectViolations(extendHub)), []);
   } finally {
-    rmSync(repairHub, { recursive: true, force: true });
     rmSync(extendHub, { recursive: true, force: true });
+  }
+});
+
+test('new-surface --repair on an untouched v1.0 hub is refused until the adapters are replaced', () => {
+  const model = baseModel();
+  const repairHub = seedV1_0Hub(model);
+  try {
+    const args = [
+      '--name', 'web', '--path', 'apps/web', '--agent', 'web-agent', '--hub', repairHub,
+      '--test', 'npm test', '--repair',
+    ];
+    const before = fileState(repairHub);
+    const refused = captureNewSurface(args);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /v1:web-agent-claude:customized/u);
+    assert.deepEqual(fileState(repairHub), before);
+
+    const repaired = captureNewSurface([...args, ...replaceResolutions()]);
+    assert.equal(repaired.code, 0, repaired.stderr);
+    const normalized = normalizeProjectModel(model);
+    for (const [adapter, path] of WEB_AGENT_TRIAD) {
+      assert.equal(
+        readFileSync(join(repairHub, path), 'utf8'),
+        renderProjectArtifact(`web-agent-${adapter}`, normalized, templatesDir),
+        path,
+      );
+      assert.ok(repaired.stdout.split('\n').some((line) => (
+        line.startsWith('updated ') && line.includes(path)
+      )), `${path} must be reported as updated:\n${repaired.stdout}`);
+    }
+    assert.doesNotMatch(repaired.stdout, /^created /mu);
+    assert.deepEqual(portableEntries(collectViolations(repairHub)), []);
+  } finally {
+    rmSync(repairHub, { recursive: true, force: true });
   }
 });
 
@@ -716,7 +740,7 @@ test('one extra byte on a v1.0 adapter is customized in linter, planner and new-
     put(hubRoot, path, `${V1_0_PORTABLE_DEMO_ADAPTERS[path]}\n`);
     assert.deepEqual(portableEntries(collectViolations(hubRoot)), [
       { level: 'error', msg: `portable-v1: web-agent claude adapter at ${path} is customized` },
-      ...WEB_AGENT_STALE_WARNS.slice(1),
+      ...WEB_AGENT_CUSTOMIZED_ERRORS.slice(1),
     ]);
 
     const conflict = planProjectScaffold({ hubRoot, model, templatesDir }).conflicts
@@ -1287,4 +1311,52 @@ test('portable-v1 returns stable non-file violations for every canonical artifac
     assert.deepEqual(planProjectScaffold({ hubRoot, model, templatesDir }).conflicts, []);
     assert.deepEqual(collectViolations(hubRoot).filter(({ level }) => level === 'error'), []);
   });
+});
+
+// Inception area mirrors of the work-mount refusals above: a provider or
+// instruction mount may not physically enter .apex/inception, and provider
+// discovery through a mount skips the physical inception directory.
+import { bindProjectMount } from '../scripts/sanitize.mjs';
+
+test('instruction and provider mounts into the inception area are planner symlink conflicts and linter errors', () => {
+  const cases = [
+    { name: 'AGENTS.md', destination: '.apex/inception/private.md' },
+    { name: '.opencode', destination: '.apex/inception' },
+  ];
+  for (const { name, destination } of cases) {
+    const model = baseModel();
+    const hubRoot = seedHub(model);
+    try {
+      const target = join(hubRoot, name);
+      rmSync(target, { recursive: true, force: true });
+      mkdirSync(join(hubRoot, '.apex/inception'), { recursive: true });
+      put(hubRoot, '.apex/inception/private.md', '# Inception must stay excluded\n');
+      symlinkSync(destination, target);
+
+      assert.throws(() => bindProjectMount(hubRoot, name), {
+        message: `symlink mount ${name} enters excluded .apex/inception`,
+      });
+      const plan = planProjectScaffold({ hubRoot, model, templatesDir });
+      assert.ok(plan.conflicts.some(({ path, reason }) => (
+        (path === name || path.startsWith(`${name}/`)) && reason === 'symlink'
+      )), `${name}: ${JSON.stringify(plan.conflicts)}`);
+      assert.ok(collectViolations(hubRoot).some(({ level, msg }) => level === 'error'
+        && msg.includes(name) && msg.includes('symlink')), name);
+      assert.equal(readlinkSync(target), destination);
+    } finally { rmSync(hubRoot, { recursive: true, force: true }); }
+  }
+});
+
+test('provider mount discovery excludes the physical inception area inside its target', () => {
+  const model = baseModel();
+  const hubRoot = seedHub(model);
+  try {
+    put(hubRoot, '.apex/inception/decoy.md', '<!-- steepy:generated:inception-sentinel:v1 -->\n');
+    rmSync(join(hubRoot, '.claude'), { recursive: true });
+    symlinkSync('.apex', join(hubRoot, '.claude'));
+    const plan = planProjectScaffold({ hubRoot, model, templatesDir });
+    assert.deepEqual(plan.conflicts, []);
+    assert.ok(plan.operations.some(({ path }) => path === '.claude/agents/web-agent.md'));
+    assert.ok(!collectViolations(hubRoot).some(({ msg }) => msg.includes('inception-sentinel')));
+  } finally { rmSync(hubRoot, { recursive: true, force: true }); }
 });

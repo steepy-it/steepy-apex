@@ -163,12 +163,11 @@ function parseResponse(response, config, report, priorSignals = []) {
   if (config.format === 'json') value = strictJson(response);
   else {
     const lines = response.trim().split(/\r?\n/);
-    const entries = lines.map((line) => /^(status|artifact|signals|changed-paths): (.*)$/.exec(line));
+    const entries = lines.map((line) => /^(status|artifact|signals): (.*)$/.exec(line));
     if (entries.some((entry) => !entry) || new Set(entries.map((entry) => entry[1])).size !== entries.length) throw new Error('invalid task response fields');
     value = Object.fromEntries(entries.map((entry) => [entry[1], entry[2]]));
   }
-  keys(value, ['status', 'artifact', 'signals', ...(Object.hasOwn(value, 'changed-paths') ? ['changed-paths'] : [])], 'task response');
-  if (Object.hasOwn(value, 'changed-paths') && typeof value['changed-paths'] !== 'string') throw new Error('invalid legacy task telemetry');
+  keys(value, ['status', 'artifact', 'signals'], 'task response');
   if (!['DONE', 'DONE_WITH_CONCERNS', 'BLOCKED', 'NEEDS_CONTEXT'].includes(value.status) || value.artifact !== config.report) throw new Error('invalid task response status or artifact');
   const signals = Array.isArray(value.signals) && config.format === 'json' ? value.signals
     : typeof value.signals === 'string' ? value.signals === 'none' ? [] : value.signals.split(', ') : null;

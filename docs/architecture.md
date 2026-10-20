@@ -14,7 +14,7 @@ steepy-apex/
 ├── .codex-plugin/       # Codex plugin.json (skills, hooks, interface)
 ├── .agents/plugins/     # marketplace.json — the repo as a Codex marketplace root
 ├── adapters/            # OpenCode plugin + Pi extension + dsh (DeepSeek Harness) plugin (thin, zero-dep wiring)
-├── skills/              # the 9 skills — the canonical, harness-neutral core
+├── skills/              # the 10 skills — the canonical, harness-neutral core
 ├── scripts/             # Node executables the skills and hooks invoke
 ├── templates/           # the markdown the scaffolders render into a repo
 ├── hooks/               # hooks.json (Claude) + hooks-codex.json — Stop-hook wiring
@@ -27,7 +27,7 @@ Pure Node, no dependencies. The skills and the hook shell out to these.
 
 | Script | Responsibility |
 |---|---|
-| `reviewer-response.mjs` | Gates Gear-3 reviewer responses with Git snapshots, version-selected envelopes, one changed-paths-only correction for legacy v1, and replay-validated receipts. V2 uses semantic fields and binds task approval to its latest execution digest. The conductor requires task/final proof bound to the full plan contract and handoff, and verifies every execution ancestor against its exact phase manifest before accepting implementation. Retained approval keeps its original identity; active references advance atomically without rewriting history. The skill owns dispatch. |
+| `reviewer-response.mjs` | Gates Gear-3 reviewer responses (status/artifact/signals only) with Git snapshots and replay-validated receipts, and binds task approval to its latest execution digest. The conductor requires task/final proof bound to the full plan contract and handoff, and verifies every execution ancestor against its exact phase manifest before accepting implementation. Retained approval keeps its original identity; active references advance atomically without rewriting history. The skill owns dispatch. |
 | `source-observation.mjs` | Observes branch, HEAD, index, tracked and nonignored untracked source using exact Git filenames; validates source paths separately from work artifacts and detects source continuation/drift. Unsupported submodules fail closed. |
 | `task-results.mjs` | Begins and captures immutable v2 task executions, freezes reports, resumes durable captured results without writer redispatch, projects JSON task indexes, and verifies lineage, all task reports, and current source. Same-task previous execution and latest global parent are separate links. Explicit retry executions can continue valid NEEDS_CONTEXT/BLOCKED results after a remedy while preserving partial work; malformed or ambiguous evidence cannot authorize retry. |
 | `autopilot-context.mjs` | Builds and validates versioned role-local context manifests, materializes the criteria-only review artifact, derives routed standards, and exposes strict plan/handoff verification commands. |
@@ -38,6 +38,11 @@ Pure Node, no dependencies. The skills and the hook shell out to these.
 | `cost-report.mjs` | Aggregates repository-scoped interactive-session usage and confined headless ledger/raw evidence into a harness-neutral observational cost and token report. |
 | `detect-stack.mjs` | Reads `package.json` / `pnpm-workspace.yaml` to detect the package manager and discover **surfaces** (workspace packages) with their test commands. Recognizes npm/pnpm/yarn/cargo/go/python; only the JS ecosystem is auto-discovered. |
 | `extract-changelog.mjs` | Extracts the exact `## vX.Y.Z` section body used as release notes, rejecting missing, malformed, or prefix-only version matches. |
+| `inception-protocol.mjs` | Validates and canonically renders v2 inception formats and provides token-bound publication primitives for confined staging, fsync, rename and exact-target verification. It never chooses phases, mutates descriptor state independently, or executes application commands. |
+| `inception-snapshot.mjs` | Observes complete application inventories and compares content/mode identity while excluding physically bound local workflow and Git areas, recognized scaffold lease directories and approved exclusions (before approval, the start exclusions) before traversal; Git status uses the same excluded set. |
+| `capture-inception-evidence.mjs` | Executes one approved inception check, seals separate output streams, and binds its receipt through the state helper; interrupted capture recovery never reruns the command. |
+| `inception-governance.mjs` | Prepares, writes the certified stable documents (exact bytes, mode 0644) and verifies exact init provenance, preserving completed inception evidence and rejecting application drift outside certified governance operations. |
+| `inception-state.mjs` | Records and verifies inception run state under `.apex/inception/`: the run descriptor, classification of the starting state, phase transitions, approval and checkpoint records, persisted units and the sole writer, full snapshots, immutable effect records, verification cycles/sessions, derived summary/completion, recoverable byte-reserved publication, resume notes, and descriptor-independent abandon. It never asks questions, chooses a phase, approves, or runs project commands. |
 | `live-scaffold-canary.mjs` | Builds an isolated scaffold fixture and binds every row to source revision, exact payload hash, product version, and installation composition. Claude/Codex/OpenCode can PASS only `descriptor-nonce-response`, an evidence slice rather than plugin-load or specialist proof; Pi and DSH remain descriptor-free for Steepy's deterministic runner and unsupported/unauthenticated outcomes stay `NOT RUN`. |
 | `loop-engineer.mjs` | The **terminal Gear-4 controller**. It validates the ratified goal and commit authorization, drives verifier-bounded attempts through an injected headless runner, enforces blast radius and controller-owned keep/discard commits, performs whole-branch review, resumes from durable events, and emits only validated terminal projections. |
 | `new-surface.mjs` | Scaffolds one surface: a surface **standard**, a specialist **agent**, and a routing-table **row**. Hardened — safe-slug validation, refuses path traversal and the filesystem root, anti-clobber, plus a `--repair` mode for half-scaffolded surfaces. |
@@ -48,7 +53,7 @@ Pure Node, no dependencies. The skills and the hook shell out to these.
 | `sanitize.mjs` | Provides shared dependency-free validation for safe relative paths, single-line values, YAML double-quoted scalars, non-root hub targets, and physical binding of supported project symlink mounts. |
 | `stop-hook.mjs` | Adapts `validate-hub.mjs` to the Claude Stop-hook protocol, blocking incoherent hubs without creating a repeated stop loop. |
 | `template.mjs` | Performs strict pure-string `{{placeholder}}` substitution and rejects unknown template variables instead of leaking unresolved markers. |
-| `validate-hub.mjs` | The **coherence linter**. Walks the `.apex/` link graph and flags orphans (transitively unreachable docs), unrouted agents, and broken relative links. Silent when green; this is what the `Stop` hook runs. |
+| `validate-hub.mjs` | The **coherence linter**. Walks the `.apex/` link graph and flags orphans (transitively unreachable docs), unrouted agents, and broken relative links. Silent when green; this is what the `Stop` hook runs. Before a hub exists, canonical inception descriptor/archive-intention and exact archive proof make it report the phase/next action without scanning local state. |
 | `validate-release-evidence.mjs` | Computes the exact npm-product-input identity, excluding exactly `docs/native-test-evidence.json`, `docs/native-test-evidence.md`, and `docs/release-audit-remediation.md`; no documentation directory or path family is excluded. Requires one reachable source commit across all records, materializes its package projection from committed tree paths, modes, and blob bytes (not archive output), and requires exact current/source package-input path, mode, and byte equivalence. It rejects unredacted values in its bounded assignment/flag/Bearer-or-Basic/header/cookie forms from commands and UTF-8 artifacts, requiring an exact whole-value redaction marker; this is not a general secret scanner, so human redaction review remains required. The mandatory `--product-only` workflow check validates lockstep manifests/changelog/version-transaction state. Optional full release audit validation requires strict, fresh, redacted PASS records for plugin preflight and all five native harnesses; missing audit evidence does not block release. It reads evidence and package inputs but never invokes a provider. |
 | `verify-model-mappings.mjs` | Revalidates configured provider/model-tier mappings against live or injected evidence and reports `OK`, `STALE`, or explicitly non-blocking `UNKNOWN` results. |
 | `version-policy.mjs` | Validates canonical safe-integer X.Y.Z versions, compares numeric precedence, and rejects invalid, equal-required, or downgraded release transitions. |
@@ -127,9 +132,9 @@ The `adapters` surface: thin, dependency-free wiring that serves the canonical `
 |---|---|
 | Claude Code | `.claude-plugin/` manifest + marketplace — the pre-existing plugin, unchanged behavior. |
 | Codex | `.codex-plugin/plugin.json` (points at `skills/` and `hooks/hooks-codex.json`) + `.agents/plugins/marketplace.json`, which makes the repo itself a marketplace root. |
-| OpenCode | `adapters/opencode/steepy-apex.js` — a config hook pushes `skills/` into `config.skills.paths`, registers nine `steepy-apex-<skill>` commands where supported, and injects a marker-guarded bootstrap block into the first message. Project hub agents are read only from `.opencode/agents/*.md`; missing or invalid native directories register no project specialists, and Claude descriptors are never read. It also registers D2 dispatch agents: the tier trio (`steepy-cheap`/`steepy-standard`/`steepy-most-capable`) when `config.model` is a mapped provider pin — that trio is the per-dispatch tier choice — and without a mapped pin dispatch degrades to the declared session model. |
+| OpenCode | `adapters/opencode/steepy-apex.js` — a config hook pushes `skills/` into `config.skills.paths`, registers ten `steepy-apex-<skill>` commands where supported, and injects a marker-guarded bootstrap block into the first message. Project hub agents are read only from `.opencode/agents/*.md`; missing or invalid native directories register no project specialists, and Claude descriptors are never read. It also registers D2 dispatch agents: the tier trio (`steepy-cheap`/`steepy-standard`/`steepy-most-capable`) when `config.model` is a mapped provider pin — that trio is the per-dispatch tier choice — and without a mapped pin dispatch degrades to the declared session model. |
 | Pi | the `"pi"` manifest in `package.json` (`skills`, `extensions`) + `adapters/pi/steepy-apex.js` — `session_start` bootstrap injection and optional `/steepy-<skill>` command wrappers. |
-| DeepSeek Harness | `adapters/dsh/steepy-apex.js`, wired via the root `cordis.patch.yml` bundle-patch file and `package.json`'s `dsh.bundle.patch` key. Registers three capabilities, each on its own dependency-gated child fiber: a `ctx.systemPrompt` section for bootstrap, nine `steepy-<skill>` commands, and the model-invocable `steepy_skill` tool. A command's output is rendered to the human and never enters model history, so a command can only name the tool call to make — that is why `steepy_skill` exists as the model-facing channel that actually loads a skill's exact prose (F3). |
+| DeepSeek Harness | `adapters/dsh/steepy-apex.js`, wired via the root `cordis.patch.yml` bundle-patch file and `package.json`'s `dsh.bundle.patch` key. Registers three capabilities, each on its own dependency-gated child fiber: a `ctx.systemPrompt` section for bootstrap, ten `steepy-<skill>` commands, and the model-invocable `steepy_skill` tool. A command's output is rendered to the human and never enters model history, so a command can only name the tool call to make — that is why `steepy_skill` exists as the model-facing channel that actually loads a skill's exact prose (F3). |
 
 Adapters are fail-open: every optional host API sits behind a capability check, so a host without a feature degrades to a no-op instead of an error. Where a harness lacks a capability the skills degrade along a declared path (inline specialist, session model) — stated in the output, never silent. Concrete D2 tier models come from `adapters/model-mappings.mjs` (the provider-keyed tier tables with per-row provenance) — the same tables `scripts/verify-model-mappings.mjs` checks for drift.
 
@@ -147,7 +152,7 @@ adapters/headless-events.mjs ── decoded event ─► scripts/autopilot.mjs
 scripts/autopilot-observability.mjs ── bridge primitives ─► scripts/autopilot.mjs
 ```
 
-`adapters/headless.mjs` owns only the harness command descriptor and declared native capabilities. `adapters/headless-events.mjs` owns only protocol decoders for one structured output line; it does not choose persistence, timeout, or halt policy. `scripts/autopilot-observability.mjs` owns the common event envelope, line framing, raw serialization/redaction, curated rendering, and the bounded writer. `scripts/autopilot.mjs` owns orchestration: attempts, versioned manifests, artifact timing, status correlation, child lifetime, and the user-facing halt decision. The implement skill/controller validates artifact-first completion and the selected envelope before the next task decision: manual/legacy v1 uses four fields, while fresh autopilot v2 uses status/artifact/signals and receipt-derived source paths. That controller routes an effective abstract controller tier; adapters apply or degrade the concrete model and return direct provider evidence. The adapters never import conductor policy, and the bridge never selects a harness command.
+`adapters/headless.mjs` owns only the harness command descriptor and declared native capabilities. `adapters/headless-events.mjs` owns only protocol decoders for one structured output line; it does not choose persistence, timeout, or halt policy. `scripts/autopilot-observability.mjs` owns the common event envelope, line framing, raw serialization/redaction, curated rendering, and the bounded writer. `scripts/autopilot.mjs` owns orchestration: attempts, versioned manifests, artifact timing, status correlation, child lifetime, and the user-facing halt decision. The implement skill/controller validates artifact-first completion and the selected envelope before the next task decision: manual drive uses four fields, while autopilot uses status/artifact/signals and receipt-derived source paths. That controller routes an effective abstract controller tier; adapters apply or degrade the concrete model and return direct provider evidence. The adapters never import conductor policy, and the bridge never selects a harness command.
 
 For each child stdout/stderr line, the conductor uses a raw-first flow: frame → serialize immutable raw JSONL → decode into the common event envelope where possible → curate the readable per-attempt and aggregate logs → write the same compact curated event to the bounded stdout/stderr live destination. Ordinary plain decoder failures use a source-labelled, redacted, length-limited passthrough; unknown or malformed structured data uses a generic fallback so arbitrary metadata and reasoning cannot enter the readable or live view. Reasoning and token deltas are never promoted.
 
@@ -211,7 +216,6 @@ Markdown templates with `{{placeholder}}` variables — project instruction arti
 | `project-bootstrap-skill.md` | The canonical, harness-neutral project bootstrap under `.agents/skills/`. |
 | `claude-bootstrap-stub.md` | Claude's thin stub pointing to the canonical bootstrap. |
 | `surface-agent-claude.md` / `surface-agent-codex.toml` / `surface-agent-opencode.md` | One thin native adapter triad for each routed surface. |
-| `prior/v1.0/surface-agent-claude.md` / `prior/v1.0/surface-agent-codex.toml` / `prior/v1.0/surface-agent-opencode.md` | Nothing: the digest-pinned v1.0.0-v1.0.6 adapter sources, rendered only so repair and the linter recognize an untouched earlier adapter as a stale update. |
 | `_INDEX.md` | The `.apex/` hub root — the DAG root every doc is reachable from. |
 | `surface-standard.md` | A per-surface standard doc. |
 | `routing-row.md` | One row of the routing table. |
@@ -274,7 +278,10 @@ Filesystem reads–writes–subprocesses–temporary state–providers/network v
 | Review/controller workflows | Run declared tests, Git, and supported harness subprocesses; Gear-3/4 create confined work state and require their stated authorization. |
 | Release evidence validation | Reads package inputs, invokes `npm pack --dry-run` and Git, and uses an OS temporary cache; it never invokes a provider. |
 | Model mapping verification | Its injected inputs support an offline test path; live mode invokes the OpenCode catalog and fetches provider provenance. |
+| Inception | Writes `.apex/inception/` and the application's files; runs the approved tools (installs, generators, builds, tests); may reach official sources and package registries; remote operations only after explicit authorization. |
 | Installation and native canaries | Host installation, authenticated sessions, and a genuine canary may use host caches, credentials, subprocesses, and network according to the host. |
+
+Inception effect ownership stays with the coordinator: children can research or edit assigned bootstrap source, but request installs/generators/migrations/remote operations rather than executing them. The state helper owns descriptor mutation and short scaffold-lease publications; schema and snapshot modules never execute application commands. The collector is the single approved-check execution boundary, with registered identity, sealed separate streams, and no command replay during recovery. Governance receipts certify exact init outputs only, preserving the completed run and unmanaged application bytes. These are cooperative writer guarantees, not an adversarial local-filesystem security claim.
 
 `init` writes `.apex/` governance files and the managed root/bootstrap plus native
 Claude/Codex/OpenCode agent triads in the target project. This does not promise that
@@ -285,7 +292,8 @@ As with any plugin, review plugin hooks before trusting them: the full hook wiri
 ### Autopilot task execution receipts
 
 Fresh runs record TASK_RESULT_PROTOCOL 2 once and pin it in all phase and task-role manifests;
-retained legacy runs stay on protocol 1. V2 changes neither manual drive nor Gear 4. The controller
+a resumed run lacking protocol 2 halts before dispatch (finish manually or start fresh). Manual drive
+and Gear 4 are unchanged. The controller
 records an exact task execution prefix in the authorized ledger before dispatch, captures the raw
 semantic response and source observation, freezes the report, and publishes the result. Each file
 uses staged fsynced atomic publication under the cooperating-writer lease; this is neither a
@@ -295,7 +303,7 @@ publication on restart without repeating implementation. Baseline-only state can
 JSON receipts are machine authority; the Markdown index is their generated projection, with exact
 changedPaths arrays and retained lifecycle/reviewer references. Git filenames containing spaces,
 commas, semicolons, Unicode, or newlines remain literal JSON strings. No brace expansion or model path
-claim determines the changed set. Legacy extra changed-paths remains ignored raw telemetry; semantic
+claim determines the changed set. A response carrying changed-paths is malformed; semantic
 status/artifact/signals never come from report prose. Receipts retain cumulative task paths and each
 execution's own paths, frozen reports, and the distinct same-task previous/global parent links.
 
@@ -303,6 +311,5 @@ Exact recorded state and schema-authorized links confined to the same task direc
 machine replay, never work-directory scanning or extra child inputs. Source discovery remains normal.
 Captured execution is review-pending, not approved. Task approval binds the latest execution; a fix
 invalidates an older approval. Final review and conductor acceptance replay the receipt chain and
-all required task/final approvals. No historical baseline is fabricated and no legacy run silently
-upgrades. Real-Git and isolated regression replay evidence does not certify native model behavior or
+all required task/final approvals. No historical baseline is fabricated and no run is upgraded. Real-Git and isolated regression replay evidence does not certify native model behavior or
 product correctness.

@@ -24,6 +24,7 @@ These skills reach services outside your agent session:
 | `/steepy-apex:brainstorm` in autopilot drive | The harness named in the run contract: Claude Code, Codex, or OpenCode | Phase prompts and repository content go to that harness's model provider, for example OpenAI through Codex. |
 | `/steepy-apex:check` | Public model pages from OpenAI and Anthropic, plus `opencode models` when OpenCode is installed | Requests for the current model list, used to verify the model table. No project data is sent. |
 | `/steepy-apex:review` | GitHub, through Git and the `gh` CLI | Your branch and a pull request to `main`, only after you confirm. |
+| `/steepy-apex:inception` | Official project documentation and package registries, reached through your harness and the approved tools; Git hosting only after your authorization | Research queries and installs. Pushes or repository creation only after you authorize each one. |
 
 `/steepy-apex:loop-engineer` runs its attempts on the harness you are already using. Each of
 these services handles what it receives under its own privacy policy. Per-command effects

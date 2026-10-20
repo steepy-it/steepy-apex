@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -85,8 +85,9 @@ test('npm tarball includes the dsh cordis bundle patch manifest', () => {
   assertPacked(['cordis.patch.yml']);
 });
 
-test('npm tarball includes all nine SKILL.md files', () => {
+test('npm tarball includes all ten SKILL.md files', () => {
   const skillNames = [
+    'inception',
     'init',
     'check',
     'new-surface',
@@ -97,7 +98,7 @@ test('npm tarball includes all nine SKILL.md files', () => {
     'review',
     'loop-engineer',
   ];
-  assertPacked(skillNames.map((name) => `skills/${name}/SKILL.md`), 'nine SKILL.md files');
+  assertPacked(skillNames.map((name) => `skills/${name}/SKILL.md`), 'ten SKILL.md files');
 });
 
 test('npm tarball includes the six subagent prompt templates', () => {
@@ -127,14 +128,14 @@ test('npm tarball includes the engine scripts', () => {
   ], 'engine scripts');
 });
 
-test('npm tarball includes receipt instructions and both reviewer transport schemas', () => {
+test('npm tarball includes receipt instructions and the v2 reviewer transport schema', () => {
   assertPacked([
     'skills/implement/task-results-protocol.md',
     'skills/implement/reviewer-recovery.md',
-    'skills/implement/reviewer-response.schema.json',
     'skills/implement/reviewer-response-v2.schema.json',
     'adapters/reviewer-response.mjs',
   ]);
+  assert.ok(!paths.includes('skills/implement/reviewer-response.schema.json'), 'v1 reviewer schema must not ship');
 });
 
 test('npm tarball includes the portable scaffold runtime, v1 sources, and canonical dogfood bootstrap', () => {
@@ -149,10 +150,8 @@ test('npm tarball includes the portable scaffold runtime, v1 sources, and canoni
     'templates/surface-agent-claude.md',
     'templates/surface-agent-codex.toml',
     'templates/surface-agent-opencode.md',
-    'templates/prior/v1.0/surface-agent-claude.md',
-    'templates/prior/v1.0/surface-agent-codex.toml',
-    'templates/prior/v1.0/surface-agent-opencode.md',
   ], 'portable scaffold payload');
+  assert.equal(paths.some((p) => p.startsWith('templates/prior/')), false, 'tarball must not include templates/prior/');
 });
 
 test('npm pack dry-run leaves no repository tarball behind', () => {
@@ -165,4 +164,41 @@ test('npm pack dry-run leaves no repository tarball behind', () => {
 
 test('npm tarball includes both harness hook manifests', () => {
   assertPacked(['hooks/hooks.json', 'hooks/hooks-codex.json']);
+});
+
+function reachedEngineModules(entry) {
+  const reached = new Set();
+  const queue = [entry];
+  while (queue.length > 0) {
+    const current = queue.pop();
+    if (reached.has(current)) continue;
+    reached.add(current);
+    const source = readFileSync(join(root, current), 'utf8');
+    for (const match of source.matchAll(/from\s+'(\.[^']+\.mjs)'/g)) {
+      queue.push(join(dirname(current), match[1]).split('\\').join('/'));
+    }
+  }
+  return [...reached].sort();
+}
+
+test('npm tarball includes the inception helper, its reached engine modules, and its prompts', () => {
+  const modules = reachedEngineModules('scripts/inception-state.mjs');
+  assert.ok(modules.includes('scripts/inception-state.mjs'));
+  assert.ok(modules.includes('scripts/write-all.mjs') && modules.includes('scripts/sanitize.mjs'));
+  assertPacked(modules, 'inception helper imports');
+  assertPacked([
+    'scripts/inception-protocol.mjs',
+    'scripts/inception-snapshot.mjs',
+    'scripts/capture-inception-evidence.mjs',
+    'scripts/inception-governance.mjs',
+    'skills/inception/SKILL.md',
+    'skills/inception/research-prompt.md',
+    'skills/inception/bootstrap-part-prompt.md',
+    'skills/discovery/explore-inception-prompt.md',
+    'skills/discovery/SKILL.md',
+    'skills/init/SKILL.md',
+    'docs/inception.md',
+    'docs/inception-acceptance.md',
+    'docs/architecture.md',
+  ], 'inception skill files');
 });

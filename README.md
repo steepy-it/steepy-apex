@@ -104,6 +104,8 @@ Use your harness's [command syntax](docs/installation.md#first-run-and-troublesh
 2. `/steepy-apex:discovery` — Populate the hub from an existing codebase, reviewing each proposal.
 3. `/steepy-apex:check` — Verify documentation coherence, then give your agent a task.
 
+Starting from an idea or a prototype? Run `/steepy-apex:inception` first. It ends by pointing to `/steepy-apex:init` and `/steepy-apex:discovery`. See the [inception guide](docs/inception.md).
+
 The generated bootstrap reads `AGENTS.md`, follows `.apex/_INDEX.md` routing, and invokes workflows by semantic skill name.
 
 ## Skills
@@ -112,6 +114,7 @@ Claude Code syntax is shown below; see the [installation guide](docs/installatio
 
 | Skill | Purpose |
 |---|---|
+| [`/steepy-apex:inception`](docs/inception.md) | Turn an idea and its materials into a verified first version before the hub exists. |
 | `/steepy-apex:init` | Set up the project hub. |
 | `/steepy-apex:discovery` | Populate or refresh project knowledge. |
 | `/steepy-apex:check` | Check documentation coherence. |
@@ -135,6 +138,7 @@ redacted by default (`log-mode: safe`). These skills reach services outside your
 | `/steepy-apex:brainstorm` in autopilot drive | The harness named in the run contract: Claude Code, Codex, or OpenCode | Phase prompts and repository content go to that harness's model provider, for example OpenAI through Codex. |
 | `/steepy-apex:check` | Public model pages from OpenAI and Anthropic, plus `opencode models` when OpenCode is installed | Requests for the current model list, used to verify the model table. No project data is sent. |
 | `/steepy-apex:review` | GitHub, through Git and the `gh` CLI | Your branch and a pull request to `main`, only after you confirm. |
+| `/steepy-apex:inception` | Official project documentation and package registries, reached through your harness and the approved tools; Git hosting only after your authorization | Research queries and installs. Pushes or repository creation only after you authorize each one. |
 
 `/steepy-apex:loop-engineer` runs its attempts on the harness you are already using. Per-command
 effects are in the [Command-family effects matrix](docs/architecture.md#command-family-effects-matrix).

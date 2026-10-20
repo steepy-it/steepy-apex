@@ -154,10 +154,8 @@ Keep between-task updates brief: which task finished and what comes next (e.g. "
 first and follow its phase-manifest, correlation, status-marker, and task-local manifest protocol; it
 takes precedence over the manual prose below for the steps it names.
 
-When `manifest.contract.taskResultProtocol` is `2`, also follow `task-results-protocol.md`:
-its semantic response, execution receipt, and generated JSON index rules take precedence over
-the four-field and comma-list examples below. Manual drive and legacy autopilot protocol 1 keep
-those examples unchanged; Gear 4 keeps its separate loop contract.
+In autopilot always follow `task-results-protocol.md`; the four-field and comma-list examples
+below are the manual-drive grammar. Gear 4 keeps its separate loop contract.
 
 **Manual/no-manifest:** There are two exclusive manual entry paths.
 
@@ -403,9 +401,9 @@ plan basename for plan-backed work and the spec basename for direct Gear 2.
 
    `- Task <id>: <DONE|DONE_WITH_CONCERNS>; artifact: <sanitized repo-relative path>; changed-paths: <comma list or none>; signals: <short machine-readable IDs or none>`
 
-   That bullet grammar applies only to manual drive and legacy autopilot protocol 1. In autopilot
-   protocol 2, use `task-results.mjs --action project` and verify the generated JSON receipt index;
-   never append a legacy bullet. A captured execution is review-pending until its applicable
+   That bullet grammar applies only to manual drive. In autopilot, use
+   `task-results.mjs --action project` and verify the generated JSON receipt index;
+   never append a `- Task` bullet. A captured execution is review-pending until its applicable
    reviewer gate approves; only then mark the ledger task complete.
 
    Never append an artifact body or use a shorthand result line; the conductor parses this exact grammar before review.
@@ -431,8 +429,7 @@ task-local fix manifest for the selected owning task, then the controller regene
 diff and re-reviews. Reports, findings, evidence, questions, concern prose, test output, and diffs never
 live only in a child response.
 
-In manual drive and legacy autopilot protocol 1, every child returns exactly four fields, in this
-exact order and with no bullets:
+In manual drive, every child returns exactly four fields, in this exact order and with no bullets:
 
 ```text
 status: <enum>
@@ -446,10 +443,9 @@ diff, report, or test transcript may be in the response. Implementer/fix statuse
 `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED`; reviewer statuses are `APPROVED`, `ISSUES_FOUND`,
 `NEEDS_CONTEXT`, or `BLOCKED`. NEEDS_CONTEXT, BLOCKED, and ISSUES_FOUND detail lives in `artifact`.
 
-For manual drive and protocol 1, before trusting a child result, validate the four-field shape, status, sanitized repo-relative artifact
+For manual drive, before trusting a child result, validate the four-field shape, status, sanitized repo-relative artifact
 path, and signals; also validate field order and comma-list-or-`none` changed paths.
-A malformed envelope is never trusted: autopilot records correlated `BLOCKED` and exits unless the
-reviewer-only bounded recovery below succeeds; manual drive
+A malformed envelope is never trusted: autopilot records correlated `BLOCKED` and exits; manual drive
 records the explicit same-session/degraded handling in the ledger. The controller opens the artifact only when
 its action status requires the next decision; otherwise it passes the artifact reference to
 the next consumer. The ledger and task-result index record only the compact outcome and artifact reference,
@@ -457,10 +453,8 @@ never full detail.
 
 In Gear-3 autopilot, before every task or whole-branch reviewer dispatch, read and follow
 `reviewer-recovery.md`: establish the deterministic baseline and gate even a valid response.
-Protocol 1 allows at most one reserved response-only correction. Its reviewer `changed-paths` is
-literal `none`, excluding the authorized review/issue artifacts; never normalize that legacy field
-automatically. Protocol 2 uses status/artifact/signals, ignores legacy path telemetry, and derives
-no source changes only after independent unchanged-state verification. An accepted APPROVED
+In autopilot, reviewers return exactly status, artifact, signals; a `changed-paths` field is malformed;
+the gate derives no source changes only after independent unchanged-state verification. An accepted APPROVED
 receipt plus independently unchanged code is required before marking complete; a report alone is
 insufficient. Bind task/final receipt references in the result index per `reviewer-recovery.md`;
 the conductor verifies them independently before accepting implement DONE. Preserve existing
@@ -468,8 +462,8 @@ implementation, fixes, completed tasks, and prior attempt evidence.
 
 ### Multi-task artifact-flow proof
 
-For Task 1 and Task 2, the parent accumulates only the selected compact envelopes and, in v2,
-bounded receipt facts; the legacy transport uses four-field envelopes. Durable
+For Task 1 and Task 2, the parent accumulates only the selected compact envelopes and, in autopilot,
+bounded receipt facts; manual drive uses four-field envelopes. Durable
 `task-N-report.md` remains reachable to the task reviewer through its required manifest; durable
 `task-N-issues.md` remains reachable to the fix through its required manifest; the compact
 `task-result-index.md` plus aggregate branch diff remains reachable to the final reviewer. No artifact body
@@ -540,8 +534,8 @@ canonical header grammar, its three metadata paths, the criteria artifact's cano
 `Heading` attribution against that metadata, and that `branch-diff` is the unmodified aggregate diff.
 
 **Verify the handoff before claiming completion.** The review phase parses
-`task-result-index.md` against the plan before it can build anything. Protocol 1 bullets must
-match the Step 3.5 grammar; protocol 2 uses the verified generated JSON receipt projection.
+`task-result-index.md` against the plan before it can build anything. Manual-drive bullets must
+match the Step 3.5 grammar; autopilot uses the verified generated JSON receipt projection.
 Run the same parse here, where it is still fixable:
 
 ```sh
@@ -549,7 +543,7 @@ node <engine-root>/scripts/autopilot-context.mjs --verify-handoff --repo-root . 
 ```
 
 Exit 0 prints the reviewed task IDs and this step continues. A non-zero exit names the exact
-offending result: in manual drive or protocol 1 correct that line and re-run; in protocol 2
+offending result: in manual drive correct that line and re-run; in autopilot
 inspect the exact receipt and regenerate the projection, never edit machine evidence to pass.
 Never proceed on a rejected handoff.
 

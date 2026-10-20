@@ -29,6 +29,8 @@ Subagent (explorer):
     Read the surface's code under [SURFACE_PATHS]. Also read any docs within or near that path —
     README files, a `docs/` directory, ADRs, inline comments that explain a design decision. Do not
     crawl the rest of the repository beyond what is needed to confirm a finding.
+    Never read under `.apex/work/` or `.apex/inception/`: inception material reaches discovery only
+    through its inception source.
 
     ## What to Return
 

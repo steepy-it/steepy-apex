@@ -85,10 +85,6 @@
 - **Generated artifact provenance** — the v1 marker carried by an entirely generated
   scaffold artifact. It identifies the generated artifact type without claiming ownership
   of bytes outside a mixed-artifact managed block.
-- **Prior canonical rendering** — the exact output of a released generated template that has
-  since changed while keeping `v1` provenance, rendered from its digest-pinned source under
-  `templates/prior/` with the current variables. An artifact byte-identical to it is stale (a
-  planner update and a linter warn), not customized; any other byte stays customized.
 - **Project scaffold plan** — the validated, public preview from `project-scaffold.mjs`:
   exact create/update/no-op operations plus conflicts that require an explicit offered
   resolution before apply.
@@ -127,7 +123,36 @@
 - **Chain skill / Standalone skill** — the two skill families: the chain — five
   (brainstorm → plan → implement → review, plus `loop-engineer` for gear 4) —
   gear-aware, checklist-carrying, vs the standalone hub-aware skills (`init`,
-  `new-surface`, `check`, `discovery`).
+  `new-surface`, `check`, `discovery`). `inception` is a pre-hub skill outside both
+  families.
+- **Inception run** — one pre-hub, resumable run of the `inception` skill that turns a
+  greenfield idea into a minimal, verified, runnable application (approved project
+  documents, a bootstrapped representative path, and verification results) before any
+  hub exists. Not a gear,
+  not in the chain. "Handoff" stays reserved for the workflow envelope; an inception run
+  never uses it. See [Conventions](conventions.md) → "Inception (pre-hub)".
+- **Run descriptor** — `.apex/inception/run.json`: the state of the one inception run
+  (phase, status, records). Changed only through `scripts/inception-state.mjs`.
+- **Representative path** — the one real, user-visible path through the product that
+  inception builds and verifies end to end, to prove the chosen architecture works.
+- **Decision register** — the `DR-n` table in the inception project documents; each row
+  is one decision with its reason. Discovery walks it row by row.
+- **Effect log** — the append-only record of an inception run's outside effects: an
+  intent before, an outcome after, each an immutable exact-ref record. Distinct from the Gear-4 workflow event log.
+- **Checkpoint** — an immutable record of an inception run: complete application snapshot digests plus separate Git
+  provenance at that moment; never a handpicked file list in v2. Distinct from the autopilot "non-blocking checkpoint" wording
+  for a collapsed gate.
+- **Resume note** — a numbered note an inception run writes when it pauses or blocks,
+  and as the closing note at `complete`: next step and the exact paths the next session
+  needs.
+- **Inception source** — discovery reading the exact bound documents of a `complete`
+  inception run as its seed after read-only completion/evidence/application verification. Source drift rejects this import only; ordinary discovery remains available.
+- **Unità persistita** (persisted unit) — the exact-ID decision/research/bootstrap/check/publication/transition unit recorded before work, with inputs, outputs, allowed paths and before snapshot. One active writer; complete reports and observed differences bind immutable evidence. A retry has a new ID and explicit predecessor; incomplete closure never proves success.
+- **Ciclo di verifica** (verification cycle) — immutable binding of approval, control contract, application identity and nonsecret environment. Application fixes or re-approval require a new cycle and every required automatic/manual check; an unchanged resume preserves applicable results but reobserves mutable resources in a new explicit verification session.
+- **Contratto dei controlli** (control contract) — human-approved structured roots/exclusions/environment/checks/coverage. Every check declares required, automatic/manual/both, expected outcome and evidence, approved execution/procedure, and snapshot/reobserve reuse. No weakening required checks after failure without human decision and re-approval.
+- **Fotografia applicativa** (application snapshot) — complete deterministic inventory of approved roots, exact exclusions and ordinary-file paths/content digests/permission modes; application identity omits record time/number and separate Git provenance. Additions/removals and uncertified governance/provider edits remain observable. Reserved areas, recognized leases and approved exclusions (before approval, the start exclusions) are left out of both the inventory and the recorded Git status; snapshots with different roots or exclusions never compare equal.
+- **Lease riconosciuto** (recognized lease) — a repository-root directory in the scaffold lock family (`.steepy-project-scaffold.lock` and its stale, retired or candidate residues) holding only the canonical 0600 owner record that matches its name. Live or dead, every application observer excludes it by exact path; read-only readers never retire or write it. Any other lock-like path remains application and Git drift.
+- **Ricevuta di raccolta** (capture receipt) — immutable binding of one registered approved check execution to token/PID, command, cycle/session/unit, environment, timing, exit/signal, separate complete stdout/stderr and before/after snapshots. Collector success means captured evidence, not a green check; a synthetic external receipt cannot substitute for capture.
 - **Loop Engineer** — the gear-4 mode (an autonomous bounded loop over a
   machine-verifiable goal) and the human role that exercises it: designs the
   goal/verifier/budget up front instead of gating per turn; executed by
@@ -177,9 +202,10 @@
   records each justified `onDemand` read. It controls eager upstream context, not repository access:
   code discovery and source reads needed for implementation, tests, and verification remain normal.
 - **Artifact-first completion** — the child-completion protocol: write the detailed, durable
-  report first, then return exactly `status`, `artifact`, `changed-paths`, and `signals` to the
-  parent. The parent retains the four-field envelope, opening the artifact only for a decision or
-  action; no report body or transcript is copied into controller context.
+  report first, then return the drive's envelope to the parent: manual drive and Gear 4 return
+  exactly `status`, `artifact`, `changed-paths`, `signals`; Gear-3 autopilot returns exactly
+  `status`, `artifact`, `signals`. The parent retains that envelope, opening the artifact only for a
+  decision or action; no report body or transcript is copied into controller context.
 - **Resource-usage ledger** — an observational JSONL ledger scoped to one run, phase, and attempt.
   It records direct provider usage evidence with source provenance and one canonical measurement
   per event, so summaries cannot double-count it. It informs efficiency analysis only; it never

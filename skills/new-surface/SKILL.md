@@ -55,8 +55,9 @@ Add one governed surface through the common specialist planner.
    Do not reproduce planner provenance markers or hand-render an adapter in this skill. The standard
    remains create-only. If the surface is a repair of an incomplete scaffold, add `--repair`; repair
    keeps current artifacts and creates only absent members of the standard-plus-triad result.
-   An adapter byte-identical to an earlier canonical rendering is stale: the planner updates it to
-   the current rendering without a conflict question. Any other changed adapter is a conflict.
+   Any adapter that is not the current canonical rendering, an untouched earlier one included, is a
+   `customized` conflict: repair stops, and only an explicit `replace` (through
+   `--resolution <id>=replace` in an active hub) writes the current rendering.
 
 3. In **active-v1** mode, do not edit generated or managed artifacts after the command: the public
    workflow has already made the root, routing row, standard, and triad agree. In
