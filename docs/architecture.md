@@ -85,10 +85,12 @@ provenance.
 Process-group ownership in review capture, inception capture, the autopilot conductor, and
 loop-engineer is supported only on tested `linux` and `darwin`, and every stop path converges
 through the shared `scripts/process-group.mjs` primitive, where only an `ESRCH` probe proves
-the group is gone. Each caller uses a detached session boundary, waits for leader and stream settlement independently, and performs bounded
+the group is gone. Each caller uses a detached session boundary and performs bounded
 `SIGTERM` then `SIGKILL` convergence on failures and ordinary/nonzero exits. Descendants that
-deliberately escape the spawned session are outside containment; bounded local stream settlement
-prevents an escaped inherited-pipe holder from blocking descriptor closure indefinitely.
+deliberately escape the spawned session are outside containment for all four callers. Review
+capture and inception capture also bound local stream settlement, so an escaped inherited-pipe
+holder cannot block descriptor closure indefinitely there. Autopilot and loop-engineer wait for
+stream closure.
 
 ## Deterministic Gear-4 controller boundary
 
