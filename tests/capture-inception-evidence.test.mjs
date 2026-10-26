@@ -277,3 +277,61 @@ test('a plausible handwritten receipt has no provenance without a registered att
     assert.deepEqual(readFileSync(join(root, area, 'run.json')), descriptor);
   } finally { rmSync(origin, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true }); }
 });
+
+// Replaces process.kill for one test. Interceptors only see negative pids; every
+// other call (and every negative-pid call an interceptor declines) is delegated.
+async function withKillInterceptor(intercept, body) {
+  const original = process.kill;
+  process.kill = function (pid, signal) {
+    if (typeof pid === 'number' && pid < 0) {
+      const outcome = intercept(pid, signal);
+      if (outcome === 'deliver') return original.call(process, pid, signal);
+      if (outcome !== undefined) return outcome;
+    }
+    return original.call(process, pid, signal);
+  };
+  try { return await body(); } finally { process.kill = original; }
+}
+const denied = () => Object.assign(new Error('denied'), { code: 'EPERM' });
+
+test('a non-ESRCH probe error is not proof of group absence', async () => {
+  const { collectInceptionEvidence } = await import('../scripts/capture-inception-evidence.mjs');
+  const root = fixture({ code: "process.stdout.write('x')" });
+  try {
+    await withKillInterceptor((pid, signal) => { if (signal === 0) throw denied(); },
+      () => assert.rejects(collectInceptionEvidence({ ...options(root), killGraceMs: 20, processGroupConvergenceMs: 20 }), /capture process-group convergence timed out/));
+    assert.notEqual(read(root).units[0].capture.state, 'captured');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a non-ESRCH signal error is ignored and the probe decides', async () => {
+  const { collectInceptionEvidence } = await import('../scripts/capture-inception-evidence.mjs');
+  const code = "const {spawn}=require('node:child_process'); spawn(process.execPath,['-e','setTimeout(()=>{},150)'],{stdio:'ignore'}).unref(); process.exit(0)";
+  const root = fixture({ code });
+  try {
+    const output = await withKillInterceptor((pid, signal) => { if (signal === 'SIGTERM' || signal === 'SIGKILL') throw denied(); },
+      () => collectInceptionEvidence(options(root)));
+    assert.equal(output.outcome, 'succeeded');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('an early absent probe does not skip a descendant that outlives the leader', { skip: !['linux', 'darwin'].includes(process.platform) }, async () => {
+  const { collectInceptionEvidence } = await import('../scripts/capture-inception-evidence.mjs');
+  const pidDir = mkdtempSync(join(tmpdir(), 'steepy-inception-group-'));
+  const pidFile = join(pidDir, 'descendant.pid');
+  const code = `const {spawn}=require('node:child_process'); const sub=spawn(process.execPath,['-e','setTimeout(()=>{},5000)'],{stdio:'ignore'}); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(sub.pid)); sub.unref(); process.exit(0)`;
+  const root = fixture({ code });
+  let descendantPid;
+  try {
+    let first = true;
+    const output = await withKillInterceptor((pid, signal) => {
+      if (signal === 0 && first) { first = false; throw Object.assign(new Error('gone'), { code: 'ESRCH' }); }
+    }, () => collectInceptionEvidence(options(root)));
+    assert.equal(output.outcome, 'succeeded');
+    descendantPid = Number(readFileSync(pidFile, 'utf8'));
+    assert.throws(() => process.kill(descendantPid, 0), { code: 'ESRCH' });
+  } finally {
+    if (descendantPid) { try { process.kill(descendantPid, 'SIGKILL'); } catch {} }
+    rmSync(pidDir, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true });
+  }
+});

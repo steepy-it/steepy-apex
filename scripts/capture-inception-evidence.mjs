@@ -9,29 +9,17 @@ import { parseArgs } from 'node:util';
 import { beginCapture, finishCapture } from './inception-state.mjs';
 import { openPublicationOutput, validateId, validatePath } from './inception-protocol.mjs';
 import { writeAllSync } from './write-all.mjs';
+import { convergeProcessGroup, processGroupsSupported } from './process-group.mjs';
 
-const delay = ms => new Promise(done => setTimeout(done, ms));
 async function within(promise, ms) {
   let timer;
   try { return await Promise.race([promise.then(() => true), new Promise(done => { timer = setTimeout(() => done(false), ms); })]); }
   finally { clearTimeout(timer); }
 }
-function groupAlive(pid) {
-  try { process.kill(-pid, 0); return true; }
-  catch (error) { if (error.code === 'ESRCH') return false; throw error; }
-}
-async function absent(pid, ms) {
-  const deadline = Date.now() + ms;
-  do { if (!groupAlive(pid)) return true; await delay(10); } while (Date.now() < deadline);
-  return !groupAlive(pid);
-}
 async function stopGroup(child, grace, convergence) {
-  if (!child.pid || !groupAlive(child.pid)) return;
-  for (const [signal, timeout] of [['SIGTERM', grace], ['SIGKILL', convergence]]) {
-    try { process.kill(-child.pid, signal); } catch (error) { if (error.code !== 'ESRCH') throw error; }
-    if (await absent(child.pid, timeout)) return;
+  if (!await convergeProcessGroup({ pid: child.pid, killGraceMs: grace, convergenceMs: convergence })) {
+    throw new Error('capture process-group convergence timed out');
   }
-  throw new Error('capture process-group convergence timed out');
 }
 async function settleStreams(child, settlements, ms) {
   const settled = Promise.all(settlements);
@@ -77,7 +65,7 @@ async function execute({ root, capture, fds, writeToFd, killGraceMs, processGrou
 export async function collectInceptionEvidence(options = {}) {
   for (const key of Object.keys(options)) if (!['repoRoot', 'cycle', 'check', 'unit', 'purpose', 'platform', 'writeToFd', 'closeFd', 'killGraceMs', 'processGroupConvergenceMs', 'streamSettlementMs', 'fault'].includes(key)) throw new Error(`unknown capture option: ${key}`);
   const { repoRoot, cycle, check, unit, purpose = 'check', platform = process.platform, writeToFd = writeSync, closeFd = closeSync, killGraceMs = 500, processGroupConvergenceMs = 1000, streamSettlementMs = 1500, fault } = options;
-  if (platform !== 'linux' && platform !== 'darwin') throw new Error(`unsupported platform for process-group capture: ${platform}`);
+  if (!processGroupsSupported(platform)) throw new Error(`unsupported platform for process-group capture: ${platform}`);
   const begun = beginCapture(repoRoot, { cycle, check, unit, purpose });
   if (begun.recovery) {
     if (begun.recovery.outcome === 'incomplete') throw new Error('capture remains incomplete; no command was rerun');
