@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.2.1 (2026-10-26)
+
+- The README presents inception: it is listed under "What it does" and in the documentation
+  list, and the `discovery` row says it imports inception decisions once.
+- The first-run table in the installation guide has a "Start from an idea" column with the
+  inception syntax for every harness.
+- The installation guide has a new "Upgrading an existing hub" section. Its "To v1.2.0" part
+  lists the state from earlier versions that v1.2.0 no longer accepts, and what to do about
+  each. The README links it.
+- The README no longer states a version number and links the changelog instead. A test keeps
+  version numbers out of the README.
+- `docs/inception.md` opens with plain user sections and keeps the exact rules in a closing
+  "Reference" section.
+- `docs/inception-acceptance.md` describes scenario C (an asynchronous boundary or a strong
+  compatibility constraint), still deferred out of v1. Its setup rule accepts a release tag as
+  well as a branch.
+- The README links the Steepy website.
+
 ## v1.2.0 (2026-10-13)
 
 - New skill `/steepy-apex:inception`: turns an idea and its materials into a minimal, verified,
