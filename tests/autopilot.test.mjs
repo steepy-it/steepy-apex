@@ -1212,8 +1212,32 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
         groupConvergenceMs: 0,
       });
       assert.equal(result.code, 0);
-      assert.equal(probes, 3);
+      assert.equal(probes, 6, 'a presence probe and a confirmation probe for each of three children');
       assert.deepEqual(signals, [], 'absent group must never be signaled');
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('terminates a group whose first probe is a transient absence', async () => {
+    const run = makeRun();
+    const signals = [];
+    const seen = new Set();
+    const terminated = new Set();
+    const absent = () => Object.assign(new Error('absent'), { code: 'ESRCH' });
+    try {
+      const result = await drive(run, {}, {
+        processGroupProbe: (pid) => {
+          if (!seen.has(pid)) { seen.add(pid); throw absent(); }
+          if (terminated.has(pid)) throw absent();
+        },
+        processGroupSignal: (pid, signal) => {
+          signals.push(signal);
+          if (signal === 'SIGTERM') terminated.add(pid);
+        },
+        killGraceMs: 50,
+        groupConvergenceMs: 50,
+      });
+      assert.equal(result.code, 0);
+      assert.deepEqual(signals, ['SIGTERM', 'SIGTERM', 'SIGTERM'], 'one TERM per phase child and no KILL');
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 
