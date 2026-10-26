@@ -493,3 +493,62 @@ test('CLI refuses an existing symlinked evidence target without changing its ref
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+for (const [name, processGroupProbe] of [
+  ['a non-EPERM, non-ESRCH probe error is not proof of absence', () => {
+    throw Object.assign(new Error('injected I/O error'), { code: 'EIO' });
+  }],
+  ['a probe returning false is no longer absence', () => false],
+]) {
+  test(`${name}: capture fails closed`, {
+    timeout: 5_000,
+    skip: !GROUPS_SUPPORTED,
+  }, async () => {
+    const repo = fixture();
+    const signals = [];
+    try {
+      await assert.rejects(
+        collectReviewEvidence({
+          repoRoot: repo,
+          evidencePath: EVIDENCE,
+          testCommand: nodeCommand("process.stdout.write('ok')"),
+          killGraceMs: 20,
+          processGroupConvergenceMs: 20,
+          processGroupProbe,
+          processGroupSignal(pid, signal) { signals.push(signal); },
+        }),
+        /process-group convergence timed out after 20ms/u,
+      );
+      assert.deepEqual(signals.slice(0, 2), ['SIGTERM', 'SIGKILL']);
+      const report = readFileSync(join(repo, EVIDENCE), 'utf8');
+      assert.doesNotMatch(report, /steepy validate-hub: OK/u);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+}
+
+test('an injected ESRCH probe throw proves absence and delivers no signal', {
+  timeout: 5_000,
+  skip: !GROUPS_SUPPORTED,
+}, async () => {
+  const repo = fixture();
+  const signals = [];
+  try {
+    const receipt = await collectReviewEvidence({
+      repoRoot: repo,
+      evidencePath: EVIDENCE,
+      testCommand: nodeCommand("process.stdout.write('ok')"),
+      killGraceMs: 20,
+      processGroupConvergenceMs: 20,
+      processGroupProbe() {
+        throw Object.assign(new Error('no such group'), { code: 'ESRCH' });
+      },
+      processGroupSignal(pid, signal) { signals.push(signal); },
+    });
+    assert.deepEqual(receipt.commands.map(({ label }) => label), ['surface-test', 'validate-hub']);
+    assert.deepEqual(signals, []);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
