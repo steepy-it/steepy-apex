@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { skillFile, skillHead, skillText, stepFiles } from './support/skills.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const skillsDir = join(here, '..', 'skills');
@@ -32,7 +33,7 @@ function assertNoBareWorkflowInvocations(text, label) {
 function checkSkill(name, mustReference) {
   const path = join(skillsDir, name, 'SKILL.md');
   assert.ok(existsSync(path), `${name}/SKILL.md should exist`);
-  const text = readFileSync(path, 'utf8');
+  const text = skillText(name);
   const fmMatch = text.match(/^---\n([\s\S]*?)\n---/);
   assert.ok(fmMatch, `${name} should have YAML frontmatter`);
   const fm = fmMatch[1];
@@ -48,7 +49,7 @@ test('brainstorm: valid user-invocable skill, writes spec into .apex/work/specs/
 });
 
 test('brainstorm: local-work contract is explicit and forbids stable registration', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   assert.match(
     text,
     /description:\s+Turn an idea into a local working spec under \.apex\/work\/specs\/\./,
@@ -65,7 +66,7 @@ test('brainstorm: local-work contract is explicit and forbids stable registratio
 });
 
 test('brainstorm: Step 4 writes the draft into the spec file (gate), Step 5 finalizes it', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const step4 = sectionBetween(text, '### Step 4 — Present the design (gate)', '### Step 5');
   assert.match(step4, /^status: DRAFT$/m, 'Step 4 must write the draft with the workflow header status: DRAFT');
   assert.match(step4, /\.apex\/work\/specs\//, 'Step 4 must write the draft to .apex/work/specs/');
@@ -84,7 +85,7 @@ test('brainstorm: Step 4 writes the draft into the spec file (gate), Step 5 fina
 });
 
 test('brainstorm: Step 1.5 resolves CONFLICT — doc-wins, confirm, override→doc rewritten to the active rule', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const step15 = sectionBetween(text, '### Step 1.5', '### Step 2 — Understand');
   assert.match(step15, /`file:line`/, 'CONFLICT resolution must cite file:line');
   assert.match(step15, /doc-wins/i, 'CONFLICT resolution must default to doc-wins');
@@ -97,7 +98,7 @@ test('brainstorm: Step 1.5 resolves CONFLICT — doc-wins, confirm, override→d
 });
 
 test('brainstorm: Step 1.5 resolves GAP — explore-first, consistency threshold, isolated precedent, no-precedent→brainstorm', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const step15 = sectionBetween(text, '### Step 1.5', '### Step 2 — Understand');
   assert.match(step15, /explore the codebase first/i, 'GAP resolution must explore the codebase before brainstorming');
   assert.match(step15, /2–3|2-3/, 'GAP resolution must define a ≥2-3 occurrence consistency threshold');
@@ -110,7 +111,7 @@ test('brainstorm: Step 1.5 resolves GAP — explore-first, consistency threshold
 });
 
 test('brainstorm: write-back routing wired — recurring→hub (glossary/standards/conventions), one-off stays local', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const writeBack = sectionBetween(text, '### Write-back routing', '### Step 6');
   assert.match(writeBack, /will recur/i, 'write-back must be gated on the fork recurring');
   assert.match(writeBack, /\.apex\/glossary\.md/, 'a term/ambiguity must route to the glossary');
@@ -123,7 +124,7 @@ test('brainstorm: write-back routing wired — recurring→hub (glossary/standar
 });
 
 test('brainstorm: write-back three-condition filter for decision-shaped conventions entries', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const writeBack = sectionBetween(text, '### Write-back routing', '### Step 6');
   assert.match(writeBack, /hard to reverse/i, 'decision write-backs must require hard-to-reverse');
   assert.match(writeBack, /surprising without context/i, 'decision write-backs must require surprising-without-context');
@@ -133,7 +134,7 @@ test('brainstorm: write-back three-condition filter for decision-shaped conventi
 });
 
 test('brainstorm: Step 2 is hub-aware grilling (gear 2-3), mutates no doc', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const step2 = sectionBetween(text, '### Step 2 — Understand', '### Step 3');
   assert.match(step2, /Gear 2 and 3/, 'Step 2 grilling must be gated to gear 2 and 3');
   assert.match(step2, /glossar/i, 'Step 2 must name glossary/terminology sharpening');
@@ -146,7 +147,7 @@ test('brainstorm: Step 2 is hub-aware grilling (gear 2-3), mutates no doc', () =
 });
 
 test('brainstorm: Step 4/5 carry canonical Out of Scope + Testing Decisions sections', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const step4 = sectionBetween(text, '### Step 4 — Present the design (gate)', '### Step 5');
   assert.match(step4, /Out of Scope/, 'Step 4 section list must name Out of Scope');
   assert.match(step4, /Testing Decisions/, 'Step 4 section list must name Testing Decisions');
@@ -158,7 +159,7 @@ test('brainstorm: Step 4/5 carry canonical Out of Scope + Testing Decisions sect
 });
 
 test('brainstorm: Step 2 grilling has structure — design tree, facts/decisions split, explicit exit criterion', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const step2 = sectionBetween(text, '### Step 2 — Understand', '### Step 3');
   assert.match(step2, /design tree|tree of.*decisions/i, 'Step 2 must frame open decisions as a design tree');
   assert.match(step2, /dependency order|prerequisites/i, 'Step 2 must order questions by dependency — no decision before its prerequisites');
@@ -175,7 +176,7 @@ test('plan: valid user-invocable skill, writes plan into .apex/work/plans/', () 
 });
 
 test('plan: local-work contract is explicit and forbids stable registration', () => {
-  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   assert.match(
     text,
     /description:\s+Turn a local working spec into a step-by-step implementation plan\./,
@@ -194,7 +195,7 @@ test('plan: local-work contract is explicit and forbids stable registration', ()
 test('chain skills: byte-identical canonical manual handoff contract', () => {
   const names = ['brainstorm', 'plan', 'implement', 'review', 'loop-engineer'];
   const blocks = names.map((name) => {
-    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const text = skillText(name);
     return text.match(/<!-- steepy:manual-handoff:v1:start -->[\s\S]*?<!-- steepy:manual-handoff:v1:end -->/)?.[0];
   });
   assert.ok(blocks.every(Boolean), 'all five chain skills must carry the common manual-handoff block');
@@ -218,14 +219,14 @@ test('chain skills: canonical workflow-header phase identity includes the Gear-4
   const names = ['brainstorm', 'plan', 'implement', 'review', 'loop-engineer'];
   const canonicalDomain = '<brainstorm|plan|implement|review|loop-engineer|goal-contract>';
   for (const name of names) {
-    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const text = skillText(name);
     const block = text.match(/<!-- steepy:manual-handoff:v1:start -->[\s\S]*?<!-- steepy:manual-handoff:v1:end -->/)?.[0];
     assert.ok(block, `${name} must carry the canonical manual-handoff block`);
     assert.ok(block.includes(`phase: ${canonicalDomain}`), `${name} must accept the canonical goal-contract phase identity`);
   }
 
-  const loop = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
-  const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const loop = skillText('loop-engineer');
+  const review = skillText('review');
   const loopEntry = sectionBetween(loop, '### Step 0', '### Step 1');
   const reviewProvenance = sectionBetween(review, '### Step 1', '### Step 2');
   assert.match(loopEntry, /phase: goal-contract/, 'loop entry must consume the canonical goal-contract phase');
@@ -235,7 +236,7 @@ test('chain skills: canonical workflow-header phase identity includes the Gear-4
 });
 
 test('chain skills: every declared transition emits exactly the destination accepted roles', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const block = text.match(/<!-- steepy:manual-handoff:v1:start -->([\s\S]*?)<!-- steepy:manual-handoff:v1:end -->/)?.[1];
   assert.ok(block, 'canonical manual-handoff block must exist');
   const acceptedAlternatives = new Map([
@@ -270,8 +271,8 @@ test('chain skills: every declared transition emits exactly the destination acce
 });
 
 test('brainstorm and plan: versioned workflow headers and manual lifecycle are explicit', () => {
-  const brainstorm = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
-  const plan = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const brainstorm = skillText('brainstorm');
+  const plan = skillText('plan');
   assert.match(brainstorm, /phase: brainstorm[\s\S]*next: implement[^]*Gear 2[^]*next: plan[^]*Gear 3/i);
   assert.match(brainstorm, /Gear 2[^]*next: implement[^]*required:\n  spec: <exact-spec-path>[^]*onDemand: none/i);
   assert.match(brainstorm, /Gear 3[^]*next: plan[^]*required:\n  spec: <exact-spec-path>[^]*onDemand: none/i);
@@ -285,7 +286,7 @@ test('brainstorm and plan: versioned workflow headers and manual lifecycle are e
 });
 
 test('implement: manual entry accepts the lean Gear-2 spec or exact plan provenance, with explicit resume capability', () => {
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   const checklist = sectionBetween(text, '## Checklist', '## Procedure');
   const step0 = sectionBetween(text, '### Step 0', '### Ceremony');
   const step1 = sectionBetween(text, '### Step 1', '### Step 2');
@@ -320,7 +321,7 @@ test('implement: manual entry accepts the lean Gear-2 spec or exact plan provena
 });
 
 test('plan: manual recovery and bindings fail closed without candidate body reads', () => {
-  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   for (const phrase of ['exact', 'missing', 'malformed', 'wrong-state', 'wrong-role']) {
     assert.match(text, new RegExp(phrase, 'i'), `plan must state ${phrase} handling`);
   }
@@ -331,7 +332,7 @@ test('plan: manual recovery and bindings fail closed without candidate body read
 });
 
 test('plan: Step 0 accepts the exact manual spec capability before any verdict or body read', () => {
-  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   const step0 = sectionBetween(text, '### Step 0', '### Ceremony');
   const manualGate = step0.search(/\*\*Manual\/no-manifest[^*]*preflight[^*]*\*\*/i);
   const verdictRead = step0.search(/read the verdict artifact/i);
@@ -352,7 +353,7 @@ test('plan: Step 0 accepts the exact manual spec capability before any verdict o
 });
 
 test('plan: Step 2 documents expand–contract for wide refactors, no graph machinery', () => {
-  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   assert.match(step2, /wide refactor/i, 'Step 2 must name the wide-refactor pattern');
   assert.match(step2, /expand\s*→\s*migrate\s*→\s*contract/i, 'Step 2 must state the expand → migrate → contract sequence');
@@ -365,7 +366,7 @@ test('plan: Step 2 documents expand–contract for wide refactors, no graph mach
 });
 
 test('plan: Step 2 cuts tasks on a discovery criterion, not bite-sized alone', () => {
-  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   assert.doesNotMatch(step2, /bite-sized/i, 'Step 2 must no longer name bite-sized as the task-cutting criterion');
   assert.match(step2, /\bdiscover\b/i, 'Step 2 must name discovery as the mis-cut signal');
@@ -381,7 +382,7 @@ test('plan: Step 2 cuts tasks on a discovery criterion, not bite-sized alone', (
 });
 
 test('plan: Step 3 binds each task to Complexity and Step 4.5 verifies it', () => {
-  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   const step3 = sectionBetween(text, '### Step 3', '### Step 4');
   assert.match(
     step3,
@@ -405,8 +406,29 @@ test('implement: valid user-invocable skill, enforces TDD against the surface te
   checkSkill('implement', ['.apex/work/specs/', '.apex/work/plans/', 'failing test', '-agent']);
 });
 
+test('implement: the fix-round cap sits in the compaction-safe head and parks a non-converging loop', () => {
+  const head = skillHead('implement');
+  const cap = sectionBetween(head, '## Fix-round cap', '## Procedure');
+  assert.match(cap, /each task's loop \(Step 3\)[^]*whole-branch loop \(Step 4\)[^]*inline same-session/);
+  assert.match(cap, /`Task N: fix round <R> \(model: <tier>\)`[^]*`Final review: fix round <R> \(model: <tier>\)`/);
+  assert.match(cap, /Count rounds from those ledger lines, never from memory/);
+  assert.match(cap, /Rounds 1–3[^]*round 3's re-review still finds issues, move the fix up one tier[^]*`escalated: <from>→<to>`[^]*rounds 4–5/);
+  assert.match(cap, /Park the loop when round 5's re-review still finds issues, or after round 3 when no higher tier\s+is left/);
+  assert.match(cap, /Manual drive: stop[^]*`task-N-issues\.md`[^]*`final-review-issues\.md`/);
+  assert.match(cap, /Autopilot \(`drive: autopilot`\)[^]*correlated\s+`BLOCKED` marker[^]*exit non-zero/);
+  assert.match(cap, /Only the user restarts a parked loop\. Record their decision as `Task N: fix loop restarted by\s+user \(<reason>\)`[^]*`Final review: fix loop restarted by user \(<reason>\)`[^]*count rounds\s+after the latest such line/);
+  assert.match(readFileSync(join(skillsDir, 'implement', 'autopilot-protocol.md'), 'utf8'),
+    /Both fix loops obey the fix-round cap in `SKILL\.md`;\s+a loop that reaches the cap ends with the correlated `BLOCKED` marker/,
+    'the autopilot protocol, which takes precedence for its steps, must defer to the cap');
+  assert.match(sectionBetween(head, '## Execution discipline', '## Checklist'), /fix loop parked by the fix-round cap/,
+    'a parked fix loop must be one of the only reasons to stop mid-run');
+  const loop = skillText('implement');
+  assert.equal(loop.match(/re-review until \*\*Status: Approved\*\*,\s+within the fix-round cap in `SKILL\.md`/g)?.length, 2,
+    'both fix loops must point back to the cap');
+});
+
 test('implement: hands off to review with the exact minimal review capability', () => {
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   const step5 = sectionBetween(text, '### Step 5 — Hand off', '## Model Selection');
   assert.match(step5, /Gear 3 only/i, 'the review handoff must be Gear-3 only');
   assert.match(step5, /Run the `review` skill in a new session/, 'handoff must still require a fresh session');
@@ -422,7 +444,7 @@ test('implement: hands off to review with the exact minimal review capability', 
 });
 
 test('implement: manual entry supports mutually exclusive direct-spec and plan-backed forms, bounded and fail closed', () => {
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   assert.match(text, /two exclusive manual entry paths/i);
   assert.match(text, /required:\n\s+spec: <spec-path>\nonDemand: none/);
   assert.match(text, /required:\n\s+plan: <plan-path>\nonDemand:\n\s+source-spec: <spec-path>/);
@@ -447,7 +469,7 @@ test('implement: autopilot reads the phase manifest first while manual capabilit
   assert.match(protocol, /`onDemand`[\s\S]{0,120}concrete named missing fact/i);
   assert.match(protocol, /authoritative input inventory/i);
 
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   const step1 = sectionBetween(text, '### Step 1', '### Step 2');
   assert.match(step1, /Manual drive/i);
   assert.match(step1, /read the accepted plan body/i);
@@ -456,7 +478,7 @@ test('implement: autopilot reads the phase manifest first while manual capabilit
 });
 
 test('implement: result index lifecycle and supporting metadata are interrupt safe', () => {
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   assert.match(text, /phase: implement\nstatus: DRAFT\nnext: review\nsource: <plan-path>\nconsumed-by: none\n-->\nsource-spec: <spec-path>\ncriteria: <criteria-path>\nbranch-diff: <branch-diff-path>/);
   assert.match(text, /Gear 2[^]*phase: implement\nstatus: DRAFT\nnext: none\nsource: <spec-or-plan-path>\nconsumed-by: none/i);
   assert.match(text, /(failure|interruption)[\s\S]{0,160}plan `READY`|plan remains[\s\S]{0,80}`READY`/i);
@@ -474,7 +496,7 @@ test('implement: result index lifecycle and supporting metadata are interrupt sa
 });
 
 test('implement: materializes a self-contained Task 7 brief verbatim', () => {
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   const step3 = sectionBetween(text, '### Step 3', '### Step 4');
   for (const field of [
     'Requirements and deliverables',
@@ -499,8 +521,8 @@ test('implement: materializes a self-contained Task 7 brief verbatim', () => {
 });
 
 test('Gear 2 terminates in implement after surface tests and validate-hub, without plan or review', () => {
-  const brainstorm = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
-  const implement = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const brainstorm = skillText('brainstorm');
+  const implement = skillText('implement');
   const brainstormHandoff = sectionBetween(brainstorm, '### Step 8 — Hand off', '## Model Selection');
   const implementStep5 = sectionBetween(implement, '### Step 5 — Hand off', '## Model Selection');
 
@@ -550,7 +572,7 @@ test('implement: role inventories are exact and never eagerly pass upstream bodi
 });
 
 test('implement: skill defines the conductor result-index grammar and canonical branch diff name exactly', () => {
-  const skill = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const skill = skillText('implement');
   const canonical = '- Task <id>: <DONE|DONE_WITH_CONCERNS>; artifact: <sanitized repo-relative path>; changed-paths: <comma list or none>; signals: <short machine-readable IDs or none>';
   assert.ok(skill.includes(canonical), 'skill must define the exact task-result-index bullet grammar');
   assert.match(skill, /task-result-index\.md[\s\S]{0,240}exact bullet grammar/i);
@@ -582,7 +604,7 @@ test('implement: final review consumes a deterministic criteria-only artifact, n
 
 test('implement: durable artifacts and exact four-field child envelopes keep detail off the parent context', () => {
   const files = ['SKILL.md', 'implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md'];
-  const texts = files.map((file) => readFileSync(join(skillsDir, 'implement', file), 'utf8'));
+  const texts = files.map((file) => skillFile('implement', file));
   const envelope = [
     'status: <enum>',
     'artifact: <sanitized repo-relative path>',
@@ -617,7 +639,7 @@ test('artifact-first child contracts share ordered fields while status domains a
   const orderedFields = ['status', 'artifact', 'changed-paths', 'signals'];
 
   for (const [relativePath, role] of emitters) {
-    const text = readFileSync(join(skillsDir, relativePath), 'utf8');
+    const text = skillFile(...relativePath.split('/'));
     const envelope = text.match(/^[ \t]*status: <[^\n]+>\n[ \t]*artifact: <[^\n]+>\n[ \t]*changed-paths: (?:<[^\n]+>|none)\n[ \t]*signals: <[^\n]+>$/m)?.[0];
     assert.ok(envelope, `${relativePath} must emit the four-field ${role} result contract`);
     assert.deepEqual(
@@ -634,7 +656,7 @@ test('artifact-first child contracts share ordered fields while status domains a
   assert.match(standard, /Reviewer[^`]*`APPROVED \| ISSUES_FOUND \| BLOCKED \| NEEDS_CONTEXT`/i);
   assert.match(standard, /loop prompt templates[^.]*closed artifact-first envelopes[^.]*exact ordered\s+four-field shape/i);
 
-  const implementSkill = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const implementSkill = skillText('implement');
   const implementer = readFileSync(join(skillsDir, 'implement', 'implementer-prompt.md'), 'utf8');
   const taskReviewer = readFileSync(join(skillsDir, 'implement', 'task-reviewer-prompt.md'), 'utf8');
   const finalReviewer = readFileSync(join(skillsDir, 'implement', 'final-review-prompt.md'), 'utf8');
@@ -651,7 +673,7 @@ test('artifact-first child contracts share ordered fields while status domains a
 });
 
 test('implement: multi-task parent state contains envelopes only while durable artifacts feed the next role', () => {
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   const proof = sectionBetween(text, '### Multi-task artifact-flow proof', '### Step 4');
   assert.match(proof, /Task 1[\s\S]*Task 2/i);
   assert.match(proof, /parent[\s\S]{0,120}(only|solely)[\s\S]{0,120}four-field envelopes/i);
@@ -666,7 +688,7 @@ test('review: valid user-invocable skill, verifies bounded work artifacts and st
 });
 
 test('review: verifies bounded local work artifacts and promotion of durable knowledge', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   assert.match(text, /manual[^]*criteria[^]*task-result[^]*diff/i);
   assert.match(text, /Eagerly read exactly the accepted `criteria`, `task-results`, and\n`branch-diff` artifacts/);
   assert.match(text, /stable routing inputs normally:[^]*`\.apex\/_INDEX\.md`[^]*`\.apex\/testing-and-checklist\.md`/);
@@ -676,7 +698,7 @@ test('review: verifies bounded local work artifacts and promotion of durable kno
 });
 
 test('review: Step 2 sweeps only bounded criteria and compact index insights', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   const manifestSweep = sectionBetween(step2, '- **Manifest-backed autopilot:**', '- **Manual/no-manifest:**');
   const manualSweep = sectionBetween(step2, '- **Manual/no-manifest:**', 'A recorded **discovery** occurrence');
@@ -701,7 +723,7 @@ test('review: Step 2 sweeps only bounded criteria and compact index insights', (
 });
 
 test('review: Step 2 insight sweep reports a recorded discovery occurrence as a rebuttal to the plan task-cutting criterion', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   assert.match(step2, /discovery[\s\S]{0,200}rebuttal[\s\S]{0,120}task-cutting criterion/i,
     'the sweep must report a recorded discovery occurrence as a rebuttal to the plan task-cutting criterion');
@@ -712,7 +734,7 @@ test('review: Step 2 insight sweep reports a recorded discovery occurrence as a 
 });
 
 test('review: Step 5 resolves a version bump (or no-release label) before offering the PR', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   const step5 = sectionBetween(text, '### Step 5', '## Model Selection');
   assert.match(step5, /bump-version\.mjs/, 'Step 5 must run bump-version.mjs before opening the PR');
   assert.match(step5, /CHANGELOG\.md/, 'Step 5 must add a CHANGELOG.md section for the bump');
@@ -721,7 +743,7 @@ test('review: Step 5 resolves a version bump (or no-release label) before offeri
 });
 
 test('review: gains an autopilot branch — Step 0 BLOCKED note, Autopilot paragraph stops before bump/PR at READY_FOR_PR', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
 
   const step0 = sectionBetween(text, '### Step 0', '### Ceremony');
   assert.match(step0, /drive:\s*autopilot/i, 'Step 0 must mention drive: autopilot');
@@ -783,7 +805,7 @@ test('README and thin Claude stub expose only the approved canonical bootstrap r
   const stub = readFileSync(join(here, '..', 'templates', 'claude-bootstrap-stub.md'), 'utf8');
   const readme = readFileSync(join(here, '..', 'README.md'), 'utf8');
   const workflow = readFileSync(join(here, '..', 'docs', 'workflow.md'), 'utf8');
-  const loopEngineer = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
+  const loopEngineer = skillText('loop-engineer');
   assert.match(tpl, /steepy:generated:[^\n]+:v1/, 'bootstrap must carry the permanent v1 generation marker');
   assert.match(tpl, /name: \{\{projectName\}\}-bootstrap/, 'bootstrap name must use the project placeholder');
   assert.match(tpl, /user-invocable: true/, 'bootstrap must remain user-invocable');
@@ -833,7 +855,7 @@ function reviewerBody(name, file) {
 }
 
 function wiredAfterValidate(name, promptFile) {
-  const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+  const text = skillText(name);
   assert.ok(text.includes(promptFile), `${name} SKILL must cite ${promptFile}`);
   const vIdx = text.indexOf('validate-hub.mjs');
   const rIdx = text.indexOf(promptFile);
@@ -846,7 +868,7 @@ test('brainstorm: gear-3 spec gate is a human review, not a subagent', () => {
   const dir = join(skillsDir, 'brainstorm');
   assert.ok(!existsSync(join(dir, 'spec-reviewer-prompt.md')),
     'the spec-reviewer subagent prompt must be retired');
-  const text = readFileSync(join(dir, 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   assert.doesNotMatch(text, /spec-reviewer-prompt\.md/, 'brainstorm must not dispatch a spec-reviewer subagent');
   const step7 = sectionBetween(text, '### Step 7', '### Step 8');
   assert.match(step7, /Gear 3 only/i, 'the spec human gate is gear-3 only');
@@ -856,7 +878,7 @@ test('brainstorm: gear-3 spec gate is a human review, not a subagent', () => {
 });
 
 test('brainstorm: Step 7 offers the drive-mode choice — manual default, autopilot launches the conductor', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const step7 = sectionBetween(text, '### Step 7', '### Step 8');
   assert.match(step7, /#### Drive mode \(gear 3, on approval\)/, 'Step 7 must carry a Drive mode subsection');
   assert.match(step7, /drive `manual` or\s*\n?\s*`autopilot`/i, 'Step 7 must ask the drive-mode question');
@@ -888,7 +910,7 @@ test('brainstorm: Step 7 offers the drive-mode choice — manual default, autopi
 });
 
 test('brainstorm: autopilot contracts default to safe logs, disclose exact capture, and hand off live artifacts without changing manual drive', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const step7 = sectionBetween(text, '### Step 7', '### Step 8');
   assert.match(step7, /log-mode:\s*safe/i, 'gear-3 autopilot contracts must write log-mode: safe by default');
   assert.match(step7, /explicitly requests? sensitive exact capture/i, 'exact logging must require an explicit sensitive-capture request');
@@ -905,7 +927,7 @@ test('brainstorm: autopilot contracts default to safe logs, disclose exact captu
 });
 
 test('brainstorm: finalized specs carry one allowed Feature complexity and the human gate validates it', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const step5 = sectionBetween(text, '### Step 5', '### Step 5.5');
   assert.match(
     step5,
@@ -921,7 +943,7 @@ test('brainstorm: finalized specs carry one allowed Feature complexity and the h
 });
 
 test('brainstorm: gear-2 specs carry the same machine contract as gear-3 specs', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const step5 = sectionBetween(text, '### Step 5', '### Step 5.5');
   assert.doesNotMatch(step5, /every new gear-3 spec/i, 'Step 5 must not scope the machine contract to gear 3: direct Gear-2 implement consumes it');
   assert.match(step5, /every new gear-2 and gear-3 spec/i, 'Step 5 must apply the machine contract to gear-2 specs');
@@ -935,7 +957,7 @@ test('plan: gear-3 plan gate is a human review, not a subagent', () => {
   const dir = join(skillsDir, 'plan');
   assert.ok(!existsSync(join(dir, 'plan-reviewer-prompt.md')),
     'the plan-reviewer subagent prompt must be retired');
-  const text = readFileSync(join(dir, 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   assert.doesNotMatch(text, /plan-reviewer-prompt\.md/, 'plan must not dispatch a plan-reviewer subagent');
   const step6 = sectionBetween(text, '### Step 6', '### Step 7');
   assert.match(step6, /Gear 3 only/i, 'the plan human gate is gear-3 only');
@@ -945,7 +967,7 @@ test('plan: gear-3 plan gate is a human review, not a subagent', () => {
 });
 
 test('plan: Step 6 gains autopilot branch — drive: autopilot → non-blocking checkpoint, append DONE to status file', () => {
-  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   const step6 = sectionBetween(text, '### Step 6', '### Step 7');
   assert.match(step6, /drive:\s*autopilot/i, 'Step 6 must mention drive: autopilot');
   assert.match(step6, /autopilot-status\.md/, 'Step 6 must reference autopilot-status.md');
@@ -963,7 +985,7 @@ test('plan: Step 6 gains autopilot branch — drive: autopilot → non-blocking 
 });
 
 test('plan: autopilot consumes its phase manifest first; manual discovery remains unchanged', () => {
-  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   const step0 = sectionBetween(text, '### Step 0', '### Ceremony');
   assert.match(step0, /conductor-supplied phase manifest/i, 'autopilot plan must name the conductor-supplied phase manifest');
   assert.match(step0, /read[\s\S]{0,80}manifest (?:first|before any other)/i, 'autopilot plan must read the manifest first');
@@ -994,7 +1016,7 @@ test('plan: autopilot consumes its phase manifest first; manual discovery remain
 });
 
 test('plan: each task is a self-contained spec-to-brief contract with every mandatory field', () => {
-  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   const step3 = sectionBetween(text, '### Step 3', '### Step 4');
   for (const field of [
     'Requirements and deliverables',
@@ -1019,7 +1041,7 @@ test('plan: each task is a self-contained spec-to-brief contract with every mand
 });
 
 test('brainstorm: canonical autopilot metadata and success-criteria grammar is explicit', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const step5 = sectionBetween(text, '### Step 5', '### Step 5.5');
   assert.match(step5, /## Success criteria/, 'brainstorm must require exactly one canonical success-criteria H2');
   assert.match(step5, /SC1/, 'brainstorm must assign stable criterion IDs');
@@ -1027,14 +1049,14 @@ test('brainstorm: canonical autopilot metadata and success-criteria grammar is e
 });
 
 test('plan: autopilot writes exactly the manifest-declared output while manual naming remains dated', () => {
-  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   const step4 = sectionBetween(text, '### Step 4', '### Step 4.5');
   assert.match(step4, /Autopilot[\s\S]*exactly[\s\S]*manifest[^.]*`outputs`/i);
   assert.match(step4, /Manual drive[\s\S]*YYYY-MM-DD-<topic>\.md/i);
 });
 
 test('plan: self-review gates completeness, binding, ordering, coverage, safe paths, and context independence', () => {
-  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   const step45 = sectionBetween(text, '### Step 4.5', '### Step 5');
   assert.match(step45, /every mandatory field/i, 'self-review must check every mandatory field');
   assert.match(step45, /known surface/i, 'self-review must validate a known surface');
@@ -1049,7 +1071,7 @@ test('plan: self-review gates completeness, binding, ordering, coverage, safe pa
 });
 
 test('plan: Step 4.5 checklist adds the discovery criterion without renumbering the first seven checks', () => {
-  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   const step45 = sectionBetween(text, '### Step 4.5', '### Step 5');
   assert.match(step45, /1\.\s+\*\*Every mandatory field\*\*/, 'checklist item 1 must stay Every mandatory field');
   assert.match(step45, /2\.\s+\*\*Binding consistency\*\*/, 'checklist item 2 must stay Binding consistency');
@@ -1065,7 +1087,7 @@ test('plan: Step 4.5 checklist adds the discovery criterion without renumbering 
 });
 
 test('review: autopilot manifest and manual capability inventories are authoritative and exclude transcripts', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   const step0 = sectionBetween(text, '### Step 0', '### Ceremony');
   assert.match(step0, /conductor-supplied phase manifest/i, 'autopilot review must name the conductor-supplied phase manifest');
   assert.match(step0, /read[\s\S]{0,80}manifest (?:first|before any other)/i, 'autopilot review must read the manifest first');
@@ -1160,13 +1182,13 @@ test('implement: autopilot resolves exact task standards from manifest routing e
   assert.match(protocol, /spec[^.]*`onDemand`[\s\S]{0,180}concrete (?:named )?(?:missing fact|insufficiency)/i,
     'implement may read the onDemand spec only for concrete insufficiency');
 
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   const step0 = sectionBetween(text, '### Step 0', '### Ceremony');
   assert.match(step0, /Manual\/no-manifest[\s\S]*accepted plan/i);
 });
 
 test('review: deterministic capture keeps verbatim evidence on disk behind a bounded receipt', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   assert.match(step2, /capture-review-evidence\.mjs/);
   assert.match(step2, /--evidence '<evidence-path>'[^\n]*--test-command '<exact surface test command>'/);
@@ -1225,7 +1247,7 @@ test('implement: ships a whole-branch final-review prompt', () => {
 });
 
 test('implement: wires implementer -> task review -> final review -> handoff, in order', () => {
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   const iImpl = text.indexOf('implementer-prompt.md');
   const iTask = text.indexOf('task-reviewer-prompt.md');
   const iFinal = text.indexOf('final-review-prompt.md');
@@ -1251,13 +1273,14 @@ test('shipped workflow handoffs use namespaced slash invocations', () => {
   ];
 
   for (const relativePath of shippedInstructionFiles) {
-    const text = readFileSync(join(root, relativePath), 'utf8');
+    const [area, name, file] = relativePath.split('/');
+    const text = area === 'skills' ? skillFile(name, file) : readFileSync(join(root, relativePath), 'utf8');
     assertNoBareWorkflowInvocations(text, relativePath);
   }
 });
 
 test('implement: gates commits, keeps the ledger under .apex/work/tasks/, runs sequentially', () => {
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   assert.match(text, /\.apex\/work\/tasks\//, 'SKILL must place the progress ledger under .apex/work/tasks/');
   assert.match(text, /commit/i, 'SKILL must address per-task commit authorization');
   assert.match(text, /sequential/i, 'SKILL must state sequential execution');
@@ -1266,7 +1289,7 @@ test('implement: gates commits, keeps the ledger under .apex/work/tasks/, runs s
 test('loop-engineer: valid gear-4 chain skill — frontmatter, Checklist, Step 0, both prompts wired', () => {
   const path = join(skillsDir, 'loop-engineer', 'SKILL.md');
   assert.ok(existsSync(path), 'loop-engineer/SKILL.md should exist');
-  const text = readFileSync(path, 'utf8');
+  const text = skillText('loop-engineer');
   const fmMatch = text.match(/^---\n([\s\S]*?)\n---/);
   assert.ok(fmMatch, 'loop-engineer should have YAML frontmatter');
   const fm = fmMatch[1];
@@ -1280,7 +1303,7 @@ test('loop-engineer: valid gear-4 chain skill — frontmatter, Checklist, Step 0
 });
 
 test('loop-engineer: Step 0 proceeds only on an exact complete ratified contract and otherwise refuses before autonomy', () => {
-  const text = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
+  const text = skillText('loop-engineer');
   const step0 = sectionBetween(text, '### Step 0 — Read the gear', '### Step 1');
   // existing locks kept green under the four-outcome rewrite
   assert.match(step0, /goal contract|goal\.md/, 'Step 0 must read the goal contract artifact');
@@ -1300,7 +1323,7 @@ test('loop-engineer: Step 0 proceeds only on an exact complete ratified contract
 });
 
 test('loop-engineer: Step 1 missing-field routes back to the Step 0 refusal', () => {
-  const text = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
+  const text = skillText('loop-engineer');
   const step1 = sectionBetween(text, '### Step 1', '### Step 2');
   assert.match(step1, /mandatory field/i, 'Step 1 must keep the mandatory-field list');
   assert.match(step1, /Step 0/, 'a missing mandatory field must route back to Step 0');
@@ -1309,7 +1332,7 @@ test('loop-engineer: Step 1 missing-field routes back to the Step 0 refusal', ()
 });
 
 test('loop-engineer: delegates the deterministic run to the packaged controller and emits its review capability', () => {
-  const text = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
+  const text = skillText('loop-engineer');
   assert.match(text, /node <engine-root>\/scripts\/loop-engineer\.mjs --repo-root \. --goal '<goal-path>' --harness '<active-harness>' --commit-authorized/);
   assert.match(text, /fresh[^]*omits `--resume` and `--ledger`/i);
   assert.match(text, /--resume --ledger '<loop-ledger-path>'/);
@@ -1324,7 +1347,7 @@ test('loop-engineer: delegates the deterministic run to the packaged controller 
 });
 
 test('loop-engineer: closes exact target routing, ordered standards, and concrete model tiers into the CLI boundary', () => {
-  const skill = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
+  const skill = skillText('loop-engineer');
   const step1 = sectionBetween(skill, '### Step 1', '### Step 2');
   const step2 = sectionBetween(skill, '### Step 2', '### Step 3');
   assert.match(step1, /exact routing row/i);
@@ -1347,7 +1370,7 @@ test('loop-engineer: closes exact target routing, ordered standards, and concret
 });
 
 test('loop-engineer: the skill authorizes and routes but never becomes the state controller', () => {
-  const text = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
+  const text = skillText('loop-engineer');
   const boundary = sectionBetween(text, '### Controller responsibility boundary', '### Step 0');
   for (const phrase of [
     'allocate attempts',
@@ -1402,7 +1425,7 @@ test('non-regression: the implementer status enum stays exactly DONE | DONE_WITH
   assert.match(implementerPrompt, /Allowed status values are\s*\n\s*DONE \| DONE_WITH_CONCERNS \| BLOCKED \| NEEDS_CONTEXT\./,
     'implementer-prompt.md must keep the exact enum sentence unchanged');
 
-  const implementSkill = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const implementSkill = skillText('implement');
   assert.match(implementSkill, /Implementer\/fix statuses are `DONE`,\s*\n`DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED`/,
     'implement/SKILL.md must keep the exact enum sentence unchanged');
 
@@ -1461,7 +1484,7 @@ Reviewers floor at **standard** and rise to **most-capable** when the artifact i
 Translate the tier to a concrete model by judgment at dispatch time using your harness's available models. The three tiers are the whole ladder — \`most-capable\` is its top rung, not an open-ended "best available". A model that sits above that rung is outside the ladder: never reach it from a tier, and record a one-line reason in the ledger when you override to it. On a harness without per-dispatch model choice, everything runs on the session model — record that in the ledger.`;
 
 function modelSection(name) {
-  const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+  const text = skillHead(name);
   const start = text.indexOf('## Model Selection');
   assert.ok(start !== -1, `${name} must contain a ## Model Selection section`);
   let rest = text.slice(start);
@@ -1481,11 +1504,11 @@ test('the five chain skills carry the canonical Model Selection block (with/with
 
 test('SC7: the whole-branch-review sentence is absent in brainstorm/plan/loop-engineer and present in implement/review', () => {
   for (const s of ['brainstorm', 'plan', 'loop-engineer']) {
-    const text = readFileSync(join(skillsDir, s, 'SKILL.md'), 'utf8');
+    const text = skillText(s);
     assert.ok(!text.includes(WHOLE_BRANCH_REVIEW_SENTENCE), `${s} must not carry the whole-branch-review sentence`);
   }
   for (const s of ['implement', 'review']) {
-    const text = readFileSync(join(skillsDir, s, 'SKILL.md'), 'utf8');
+    const text = skillText(s);
     assert.ok(text.includes(WHOLE_BRANCH_REVIEW_SENTENCE), `${s} must carry the whole-branch-review sentence`);
   }
 });
@@ -1497,7 +1520,7 @@ test('SC8: autopilot-protocol.md exists, is harness-neutral, and is named only u
   assert.doesNotMatch(protocol, /CLAUDE_/, 'autopilot-protocol.md must be free of CLAUDE_* references');
   assert.doesNotMatch(protocol, /\/Users\/|\/home\/|~\//, 'autopilot-protocol.md must be free of machine-specific absolute paths');
 
-  const skill = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const skill = skillText('implement');
   const offenders = [];
   for (const para of skill.split(/\n\n+/)) {
     if (para.includes('autopilot-protocol.md') && !/drive:\s*autopilot/i.test(para)) {
@@ -1680,7 +1703,7 @@ test('manual publication contract covers each exact resume capability and every 
     }
   }
   for (const name of ['brainstorm', 'plan', 'implement', 'review', 'loop-engineer']) {
-    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const text = skillText(name);
     assert.deepEqual(contractRows(text, '### Exact publication pairs'), expectedRoutes, name);
     assert.deepEqual(contractRows(text, '### Publication interruption prefixes'), expectedStates, name);
     const common = sectionBetween(text, '## Manual handoff envelope', '<!-- steepy:manual-handoff:v1:end -->');
@@ -1695,26 +1718,26 @@ test('manual publication contract covers each exact resume capability and every 
 
 test('phase-local entry and publication rules admit only verified exact-pair recovery', () => {
   for (const [name, role] of [['plan', 'output-plan'], ['implement', 'task-results'], ['review', 'review-report']]) {
-    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const text = skillText(name);
     const step0 = sectionBetween(text, '### Step 0', '### Ceremony');
     assert.ok(step0.includes(`onDemand.${role}`), `${name} resume explicitly binds its output`);
     assert.match(step0, /before[^]*fresh-only[^]*gate/i, name);
     assert.match(step0, /CONSUMED[^]*READY[^]*no-op/i, name);
     assert.match(step0, /READY[^]*READY[^]*finish-consumption/i, name);
   }
-  const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const review = skillText('review');
   const step4 = sectionBetween(review, '### Step 4', '### Step 5');
   assert.match(step4, /phase: review\nstatus: DRAFT\nnext: none\nsource: <task-result-index-path>\nconsumed-by: none/);
   assert.match(step4, /first[^]*report[^]*`status: READY`[^]*then[^]*index[^]*`status: CONSUMED`/i);
-  assert.doesNotMatch(readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8'), /Perform both edits together/i);
+  assert.doesNotMatch(skillText('plan'), /Perform both edits together/i);
   for (const name of ['plan', 'implement']) {
-    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const text = skillText(name);
     assert.match(text, /record[^]*approval[^]*verification[^]*before[^]*READY/i, name);
   }
 });
 
 test('fresh brainstorm derives coverage and ratifies every gear without historical work reads', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const step0 = sectionBetween(text, '### Step 0', '### Ceremony');
   assert.match(step0, /fresh entry[^]*human request[^]*stable[^]*repository/i);
   assert.match(step0, /no[^]*historical[^]*spec[^]*log[^]*verdict/i);
@@ -1814,7 +1837,7 @@ test('fresh brainstorm routing fixture selects registered custom/core paths and 
   readAllLeaves.modular.cases[0].readAllFallback = true;
   assert.throws(() => assertFreshBrainstormRoutingFixture(readAllLeaves));
 
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   const step1 = sectionBetween(text, '### Step 1 —', '### Step 1.5');
   assert.match(step1, /follow the exact standard links in the routing row/i);
   assert.match(step1, /every matching leaf in table order[^]*concrete reason/i);
@@ -1822,11 +1845,11 @@ test('fresh brainstorm routing fixture selects registered custom/core paths and 
 });
 
 test('publication preflight refuses existing unbound review output before collection and guards unconsumed links', () => {
-  const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const review = skillText('review');
   const step0 = sectionBetween(review, '### Step 0', '### Ceremony');
   assert.ok(/existing[^]*report[^]*without[^]*capability[^]*stop[^]*before[^]*collection/i.test(step0));
   for (const name of ['brainstorm', 'plan', 'implement', 'review', 'loop-engineer']) {
-    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const text = skillText(name);
     const common = sectionBetween(text, '## Manual handoff envelope', '<!-- steepy:manual-handoff:v1:end -->');
     assert.ok(/unconsumed input[^]*consumed-by: none/i.test(common), name);
   }
@@ -1835,14 +1858,14 @@ test('publication preflight refuses existing unbound review output before collec
 });
 
 test('terminal resume shortcuts retain gear and supporting-input provenance checks', () => {
-  const implement = sectionBetween(readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8'), '### Step 0', '### Ceremony');
+  const implement = sectionBetween(skillText('implement'), '### Step 0', '### Ceremony');
   assert.ok(/every resume[^]*gear[^]*phase[^]*next[^]*before[^]*terminal shortcut/i.test(implement));
-  const review = sectionBetween(readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8'), '### Step 0', '### Ceremony');
+  const review = sectionBetween(skillText('review'), '### Step 0', '### Ceremony');
   assert.ok(/every resume[^]*criteria[^]*branch.diff[^]*metadata[^]*content[^]*before[^]*terminal shortcut/i.test(review));
 });
 
 test('regular review derives release proposals only from criteria, compact index and diff', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   const step5 = sectionBetween(text, '### Step 5', '## Model Selection');
   assert.match(step5, /derive[^]*bump type[^]*criteria[^]*task-result index[^]*branch diff/i);
   assert.doesNotMatch(step5, /derive[^\n]*from the spec/i);
@@ -1893,7 +1916,7 @@ test('regular-review bump fixtures use only authorized inputs for major or human
   wrongBump.declaredAction = 'minor';
   assert.throws(() => assertRegularReviewBumpFixture(wrongBump));
 
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   const step5 = sectionBetween(text, '### Step 5', '## Model Selection');
   assert.match(step5, /breaking change[^]*`major`/i);
   assert.match(step5, /evidence is insufficient[^]*ask the human/i);
@@ -1904,11 +1927,11 @@ test('unplanned discovery has an explicit signal preserved through the compact t
   const prompt = readFileSync(join(skillsDir, 'implement', 'implementer-prompt.md'), 'utf8');
   assert.match(prompt, /discover[^]*DONE_WITH_CONCERNS[^]*discovery:unplanned/i);
   for (const file of ['SKILL.md', 'autopilot-protocol.md']) {
-    const text = readFileSync(join(skillsDir, 'implement', file), 'utf8');
+    const text = skillFile('implement', file);
     assert.match(text, /preserve[^]*discovery:unplanned[^]*task-result index/i, file);
     assert.match(text, /ordinary concerns[^]*not[^]*discovery/i, file);
   }
-  const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const review = skillText('review');
   const expected = [
     ['DONE_WITH_CONCERNS', 'discovery:unplanned', 'unplanned-discovery'],
     ['DONE_WITH_CONCERNS', 'other-or-none', 'ordinary-or-unattributed-concern'],
@@ -1926,7 +1949,7 @@ test('unplanned discovery has an explicit signal preserved through the compact t
 
 test('downstream plan and implement read only the accepted artifact gear at Step 0', () => {
   for (const s of ['plan', 'implement']) {
-    const text = readFileSync(join(skillsDir, s, 'SKILL.md'), 'utf8');
+    const text = skillText(s);
     assert.match(text, /### Step 0 — Read the gear/, `${s} must have a Step 0 gear-read step`);
     assert.match(text, /verdict artifact/i, `${s} Step 0 must reference the verdict artifact`);
     if (s === 'implement') assert.match(text, /accepted plan's contract metadata/i, 'implement takes gear from the accepted plan contract');
@@ -1943,7 +1966,7 @@ test('downstream plan and implement read only the accepted artifact gear at Step
 
 test('brainstorm, plan, implement: Step 0 bounces gear-4 work to the abstract loop-engineer skill, Ceremony declares it', () => {
   for (const s of ['brainstorm', 'plan', 'implement']) {
-    const text = readFileSync(join(skillsDir, s, 'SKILL.md'), 'utf8');
+    const text = skillText(s);
     const step0 = sectionBetween(text, '### Step 0', '### Ceremony');
     assert.match(
       step0,
@@ -1965,7 +1988,7 @@ test('brainstorm, plan, implement: Step 0 bounces gear-4 work to the abstract lo
 });
 
 test('review: Step 0/Ceremony accepts gear 4 — verifier re-run + loop ledger as evidence, alongside self-verify', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   const section = sectionBetween(text, '### Step 0', '### Step 1');
   assert.match(section, /Gear 4/, 'review must address gear 4 in Step 0/Ceremony');
   assert.match(section, /verifier/i, 'review gear-4 verification must re-run the verifier from the goal contract');
@@ -1974,7 +1997,7 @@ test('review: Step 0/Ceremony accepts gear 4 — verifier re-run + loop ledger a
 });
 
 test('review: Steps 1-2 wire Gear 4 through exact goal + ledger capabilities and verifier evidence', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   const step1 = sectionBetween(text, '### Step 1', '### Step 2');
   assert.match(step1, /accepted goal and loop-ledger paths/);
   assert.match(step1, /loop ledger is primary/i);
@@ -1999,7 +2022,7 @@ test('review: Steps 1-2 wire Gear 4 through exact goal + ledger capabilities and
 });
 
 test('review: manual entry is capability-bounded and fails closed without artifact discovery', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   const step0 = sectionBetween(text, '### Step 0', '### Ceremony');
   const step1 = sectionBetween(text, '### Step 1', '### Step 2');
   assert.match(step0, /manual handoff[^]*accepts exactly[^]*criteria[^]*task-results[^]*branch-diff/i);
@@ -2015,7 +2038,7 @@ test('review: manual entry is capability-bounded and fails closed without artifa
 });
 
 test('review: regular evidence and terminal lifecycle use exact current-run capabilities', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   const step4 = sectionBetween(text, '### Step 4', '### Step 5');
   assert.match(step2, /regular review[^]*`\.apex\/work\/tasks\/<plan-basename>\/evidence-report\.md`/i);
@@ -2031,7 +2054,7 @@ test('review: regular evidence and terminal lifecycle use exact current-run capa
 });
 
 test('loop-engineer: exact fresh/resume capabilities and lifecycle replace most-recent defaults', () => {
-  const text = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
+  const text = skillText('loop-engineer');
   const step0 = sectionBetween(text, '### Step 0', '### Step 1');
   assert.match(step0, /fresh[^]*required[^]*goal[^]*onDemand: none/i);
   assert.match(step0, /resume[^]*onDemand[^]*loop-ledger/i);
@@ -2052,7 +2075,7 @@ test('loop-engineer: exact fresh/resume capabilities and lifecycle replace most-
 });
 
 test('loop-engineer: Gear-4 handoff emits known native review invocation beside canonical envelope', () => {
-  const text = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
+  const text = skillText('loop-engineer');
   const step5 = sectionBetween(text, '### Step 5', '## Model Selection');
   assert.match(step5, /active harness[^]*native[^]*review invocation[^]*when known/i);
   assert.match(step5, /(?:unknown|unavailable)[\s\S]*do not[\s\S]*invent syntax/i);
@@ -2060,14 +2083,14 @@ test('loop-engineer: Gear-4 handoff emits known native review invocation beside 
 });
 
 test('review: terminal human handoff emits no subsequent skill invocation', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   const step4 = sectionBetween(text, '### Step 4', '### Step 5');
   assert.match(step4, /next: human[^]*required:\n\s+evidence: <review-report-path>\nonDemand: none/i);
   assert.match(step4, /emit no native skill invocation/i);
 });
 
 test('review: Gear-4 review validates provenance and consumes only after terminal evidence', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   assert.doesNotMatch(text, /default to the most recent/i);
   const step1 = sectionBetween(text, '### Step 1', '### Step 2');
   assert.match(step1, /loop ledger[^]*primary/i);
@@ -2080,7 +2103,7 @@ test('review: Gear-4 review validates provenance and consumes only after termina
 });
 
 test('review: Gear-4 terminal review judges each claimed outcome without calling negative completion success', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   const step4 = sectionBetween(text, '### Step 4', '### Step 5');
 
@@ -2096,7 +2119,7 @@ test('review: Gear-4 terminal review judges each claimed outcome without calling
 });
 
 test('review capture and loop prompts preserve bounded role-local access', () => {
-  const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const review = skillText('review');
   const step2 = sectionBetween(review, '### Step 2', '### Step 3');
   assert.match(step2, /Resolve the current output path from the accepted primary\s+artifact, never by directory discovery/i);
   assert.match(step2, /never fall back to a whole-file read/i);
@@ -2110,7 +2133,7 @@ test('review capture and loop prompts preserve bounded role-local access', () =>
 test('brainstorm, plan, implement, review: the inline-recompute branch ratifies the gear with the user (identical sentence)', () => {
   const ratificationSentences = [];
   for (const s of ['brainstorm', 'plan', 'implement', 'review']) {
-    const text = readFileSync(join(skillsDir, s, 'SKILL.md'), 'utf8');
+    const text = skillText(s);
     const step0 = sectionBetween(text, '### Step 0', '### Ceremony');
     assert.match(step0, /confirm/i, `${s} Step 0 inline-recompute branch must ask the user to confirm the recomputed gear`);
     assert.match(
@@ -2129,7 +2152,7 @@ test('brainstorm, plan, implement, review: the inline-recompute branch ratifies 
 });
 
 test('brainstorm: ceremony scales by gear, Step 7 human gate gated to gear 3', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
+  const text = skillText('brainstorm');
   assert.match(text, /Gear 1[\s\S]{0,300}produce NO spec/i, 'gear 1 must produce no spec');
   assert.match(text, /Gear 2[\s\S]{0,300}skip Step 7/i, 'gear 2 must skip Step 7');
   const step7 = sectionBetween(text, '### Step 7', '### Step 8');
@@ -2137,7 +2160,7 @@ test('brainstorm: ceremony scales by gear, Step 7 human gate gated to gear 3', (
 });
 
 test('plan: ceremony scales by gear, Step 6 human gate gated to gear 3', () => {
-  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const text = skillText('plan');
   assert.match(text, /Gear 1[\s\S]{0,300}no plan needed/i, 'gear 1 needs no plan');
   assert.match(text, /Gear 2[\s\S]{0,300}skip only the human\s+question in Step 6[\s\S]{0,160}shared lifecycle transition/i,
     'gear 2 must skip only the human question and still complete the shared lifecycle transition');
@@ -2146,7 +2169,7 @@ test('plan: ceremony scales by gear, Step 6 human gate gated to gear 3', () => {
 });
 
 test('implement: ceremony scales by gear, task + whole-branch reviewers gated to gear 3, refuses gear-3 entry with no upstream artifact', () => {
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   assert.match(text, /Gear 1[\s\S]{0,300}not an implement entry/i, 'gear 1 is not an implement entry point');
   assert.match(text, /Gear 2[\s\S]{0,400}skip the\s+Step 3\.4 task reviewer and the Step 4 whole-branch review/i,
     'gear 2 must skip both the Step 3.4 task reviewer and the Step 4 whole-branch review');
@@ -2159,7 +2182,7 @@ test('implement: ceremony scales by gear, task + whole-branch reviewers gated to
 });
 
 test('implement: task-reviewer is conditional on non-mechanical tasks, final review always', () => {
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   const step3 = sectionBetween(text, '### Step 3', '### Step 4');
   assert.match(step3, /mechanical|transcription/i, 'per-task review must be skippable for mechanical tasks');
   assert.match(step3, /judgement|judgment/i, 'per-task review runs for tasks that carry judgement');
@@ -2168,7 +2191,7 @@ test('implement: task-reviewer is conditional on non-mechanical tasks, final rev
 });
 
 test('implement: Step 3 derives dispatch tier + skip-reviewer from plan Complexity, ledger records model/review/escalation', () => {
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   const step3 = sectionBetween(text, '### Step 3', '### Step 4');
 
   // 1. dispatch tier derived from the plan's Complexity line
@@ -2231,7 +2254,7 @@ test('implement: Step 3 derives dispatch tier + skip-reviewer from plan Complexi
 });
 
 test('implement: gains an autopilot branch — Step 0 note, Step 2 Autopilot paragraph (drive/commit-auth/BLOCKED), Step 5 appends DONE to status file', () => {
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   const protocol = readFileSync(join(skillsDir, 'implement', 'autopilot-protocol.md'), 'utf8');
 
   assert.match(protocol, /drive:\s*autopilot/i, 'autopilot-protocol.md must mention drive: autopilot');
@@ -2251,7 +2274,7 @@ test('autopilot phase skills: status markers preserve the four-field protocol an
   for (const [name, terminal] of [['plan', 'DONE'], ['implement', 'DONE'], ['review', 'READY_FOR_PR']]) {
     const text = name === 'implement'
       ? readFileSync(join(skillsDir, 'implement', 'autopilot-protocol.md'), 'utf8')
-      : readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+      : skillText(name);
     assert.match(text, /phasePrompt[\s\S]{0,220}authoritative/i, `${name} must treat phasePrompt identity as authoritative`);
     assert.match(text, /do not derive[\s\S]{0,100}(?:filename|filenames)/i, `${name} must not derive identity from filenames`);
     assert.match(text, /do not invent/i, `${name} must not invent correlation identity`);
@@ -2263,7 +2286,7 @@ test('autopilot phase skills: status markers preserve the four-field protocol an
 });
 
 test('implement: has a pre-flight input-conflict scan before the per-task loop', () => {
-  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  const text = skillText('implement');
   assert.match(text, /### Step 2\.5 — Pre-flight input scan/, 'must add a Step 2.5 pre-flight scan');
   const step25 = sectionBetween(text, '### Step 2.5', '### Step 3');
   assert.match(step25, /one batched question|batch/i, 'pre-flight conflicts must be batched into one question');
@@ -2275,7 +2298,7 @@ test('implement: has a pre-flight input-conflict scan before the per-task loop',
 });
 
 test('review: ceremony self-verifies across all gears, no Step 3b subagent', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
   assert.doesNotMatch(text, /### Step 3b/, 'the Step 3b evidence-reviewer sub-step must be removed');
   const ceremony = sectionBetween(text, '### Ceremony by gear', '### Step 1');
   assert.match(ceremony, /All gears/i, 'ceremony must self-verify across all gears');
@@ -2283,7 +2306,7 @@ test('review: ceremony self-verifies across all gears, no Step 3b subagent', () 
 });
 
 test('review: inline evidence capture and in-session judgement are locked across the protocol', () => {
-  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const text = skillText('review');
 
   const checklist = sectionBetween(text, '## Checklist', '## Procedure');
   assert.match(checklist, /Run `capture-review-evidence\.mjs` once/i);
@@ -2305,7 +2328,7 @@ test('review: inline evidence capture and in-session judgement are locked across
 
 test('standalone skills (init, check, new-surface, discovery) are harness-neutral — Engine-root block, no Claude-only slash/env syntax', () => {
   for (const name of ['init', 'check', 'new-surface', 'discovery']) {
-    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const text = skillText(name);
     const engineRootBlock =
       `> **Engine root:** this skill's base directory is \`<engine-root>/skills/${name}/\`; engine\n` +
       `> scripts live two levels up, at \`<engine-root>/scripts/\`. Resolve them relative to the base\n` +
@@ -2318,7 +2341,7 @@ test('standalone skills (init, check, new-surface, discovery) are harness-neutra
 
 test('init and new-surface stay marker-free; loop-engineer owns workflow lifecycle headers', () => {
   for (const name of ['init', 'new-surface', 'loop-engineer']) {
-    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const text = skillText(name);
     const core = text.replace(/<!-- steepy:manual-handoff:v1:start -->[\s\S]*?<!-- steepy:manual-handoff:v1:end -->\n*/u, '');
     assert.doesNotMatch(text, /CLAUDE_[A-Z0-9_]*/u, `${name} must not use Claude environment variables`);
     assert.doesNotMatch(text, /\/steepy(?:-apex)?:/u, `${name} must use semantic skill names`);
@@ -2328,7 +2351,7 @@ test('init and new-surface stay marker-free; loop-engineer owns workflow lifecyc
 });
 
 test('new-surface uses the full active Project planner and keeps unbound preparation explicit', () => {
-  const text = readFileSync(join(skillsDir, 'new-surface', 'SKILL.md'), 'utf8');
+  const text = skillText('new-surface');
   assert.match(text, /project-scaffold\.mjs/, 'new-surface must name the common project planner');
   assert.match(text, /active-v1[^]*real Project identity[^]*full Project model/iu);
   assert.match(text, /--resolution <id=choice>/u);
@@ -2353,7 +2376,7 @@ test('new-surface uses the full active Project planner and keeps unbound prepara
 });
 
 test('loop-engineer keeps bootstrap navigation separate from goal authorization', () => {
-  const text = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
+  const text = skillText('loop-engineer');
   const step0 = sectionBetween(text, '### Step 0 — Read the gear', '### Step 1');
   assert.match(step0, /generated project bootstrap[^.]*root\/index navigation and semantic-skill routing only/i);
   assert.match(step0, /goal\.md[^]*absent[^]*refuse before any iteration, branch mutation, or commit question/i);
@@ -2368,7 +2391,7 @@ test('on-demand linter skills invoke validate-hub with an explicit `.` cwd argum
   // its siblings and not silently dependent on whatever process.cwd() happens to be.
   const linterSkills = ['new-surface', 'check', 'plan', 'review', 'brainstorm'];
   for (const name of linterSkills) {
-    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const text = skillText(name);
     assert.match(
       text,
       /validate-hub\.mjs"?[ \t]+\./,
@@ -2378,8 +2401,8 @@ test('on-demand linter skills invoke validate-hub with an explicit `.` cwd argum
 });
 
 test('terminal review, not the loop controller, owns the mandatory hub coherence gate', () => {
-  const loop = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
-  const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const loop = skillText('loop-engineer');
+  const review = skillText('review');
   const standard = readFileSync(join(root, '.apex', 'standards', 'skills.md'), 'utf8');
   const controllerBoundary = sectionBetween(loop, '### Controller responsibility boundary', '### Step 0');
   const reviewEvidence = sectionBetween(review, '### Step 2', '### Step 3');
@@ -2390,7 +2413,7 @@ test('terminal review, not the loop controller, owns the mandatory hub coherence
 });
 
 test('check: reports model-mapping freshness verdicts after the validate-hub steps, never blocking on UNKNOWN', () => {
-  const text = readFileSync(join(skillsDir, 'check', 'SKILL.md'), 'utf8');
+  const text = skillText('check');
   assert.ok(
     text.includes('node <engine-root>/scripts/verify-model-mappings.mjs'),
     'check must run the freshness verifier through the engine-root path'
@@ -2497,7 +2520,7 @@ test('all five chain skills declare session-per-phase discipline: entry declarat
   };
 
   for (const s of ['brainstorm', 'plan', 'implement', 'review', 'loop-engineer']) {
-    const text = readFileSync(join(skillsDir, s, 'SKILL.md'), 'utf8');
+    const text = skillText(s);
 
     // (b) In ingresso — Step 0 declares whether this session already ran another chain phase,
     // and names the cost when it did. Declares, never blocks. Anchored to Step 0 alone (not the
@@ -2537,9 +2560,9 @@ test('reviewer recovery ships only the v2 schema and has no response-only correc
   const schema = JSON.parse(readFileSync(join(skillsDir, 'implement/reviewer-response-v2.schema.json'), 'utf8'));
   assert.equal(schema.additionalProperties, false);
   assert.deepEqual(schema.required, ['status', 'artifact', 'signals']);
-  for (const file of ['SKILL.md', 'autopilot-protocol.md']) assert.match(readFileSync(join(skillsDir, 'implement', file), 'utf8'), /reviewer-recovery\.md/);
+  for (const file of ['SKILL.md', 'autopilot-protocol.md']) assert.match(skillFile('implement', file), /reviewer-recovery\.md/);
   for (const file of ['task-reviewer-prompt.md', 'final-review-prompt.md']) {
-    const prompt = readFileSync(join(skillsDir, 'implement', file), 'utf8');
+    const prompt = skillFile('implement', file);
     assert.doesNotMatch(prompt, /changed-paths: <comma/);
     assert.match(prompt, /artifacts is required and excluded from `changed-paths`/);
   }
@@ -2570,7 +2593,7 @@ test('receipt protocol selects semantic transport and records exact restart capa
 
 test('autopilot prompts specify only status, artifact, signals; manual drive keeps four fields', () => {
   for (const file of ['SKILL.md', 'implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md']) {
-    const text = readFileSync(join(skillsDir, 'implement', file), 'utf8');
+    const text = skillFile('implement', file);
     assert.match(text, /status[^]*artifact[^]*signals/);
     assert.match(text, /changed-paths:/, 'manual-drive grammar remains documented');
     assert.doesNotMatch(text, /legacy/i, file);
@@ -2591,15 +2614,15 @@ test('autopilot prompts specify only status, artifact, signals; manual drive kee
 // four-field example in a mixed file is labelled as the manual-drive grammar.
 test('autopilot sections carry no four-field example and mixed files label manual four-field examples', () => {
   for (const file of ['reviewer-recovery.md', 'task-results-protocol.md', 'autopilot-protocol.md']) {
-    const text = readFileSync(join(skillsDir, 'implement', file), 'utf8');
+    const text = skillFile('implement', file);
     assert.doesNotMatch(text, /^\s*changed-paths: /m, file);
     assert.doesNotMatch(text, /legacy|protocol 1/i, file);
   }
-  const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const review = skillText('review');
   assert.doesNotMatch(sectionBetween(review, '**Autopilot preflight:**', '**Manual/no-manifest:**'), /legacy|protocol 1/i);
   const field = /^\s*(?:status|artifact|changed-paths|signals): /;
   for (const file of ['SKILL.md', 'implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md']) {
-    const lines = readFileSync(join(skillsDir, 'implement', file), 'utf8').split('\n');
+    const lines = skillFile('implement', file).split('\n');
     const fourField = [], threeField = [];
     lines.forEach((line, i) => {
       if (!/^\s*status: /.test(line)) return;

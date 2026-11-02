@@ -3,14 +3,17 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { skillText, stepFiles } from './support/skills.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const skillsDir = join(root, 'skills');
 const promptPath = join(skillsDir, 'discovery', 'explore-surface-prompt.md');
 const skillPath = join(skillsDir, 'discovery', 'SKILL.md');
-const initSkillPath = join(skillsDir, 'init', 'SKILL.md');
+const surfaceLoopPath = join(skillsDir, 'discovery', 'surface-loop.md');
+const initFinishPath = join(skillsDir, 'init', 'finish.md');
 const implementSkillPath = join(skillsDir, 'implement', 'SKILL.md');
+const implementEntryPath = join(skillsDir, 'implement', 'entry.md');
 const readmePath = join(root, 'README.md');
 const skillsStandardPath = join(root, '.apex', 'standards', 'skills.md');
 
@@ -79,7 +82,7 @@ test('discovery: explorer completion is self-contained, with counts in the repor
   assert.match(text, /item counts per area[^]*report/i);
   assert.match(text, /\*\*Current standard docs:\*\* \[STANDARD_PATHS\]/);
   assert.match(text, /\*\*Glossary:\*\* \[GLOSSARY_PATH\]/);
-  const skill = readFileSync(skillPath, 'utf8');
+  const skill = skillText('discovery');
   assert.match(skill, /explore-surface-prompt\.md[^]*Output Format/i);
   assert.match(skill, /\[STANDARD_PATHS\][^]*\[GLOSSARY_PATH\]/);
   assert.match(skill, /BLOCKED[^]*report[^]*stop[^]*interview/i);
@@ -88,21 +91,22 @@ test('discovery: explorer completion is self-contained, with counts in the repor
 test('changed cross-skill contract references resolve named headings and reject stale anchors', () => {
   const references = [
     {
-      sourcePath: skillPath,
+      sourcePath: surfaceLoopPath,
       targetPath: promptPath,
       targetLabel: 'skills/discovery/explore-surface-prompt.md',
       heading: 'Output Format',
     },
     {
-      sourcePath: implementSkillPath,
-      targetPath: initSkillPath,
-      targetLabel: 'skills/init/SKILL.md',
+      sourcePath: implementEntryPath,
+      targetPath: initFinishPath,
+      targetLabel: 'skills/init/finish.md',
       heading: 'Step 4 — Complete the governed hub',
     },
   ];
   for (const reference of references) assertNamedHeadingReference(reference);
 
-  for (const path of [skillPath, promptPath, implementSkillPath]) {
+  const discoveryFiles = stepFiles('discovery').map((file) => join(skillsDir, 'discovery', file));
+  for (const path of [skillPath, ...discoveryFiles, promptPath, implementSkillPath, implementEntryPath]) {
     assert.doesNotMatch(
       readFileSync(path, 'utf8'),
       /(?:skills\/)?[^\s`]+\.md:\d+(?:-\d+)?/,
@@ -130,7 +134,7 @@ test('discovery: explore-surface-prompt.md turns findings into item cards with t
 
 test('discovery: SKILL.md exists with frontmatter name: discovery and user-invocable: true', () => {
   assert.ok(existsSync(skillPath), 'skills/discovery/SKILL.md should exist');
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const fmMatch = text.match(/^---\n([\s\S]*?)\n---/);
   assert.ok(fmMatch, 'discovery SKILL.md should have YAML frontmatter');
   assert.match(fmMatch[1], /name:\s*discovery\b/, 'frontmatter name must be discovery');
@@ -138,7 +142,7 @@ test('discovery: SKILL.md exists with frontmatter name: discovery and user-invoc
 });
 
 test('discovery: SKILL.md states the precondition — hub absent → run the abstract init skill and stop', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   assert.match(text, /the `init` skill/, 'must point the user at the init skill by abstract name');
   assert.doesNotMatch(text, /\/steepy-apex:/, 'must not use a Claude-only namespaced slash invocation');
   assert.match(text, /absent/i, 'must name the absent-hub precondition');
@@ -146,7 +150,7 @@ test('discovery: SKILL.md states the precondition — hub absent → run the abs
 });
 
 test('discovery: SKILL.md has a run-scoping step (surface + cross-cutting docs)', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const step1 = sectionBetween(text, '### Step 1', '### Step 2');
   assert.match(step1, /scope/i, 'run-scoping step must use the word "scope"');
   assert.match(step1, /surface/i, 'run-scoping step must reference surface(s)');
@@ -158,7 +162,7 @@ test('discovery: SKILL.md has a run-scoping step (surface + cross-cutting docs)'
 });
 
 test('discovery: SKILL.md names the full area taxonomy — Scope, Conventions, Anti-patterns, Testing', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   assert.match(text, /\bScope\b/, 'must name Scope as a taxonomy area');
   assert.match(text, /\bConventions\b/, 'must name Conventions as a taxonomy area');
   assert.match(text, /\bAnti-patterns\b/, 'must name Anti-patterns as a taxonomy area');
@@ -166,63 +170,63 @@ test('discovery: SKILL.md names the full area taxonomy — Scope, Conventions, A
 });
 
 test('discovery: SKILL.md describes the seeded interview — accept / correct / skip', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   assert.match(text, /accept/i, 'seeded interview must describe accepting an item');
   assert.match(text, /correct/i, 'seeded interview must describe correcting an item');
   assert.match(text, /skip/i, 'seeded interview must describe skipping an item');
 });
 
 test('discovery: SKILL.md has an emergent-area re-ask before drafting', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   assert.match(text, /emergent|new area(s)?/i, 'must name the emergent/new-area case');
   assert.match(text, /ask/i, 'must ask the user before folding an emergent area in');
 });
 
 test('discovery: SKILL.md carries additive + diff-gated write-back language', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const additiveDiffGated = /diff-gated/i.test(text)
     || (/additive/i.test(text) && /(never overwrite|never clobber)/i.test(text));
   assert.ok(additiveDiffGated, 'must state the write-back is diff-gated, or additive + never overwrite/clobber');
 });
 
 test('discovery: SKILL.md dispatches explore-surface-prompt.md and sets model: explicitly near the dispatch', () => {
-  const text = readFileSync(skillPath, 'utf8');
-  const idx = text.indexOf('explore-surface-prompt.md');
+  const text = skillText('discovery');
+  const idx = text.indexOf('explore-surface-prompt.md', text.indexOf('### Step 2'));
   assert.ok(idx !== -1, 'must dispatch skills/discovery/explore-surface-prompt.md');
   const window = text.slice(idx, idx + 700);
   assert.match(window, /model:\s*(cheap|standard|most-capable)\b/, 'must set an explicit model tier near the dispatch');
 });
 
 test('discovery: SKILL.md states the discovered-doc linking rule', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   assert.match(text, /relative/i, 'linking rule must require a relative path');
   assert.match(text, /(exist|resolve)/i, 'linking rule must require the target to exist/resolve');
   assert.match(text, /never link into `?\.apex\/work/i, 'linking rule must forbid linking into .apex/work');
 });
 
 test('discovery: SKILL.md runs validate-hub.mjs with an explicit "." argument', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   assert.match(text, /validate-hub\.mjs"?[ \t]+\./, 'must invoke validate-hub.mjs with an explicit \'.\' argument');
 });
 
 test('discovery: SKILL.md namespaces every shipped workflow slash invocation', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   assertNoBareWorkflowInvocations(text, 'skills/discovery/SKILL.md');
 });
 
 test('discovery: SKILL.md states it dispatches no reviewer subagent', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   assert.match(text, /no reviewer subagent|no subagent reviewer/i, 'must state no reviewer subagent is dispatched');
 });
 
 test('discovery: SKILL.md is standalone — no chain Step 0 gear-read heading, no verdict-artifact phrase', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   assert.doesNotMatch(text, /### Step 0 — Read the gear/, 'must not copy the chain skills\' gear-read Step 0');
   assert.doesNotMatch(text, /verdict artifact/i, 'must not reference a verdict artifact (chain-only concept)');
 });
 
 test('discovery: init SKILL.md Step 5 points the user at the abstract discovery skill to populate empty docs', () => {
-  const text = readFileSync(initSkillPath, 'utf8');
+  const text = skillText('init');
   const step5 = sectionBetween(text, '### Step 5', undefined);
   assert.match(step5, /the `discovery` skill/, 'Step 5 must point the user at the discovery skill by abstract name');
   assert.doesNotMatch(step5, /\/steepy-apex:/, 'Step 5 must not use a Claude-only namespaced slash invocation');
@@ -241,7 +245,7 @@ test('discovery: skills standard Scope registers discovery', () => {
 });
 
 test('discovery: SKILL.md Step 2.2 passes [REPORT_FILE] and the interviewer reads the report from file', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   assert.match(text, /\[REPORT_FILE\]/, 'must name the [REPORT_FILE] dispatch parameter');
   assert.match(
     text,
@@ -251,7 +255,7 @@ test('discovery: SKILL.md Step 2.2 passes [REPORT_FILE] and the interviewer read
 });
 
 test('discovery: SKILL.md Step 2.4 imposes a write-back preview with an explicit destination before acceptance', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   assert.match(step2, /preview/i, 'must name the write-back preview');
   assert.match(
@@ -262,13 +266,13 @@ test('discovery: SKILL.md Step 2.4 imposes a write-back preview with an explicit
 });
 
 test('discovery: SKILL.md Step 2.4 forbids bare-ID options and requires printing the full card before acceptance prompts', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   assert.match(step2, /bare ID|T1,\s*T2/i, 'must forbid bare-ID (T1, T2, …) options in the acceptance prompt');
 });
 
 test('discovery: SKILL.md Step 2.4 asks in harness-neutral prose — one question, numbered options, recommendation (D3)', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   // Flatten hard-wrapped prose so the lock pins the verbatim wording, not the wrap points.
   const flat = step2.replace(/\s+/g, ' ');
@@ -281,7 +285,7 @@ test('discovery: SKILL.md Step 2.4 asks in harness-neutral prose — one questio
 });
 
 test('discovery: SKILL.md Step 2.2 dispatch is harness-conditional with an inline fallback (D1)', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   const flat = step2.replace(/\s+/g, ' ');
   assert.match(
@@ -304,7 +308,7 @@ test('discovery: explore-surface-prompt.md names the split proposal and both tri
 });
 
 test('discovery: SKILL.md Step 2.4 requires the complete-structure preview for a split proposal', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const step24 = sectionBetween(text, '4. **Seeded interview.**', '5. **Write-back.**');
   assert.match(step24, /split proposal/i, 'must name the split proposal case');
   assert.match(step24, /core/i, 'must require the core doc in the preview');
@@ -312,14 +316,14 @@ test('discovery: SKILL.md Step 2.4 requires the complete-structure preview for a
 });
 
 test('discovery: SKILL.md Step 2.5 lists the split write-back moves', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const step25 = sectionBetween(text, '5. **Write-back.**', '### Step 3');
   assert.match(step25, /removes `?standards\/<surface>\.md`?/i, 'must state removal of the single old standard file');
   assert.match(step25, /routing row/i, 'must state the routing-row update in _INDEX.md');
 });
 
 test('discovery: SKILL.md Step 0 recognizes the modular folder form from the routing-table link', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const step0 = sectionBetween(text, '### Step 0', '### Step 1');
   assert.match(step0, /subfolder/i, 'must recognize a modular surface from a link inside a standards/ subfolder');
   assert.match(step0, /core/i, 'must name the link target as the surface core');
@@ -327,7 +331,7 @@ test('discovery: SKILL.md Step 0 recognizes the modular folder form from the rou
 });
 
 test('discovery: SKILL.md routes modular-surface items via the core mini-routing table', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   assert.match(step2, /mini-routing/i, 'must route modular write-backs by the mini-routing table');
   assert.match(step2, /leaf/i, 'must name the leaf as a write-back destination');
@@ -373,7 +377,7 @@ function flat(text) {
 }
 
 test('discovery inception source (SC11): Step 1 offers only a v2 complete candidate without body reads', () => {
-  const step1 = flat(sectionBetween(readFileSync(skillPath, 'utf8'), '### Step 1', '### Step 2'));
+  const step1 = flat(sectionBetween(skillText('discovery'), '### Step 1', '### Step 2'));
   assert.match(step1, /`schema` is `steepy-inception-run\/v2`.*`status` is `complete`/);
   assert.match(step1, /offer the \*\*inception source\*\*/);
   assert.match(step1, /Read only that one file.*never list `\.apex\/inception\/`/);
@@ -386,7 +390,7 @@ test('discovery inception source (SC11): Step 1 offers only a v2 complete candid
 });
 
 test('discovery inception source (SC11): Step 2a sits between Step 2 and Step 3 and runs only on the user\'s choice', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const step2 = text.indexOf('### Step 2 — Per-surface iterative loop');
   const step2a = text.indexOf(STEP_2A);
   const step3 = text.indexOf('### Step 3 — Coherence gate');
@@ -399,7 +403,7 @@ test('discovery inception source (SC11): Step 2a sits between Step 2 and Step 3 
 });
 
 test('discovery inception source (SC11): complete gate precedes source body reads and failures stop only the source', () => {
-  const raw = sectionBetween(readFileSync(skillPath, 'utf8'), STEP_2A, '### Step 3');
+  const raw = sectionBetween(skillText('discovery'), STEP_2A, '### Step 3');
   const section = flat(raw);
   const gate = raw.indexOf('node <engine-root>/scripts/inception-state.mjs verify-complete --repo-root .');
   const read = raw.indexOf('Only after');
@@ -415,7 +419,7 @@ test('discovery inception source (SC11): complete gate precedes source body read
 });
 
 test('discovery inception source (SC11): Step 2a passes exactly the verified returned inputPaths as [INPUT_PATHS] with an explicit model:', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const raw = sectionBetween(text, STEP_2A, '### Step 3');
   const section = flat(raw);
   assert.match(section, /`\[REPORT_FILE\] = \.apex\/work\/discovery\/YYYY-MM-DD-inception\.md`/);
@@ -439,7 +443,7 @@ test('discovery inception source (SC11): Step 2a passes exactly the verified ret
 });
 
 test('discovery inception source (SC11): the surface flow text is otherwise unchanged', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const step0 = sectionBetween(text, '### Step 0', '### Step 1');
   assert.match(
     flat(step0),
@@ -447,14 +451,15 @@ test('discovery inception source (SC11): the surface flow text is otherwise unch
     'Step 0 must keep its absent-hub stop',
   );
   assert.doesNotMatch(step0, /inception/i, 'Step 0 must not change for the inception source');
-  const surfaceLoop = sectionBetween(text, '### Step 2 — Per-surface iterative loop', '### Step 2a');
+  const surfaceLoop = sectionBetween(readFileSync(surfaceLoopPath, 'utf8'), '### Step 2 — Per-surface iterative loop');
   assert.doesNotMatch(surfaceLoop, /inception/i, 'the per-surface loop must not change for the inception source');
   assert.match(
     flat(surfaceLoop),
     /If your harness provides a task\/subagent tool, dispatch a fresh subagent per surface using `skills\/discovery\/explore-surface-prompt\.md`; otherwise perform the exploration inline in a dedicated pass over the same inputs, and state the inline degradation in the run's report \(Step 4\)\. When you dispatch, always set `model: standard` explicitly/,
     'Step 2 must keep its explorer dispatch',
   );
-  const firstSurfacePrompt = text.indexOf('explore-surface-prompt.md');
+  // The head's Model Selection names the prompt too; the first procedure mention must sit in Step 2.2.
+  const firstSurfacePrompt = text.indexOf('explore-surface-prompt.md', text.indexOf('### Step 0'));
   assert.ok(
     firstSurfacePrompt > text.indexOf('### Step 2 — Per-surface iterative loop') && firstSurfacePrompt < text.indexOf(STEP_2A),
     'the first mention of explore-surface-prompt.md must stay in Step 2.2',
@@ -462,7 +467,7 @@ test('discovery inception source (SC11): the surface flow text is otherwise unch
 });
 
 test('discovery inception source (SC12): Step 2a walks the decision register, one card per DR-n, under the Step 2.4 interview', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const section = flat(sectionBetween(text, STEP_2A, '### Step 3'));
   assert.match(section, /one item card per `DR-n`/);
   assert.match(section, /Proposed doc text/);
@@ -476,7 +481,7 @@ test('discovery inception source (SC12): Step 2a walks the decision register, on
 });
 
 test('discovery inception source (SC12): Step 2a states the three promotion rules', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const section = flat(sectionBetween(text, STEP_2A, '### Step 3'));
   assert.match(section, /Approved and verified \(`verified`\) → may be written as an existing component or rule\./);
   assert.match(
@@ -490,7 +495,7 @@ test('discovery inception source (SC12): Step 2a states the three promotion rule
 });
 
 test('discovery inception source (SC12): write-back goes only to conventions.md, routed standards, and glossary.md and never names the area', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const section = flat(sectionBetween(text, STEP_2A, '### Step 3'));
   assert.match(
     section,
@@ -500,7 +505,7 @@ test('discovery inception source (SC12): write-back goes only to conventions.md,
 });
 
 test('discovery inception source (SC12): every decision ends accepted or rejected with a reason under ## Decision outcomes', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const section = flat(sectionBetween(text, STEP_2A, '### Step 3'));
   assert.match(section, /Every register decision ends accepted \(written\) or rejected with a reason\./);
   assert.match(
@@ -520,7 +525,7 @@ test('discovery inception source (SC12): every decision ends accepted or rejecte
 });
 
 test('discovery inception source (SC12): Model Selection covers the inception explorer', () => {
-  const text = readFileSync(skillPath, 'utf8');
+  const text = skillText('discovery');
   const model = flat(sectionBetween(text, '## Model Selection'));
   assert.match(
     model,
@@ -581,7 +586,7 @@ test('discovery inception source (SC12): explore-inception-prompt.md returns onl
   assert.match(text, /status: <DONE\|BLOCKED>\n\s+artifact: \[REPORT_FILE\]\n\s+changed-paths: none\n\s+signals: <short IDs or none>/);
   assert.match(text, /≤\s*15/, 'must impose a terse ≤15-line return');
   assertNamedHeadingReference({
-    sourcePath: skillPath,
+    sourcePath: join(skillsDir, 'discovery', 'inception-source.md'),
     targetPath: inceptionPromptPath,
     targetLabel: 'skills/discovery/explore-inception-prompt.md',
     heading: 'Output Format',

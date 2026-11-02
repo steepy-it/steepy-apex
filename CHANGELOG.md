@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.3.0 (2026-11-02)
+
+- Long skills survive context compaction. Every `SKILL.md` now stays under 12,000 bytes and holds
+  what must hold for the whole run: purpose, standing rules, checklist, a step map, and Model
+  Selection. The step detail of `inception`, `implement`, `review`, `brainstorm`, `plan`, `init`,
+  `loop-engineer` and `discovery` moved unchanged into step files next to each skill, read in full
+  at the step that needs them and re-read after a compaction instead of followed from a summary.
+- The five chain skills carry the manual-handoff block as an identical `manual-handoff.md`.
+- `implement` caps a review-fix loop that stops converging: three fix rounds at the task's tier,
+  two more one tier up when one is left, then the loop stops and hands the open issues to the
+  user (in autopilot it records `BLOCKED`). Rounds are counted from the ledger, so the count
+  survives a compaction, and only the user restarts a stopped loop.
+- `inception` keeps its "persist a unit before any work" rule in its `SKILL.md`.
+- New test `tests/skill-layout.test.mjs` fails when a `SKILL.md` exceeds the ceiling, a step
+  file is missing, or a Markdown file in a skill directory is not reachable from its `SKILL.md`.
+
 ## v1.2.1 (2026-10-26)
 
 - The README presents inception: it is listed under "What it does" and in the documentation

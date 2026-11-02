@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { skillText } from './support/skills.mjs';
 import { scaffold } from '../scripts/new-surface.mjs';
 import { renderTemplate } from '../scripts/template.mjs';
 import { collectViolations } from '../scripts/validate-hub.mjs';
@@ -11,7 +12,7 @@ import { collectViolations } from '../scripts/validate-hub.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const templates = join(root, 'templates');
-const skill = () => readFileSync(join(root, 'skills', 'init', 'SKILL.md'), 'utf8');
+const skill = () => skillText('init');
 
 function jsonBlockAfter(text, heading) {
   const start = text.indexOf(heading);
@@ -51,7 +52,7 @@ test('repair mode adds the version stamp only when an existing hub lacks it', ()
 });
 
 test('init creates a gitignored .apex/work area and never registers specs/plans sub-indexes', () => {
-  const text = readFileSync(join(root, 'skills', 'init', 'SKILL.md'), 'utf8');
+  const text = skillText('init');
   assert.match(text, /\.apex\/work\/\.gitignore/);
   assert.match(text, /\*\n!\.gitignore/);
   assert.match(text, /\.apex\/work\/specs\//);

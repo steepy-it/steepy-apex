@@ -5,6 +5,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { skillText } from './support/skills.mjs';
 import { collectViolations } from '../scripts/validate-hub.mjs';
 import { collectReviewEvidence } from '../scripts/capture-review-evidence.mjs';
 
@@ -407,8 +408,8 @@ test('stable autopilot docs lock context protocol and canonical review handoff a
   const conventions = readFileSync(join(repoRoot, '.apex', 'conventions.md'), 'utf8');
   const scripts = readFileSync(join(repoRoot, '.apex', 'standards', 'scripts.md'), 'utf8');
   const skills = readFileSync(join(repoRoot, '.apex', 'standards', 'skills.md'), 'utf8');
-  const planSkill = readFileSync(join(repoRoot, 'skills', 'plan', 'SKILL.md'), 'utf8');
-  const reviewSkill = readFileSync(join(repoRoot, 'skills', 'review', 'SKILL.md'), 'utf8');
+  const planSkill = skillText('plan');
+  const reviewSkill = skillText('review');
   assert.match(conventions, /eager upstream context, not repository authorization/i);
   assert.match(conventions, /criteria-only `success-criteria\.md`/);
   assert.match(conventions, /`task-result-index\.md`/);
@@ -812,4 +813,20 @@ test('stable docs, skills and hub state no legacy compatibility', () => {
     .flatMap((path) => readFileSync(join(repoRoot, path), 'utf8').split('\n')
       .flatMap((line, index) => (/\blegacy\b/i.test(line) ? [`${path}:${index + 1}`] : [])));
   assert.deepEqual(hits, []);
+});
+
+test('stable docs lock the compaction-safe skill layout and the implement fix-round cap', () => {
+  const readStable = (...parts) => readFileSync(join(repoRoot, ...parts), 'utf8');
+  const glossary = readStable('.apex', 'glossary.md');
+  const conventions = readStable('.apex', 'conventions.md');
+  const skills = readStable('.apex', 'standards', 'skills.md');
+  const tests = readStable('.apex', 'standards', 'tests.md');
+  const workflow = readStable('docs', 'workflow.md');
+  assert.match(glossary, /\*\*Step file\*\*[^]*step map[^]*re-read after a context compaction, never acted on from a summary/);
+  assert.match(glossary, /\*\*Fix-round cap\*\*[^]*three\s+fix rounds[^]*one tier up[^]*parks[^]*convergence guard, not a resource quota/);
+  assert.match(conventions, /## Compaction-safe skill layout\n[^]*12,000-byte ceiling[^]*`## Procedure` step map[^]*never act on a summary[^]*byte-identical `manual-handoff\.md`[^]*tests\/skill-layout\.test\.mjs/);
+  assert.match(conventions, /\*\*Fix-round cap\*\*[^]*three fix rounds[^]*two more one tier up[^]*correlated `BLOCKED`[^]*counted from ledger lines[^]*convergence guard, not a resource quota/);
+  assert.match(skills, /12,000-byte compaction ceiling[^]*canonical re-read rule[^]*byte-identical `manual-handoff\.md`[^]*fix-round cap in SKILL\.md/);
+  assert.match(tests, /`tests\/support\/skills\.mjs`[^]*`skillText`[^]*`skillHead`[^]*`skill-layout`/);
+  assert.match(workflow, /review-fix loop that stops converging is capped: three fix rounds, two more on a stronger model when one is available, then it stops/);
 });
