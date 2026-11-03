@@ -8,6 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sectionBetween } from './markdown.mjs';
 
 export const skillsDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'skills');
 
@@ -27,30 +28,50 @@ export function skillHead(name) {
   return readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
 }
 
+// The co-located Markdown file names a text cites in backticks, in order of mention.
+export function markdownFileRefs(text) {
+  return [...text.matchAll(/`([a-z0-9-]+\.md)`/g)].map((match) => match[1]);
+}
+
 // The step files named by the step-map table in SKILL.md's `## Procedure` section, in table order.
 // An unsplit skill has no step map and returns an empty list.
 export function stepFiles(name) {
   const head = skillHead(name);
-  const start = head.indexOf('\n## Procedure\n');
-  if (start === -1) return [];
-  const end = head.indexOf('\n## ', start + 1);
-  const section = head.slice(start, end === -1 ? undefined : end);
+  if (!head.includes('\n## Procedure\n')) return [];
   const files = [];
-  for (const line of section.split('\n')) {
+  for (const line of sectionBetween(head, '\n## Procedure\n', '\n## ').split('\n')) {
     if (!line.startsWith('|')) continue;
-    const match = line.match(/`([a-z0-9-]+\.md)`/);
-    if (match && !files.includes(match[1])) files.push(match[1]);
+    const [file] = markdownFileRefs(line);
+    if (file && !files.includes(file)) files.push(file);
   }
   return files;
 }
 
+// The files `skillFile(name, file)` reads, each as [file name, text]. `SKILL.md` expands to itself
+// and its step files, so a failure message can name the file that holds the text.
+export function skillFileParts(name, file) {
+  const files = file === 'SKILL.md' ? ['SKILL.md', ...stepFiles(name)] : [file];
+  return files.map((each) => [each, readFileSync(join(skillsDir, name, each), 'utf8')]);
+}
+
 // The whole skill in reading order: SKILL.md, then each step file in step-map order.
 export function skillText(name) {
-  return [skillHead(name), ...stepFiles(name).map((file) =>
-    readFileSync(join(skillsDir, name, file), 'utf8'))].join('\n');
+  return skillFileParts(name, 'SKILL.md').map(([, text]) => text).join('\n');
 }
 
 // One file of a skill, where `SKILL.md` stands for the whole split skill (`skillText`).
 export function skillFile(name, file) {
   return file === 'SKILL.md' ? skillText(name) : readFileSync(join(skillsDir, name, file), 'utf8');
+}
+
+// The `file:line` that holds line `index` (0-based) of `skillText(name)`, for failure messages.
+// The joining newline makes the whole skill's lines each file's lines laid end to end.
+export function skillLine(name, index) {
+  let rest = index;
+  for (const [file, text] of skillFileParts(name, 'SKILL.md')) {
+    const count = text.split('\n').length;
+    if (rest < count) return `${file}:${rest + 1}`;
+    rest -= count;
+  }
+  throw new RangeError(`${name} has no line ${index + 1}`);
 }

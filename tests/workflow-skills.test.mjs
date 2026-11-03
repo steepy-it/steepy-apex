@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { skillFile, skillHead, skillText } from './support/skills.mjs';
+import { skillFile, skillFileParts, skillHead, skillLine, skillText } from './support/skills.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const skillsDir = join(here, '..', 'skills');
@@ -641,21 +641,24 @@ test('implement: durable artifacts and exact four-field child envelopes keep det
 
 test('artifact-first child contracts share ordered fields while status domains and placeholders stay role-specific', () => {
   const emitters = [
-    ['implement/SKILL.md', 'controller'],
-    ['implement/implementer-prompt.md', 'implementer'],
-    ['implement/task-reviewer-prompt.md', 'reviewer'],
-    ['implement/final-review-prompt.md', 'reviewer'],
+    ['SKILL.md', 'controller'],
+    ['implementer-prompt.md', 'implementer'],
+    ['task-reviewer-prompt.md', 'reviewer'],
+    ['final-review-prompt.md', 'reviewer'],
   ];
   const orderedFields = ['status', 'artifact', 'changed-paths', 'signals'];
+  const envelopeShape = /^[ \t]*status: <[^\n]+>\n[ \t]*artifact: <[^\n]+>\n[ \t]*changed-paths: (?:<[^\n]+>|none)\n[ \t]*signals: <[^\n]+>$/m;
 
-  for (const [relativePath, role] of emitters) {
-    const text = skillFile(...relativePath.split('/'));
-    const envelope = text.match(/^[ \t]*status: <[^\n]+>\n[ \t]*artifact: <[^\n]+>\n[ \t]*changed-paths: (?:<[^\n]+>|none)\n[ \t]*signals: <[^\n]+>$/m)?.[0];
-    assert.ok(envelope, `${relativePath} must emit the four-field ${role} result contract`);
+  for (const [file, role] of emitters) {
+    const found = skillFileParts('implement', file)
+      .map(([part, text]) => [part, text.match(envelopeShape)?.[0]])
+      .find(([, envelope]) => envelope);
+    assert.ok(found, `implement/${file}${file === 'SKILL.md' ? ' or a step file it names' : ''} must emit the four-field ${role} result contract`);
+    const [part, envelope] = found;
     assert.deepEqual(
       envelope.split('\n').map((line) => line.trimStart().slice(0, line.trimStart().indexOf(':'))),
       orderedFields,
-      `${relativePath} must preserve the canonical ordered field names`
+      `implement/${part} must preserve the canonical ordered field names`
     );
   }
 
@@ -1288,8 +1291,11 @@ test('shipped workflow handoffs use namespaced slash invocations', () => {
 
   for (const relativePath of shippedInstructionFiles) {
     const [area, name, file] = relativePath.split('/');
-    const text = area === 'skills' ? skillFile(name, file) : readFileSync(join(root, relativePath), 'utf8');
-    assertNoBareWorkflowInvocations(text, relativePath);
+    if (area !== 'skills') {
+      assertNoBareWorkflowInvocations(readFileSync(join(root, relativePath), 'utf8'), relativePath);
+      continue;
+    }
+    for (const [part, text] of skillFileParts(name, file)) assertNoBareWorkflowInvocations(text, `skills/${name}/${part}`);
   }
 });
 
@@ -2636,18 +2642,19 @@ test('autopilot sections carry no four-field example and mixed files label manua
   const field = /^\s*(?:status|artifact|changed-paths|signals): /;
   for (const file of ['SKILL.md', 'implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md']) {
     const lines = skillFile('implement', file).split('\n');
+    const where = (i) => (file === 'SKILL.md' ? skillLine('implement', i) : `${file}:${i + 1}`);
     const fourField = [], threeField = [];
     lines.forEach((line, i) => {
       if (!/^\s*status: /.test(line)) return;
       if (lines.slice(i + 1, i + 4).some((next) => /^\s*changed-paths:/.test(next))) {
         let j = i - 1;
         while (j >= 0 && (!lines[j].trim() || /^\s*```/.test(lines[j]) || field.test(lines[j]))) j--;
-        assert.match(lines[j] ?? '', /manual/i, `${file}:${i + 1} four-field example must be labelled manual drive`);
+        assert.match(lines[j] ?? '', /manual/i, `${where(i)} four-field example must be labelled manual drive`);
         fourField.push(i);
       } else if (/^\s*artifact: /.test(lines[i + 1] ?? '') && /^\s*signals: /.test(lines[i + 2] ?? '')) threeField.push(i);
     });
     assert.ok(fourField.length > 0, `${file} keeps the manual four-field grammar`);
     if (file !== 'SKILL.md') assert.ok(threeField.length > 0, `${file} shows the three-field autopilot shape`);
-    for (const i of threeField) assert.ok(i > fourField[0], `${file}:${i + 1} autopilot example must follow the first manual block`);
+    for (const i of threeField) assert.ok(i > fourField[0], `${where(i)} autopilot example must follow the first manual block`);
   }
 });

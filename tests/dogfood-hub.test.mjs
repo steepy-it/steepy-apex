@@ -5,11 +5,12 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { skillText } from './support/skills.mjs';
+import { SKILL_HEAD_CEILING_BYTES, skillText } from './support/skills.mjs';
 import { collectViolations } from '../scripts/validate-hub.mjs';
 import { collectReviewEvidence } from '../scripts/capture-review-evidence.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const readStable = (...parts) => readFileSync(join(repoRoot, ...parts), 'utf8');
 const projectScaffold = join(repoRoot, 'scripts', 'project-scaffold.mjs');
 const dogfoodModel = {
   projectName: 'steepy-apex',
@@ -252,7 +253,6 @@ test('the tests standard locks the final cross-surface acceptance vertical', () 
 });
 
 test('stable workflow knowledge is content-locked and manual transport remains model-only', () => {
-  const readStable = (...parts) => readFileSync(join(repoRoot, ...parts), 'utf8');
   const glossary = readStable('.apex', 'glossary.md');
   const conventions = readStable('.apex', 'conventions.md');
   const skills = readStable('.apex', 'standards', 'skills.md');
@@ -299,7 +299,6 @@ test('stable workflow knowledge is content-locked and manual transport remains m
 });
 
 test('stable hub locks the deterministic Gear-4 event, recovery, and evidence boundaries', () => {
-  const readStable = (...parts) => readFileSync(join(repoRoot, ...parts), 'utf8');
   const glossary = readStable('.apex', 'glossary.md');
   const scripts = readStable('.apex', 'standards', 'scripts.md');
   const tests = readStable('.apex', 'standards', 'tests.md');
@@ -816,15 +815,19 @@ test('stable docs, skills and hub state no legacy compatibility', () => {
 });
 
 test('stable docs lock the compaction-safe skill layout and the implement fix-round cap', () => {
-  const readStable = (...parts) => readFileSync(join(repoRoot, ...parts), 'utf8');
   const glossary = readStable('.apex', 'glossary.md');
   const conventions = readStable('.apex', 'conventions.md');
   const skills = readStable('.apex', 'standards', 'skills.md');
   const tests = readStable('.apex', 'standards', 'tests.md');
   const workflow = readStable('docs', 'workflow.md');
-  assert.match(glossary, /\*\*Step file\*\*[^]*step map[^]*re-read after a context compaction, never acted on from a summary/);
-  assert.match(glossary, /\*\*Fix-round cap\*\*[^]*three\s+fix rounds[^]*one tier up[^]*parks[^]*convergence guard, not a resource quota/);
-  assert.match(conventions, /## Compaction-safe skill layout\n[^]*12,000-byte ceiling[^]*`## Procedure` step map[^]*never act on a summary[^]*byte-identical `manual-handoff\.md`[^]*tests\/skill-layout\.test\.mjs/);
+  const stepFile = glossaryEntry(glossary, 'Step file');
+  const fixRoundCap = glossaryEntry(glossary, 'Fix-round cap');
+  assert.ok(stepFile && fixRoundCap, 'glossary.md must define Step file and Fix-round cap');
+  assert.match(stepFile, /step map[^]*re-read after a context compaction, never acted on from a summary/);
+  assert.match(fixRoundCap, /three\s+fix rounds[^]*one tier up[^]*parks[^]*convergence guard, not a resource quota/);
+  const ceiling = `${SKILL_HEAD_CEILING_BYTES.toLocaleString('en-US')}-byte ceiling`;
+  assert.ok(conventions.includes(ceiling), `conventions.md must state the ${ceiling} that tests/support/skills.mjs enforces`);
+  assert.match(conventions, /## Compaction-safe skill layout\n[^]*[\d,]+-byte ceiling[^]*`## Procedure` step map[^]*never act on a summary[^]*byte-identical `manual-handoff\.md`[^]*tests\/skill-layout\.test\.mjs/);
   assert.match(conventions, /\*\*Fix-round cap\*\*[^]*three fix rounds[^]*two more one tier up[^]*correlated `BLOCKED`[^]*counted from ledger lines[^]*convergence guard, not a resource quota/);
   assert.match(skills, /Every `SKILL\.md` follows `conventions\.md` → "Compaction-safe skill layout"/);
   assert.match(tests, /`skill-layout`\); they read split skills through `tests\/support\/skills\.mjs`/);

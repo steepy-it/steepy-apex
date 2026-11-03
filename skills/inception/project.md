@@ -1,4 +1,4 @@
-# inception — Steps 2–5: reconnaissance, architecture, research, approval
+# inception — Steps 2–6: reconnaissance, architecture, research, approval, pause
 
 ### Step 2 — Reconnaissance
 
@@ -187,3 +187,11 @@ divergence and forward transitions, verification commands and `verify-complete` 
 path.
 Never make a failed required check optional or weaken expected/type to close; reducing delivery
 requires a human decision and reapproval.
+
+### Step 6 — Pause after approval
+
+Recommend a new session after approval. First finish all units/children, confirm the already
+published bootstrap phase, then write `resume-note --next=<text> --need <exact-ref>` for needed
+existing run artifacts. Record concrete child models and any degradation with `--note=<text>`.
+The pause leaves the run active. Continue in the same session when requested; explain that earlier
+context is paid on each turn. The note summarizes state and never grants a capability.

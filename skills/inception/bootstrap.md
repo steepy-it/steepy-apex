@@ -1,12 +1,4 @@
-# inception — Steps 6–9: pause, bootstrap, effects and checkpoints, pause
-
-### Step 6 — Pause after approval
-
-Recommend a new session after approval. First finish all units/children, confirm the already
-published bootstrap phase, then write `resume-note --next=<text> --need <exact-ref>` for needed
-existing run artifacts. Record concrete child models and any degradation with `--note=<text>`.
-The pause leaves the run active. Continue in the same session when requested; explain that earlier
-context is paid on each turn. The note summarizes state and never grants a capability.
+# inception — Steps 7–9: bootstrap, effects and checkpoints, pause
 
 ### Step 7 — Bootstrap
 
