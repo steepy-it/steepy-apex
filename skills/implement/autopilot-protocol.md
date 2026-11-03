@@ -91,6 +91,7 @@ validate its iteration manifest, then follow `reviewer-recovery.md` before dispa
 This deterministic gate also applies to the Step-4 whole-branch reviewer. On **Issues Found**, create and validate a fix manifest before
 dispatching the fix back to the same `<surface>-agent`. Both fix loops obey the fix-round cap in `SKILL.md`;
 a loop that reaches the cap ends with the correlated `BLOCKED` marker below, never another fix dispatch.
+A human restarts it by resuming the run; the cap says how the new attempt records that restart.
 
 Preserve `discovery:unplanned` from the validated implementer/fix envelope in the compact
 task-result index and retain the occurrence through later fixes, paired with DONE_WITH_CONCERNS.

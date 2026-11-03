@@ -47,9 +47,9 @@ directory under it. A stop in this step ends only the inception source; Step 2, 
    local file and line; it is for the interview only), Verification status (from the verified summary's
    `coverage` entries), Promotion class — immediately followed by its write-back preview:
    the destination and the exact text that would be written. Then run the same accept / correct /
-   skip interview as Step 2.4: decide on the preview, a correction re-renders the preview, one
-   question at a time. Never use bare IDs (DR-1, DR-2, …) as option labels: the user decides on the
-   printed card and preview. A skip is a rejection: ask the user for its reason.
+   skip interview as Step 2.4 in `surface-loop.md`: decide on the preview, a correction re-renders
+   the preview, one question at a time. Never use bare IDs (DR-1, DR-2, …) as option labels: the
+   user decides on the printed card and preview. A skip is a rejection: ask the user for its reason.
 4. **Promotion rules.** Every decision in the register is approved: Step 2a.1 verified complete
    delivery, including its approval. Use only the verified summary for coverage and check outcomes; a red source gate
    permits none of these promotions.
@@ -67,7 +67,7 @@ directory under it. A stop in this step ends only the inception source; Step 2, 
    only `conventions.md`, the routed surface standards, and `glossary.md`: no new hub document and
    no `_INDEX.md` change. Write-back text never names, cites, or links `.apex/inception/`; the
    Evidence stays in the interview. Write verbatim the approved preview, additive and diff-gated as
-   in Step 2.5.
+   in Step 2.5 in `surface-loop.md`.
 6. **Decision outcomes.** Every register decision ends accepted (written) or rejected with a reason.
    Record the outcomes in `[REPORT_FILE]` under `## Decision outcomes`, one line per decision:
    `DR-n — accepted` or `DR-n — rejected: <reason>`. The import is one-time. Once a run writes to

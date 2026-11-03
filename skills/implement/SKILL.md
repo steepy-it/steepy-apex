@@ -39,19 +39,30 @@ passes included.
 
 - A fix round is one fix dispatch plus its re-review. Before each fix dispatch, append
   `Task N: fix round <R> (model: <tier>)` — or `Final review: fix round <R> (model: <tier>)` — to
-  the ledger. Count rounds from those ledger lines, never from memory.
-- Rounds 1–3 run the fix at the tier the task already uses (for the whole-branch loop, the owning
-  task's tier).
-- If round 3's re-review still finds issues, move the fix up one tier (cheap → standard →
-  most-capable), add `escalated: <from>→<to>` to the round-4 line, and allow rounds 4–5 there.
+  the ledger. Count rounds from those ledger lines, never from memory. A fix that returns
+  NEEDS_CONTEXT or BLOCKED and is dispatched again (more context, a stronger model, or autopilot's
+  `--role retry`) stays in the same round; an `escalated:` note on the task's own ledger line is
+  that BLOCKED handling, not a step of the cap.
+- Rounds 1–3 run the fix at the task's tier, never below `standard`: a fix works from the issues
+  prose (Model Selection). For the whole-branch loop, use the tier of the owning task the fix is
+  dispatched under.
+- If round 3's re-review still finds issues, move the fix up one tier from the tier round 3 ran at
+  (standard → most-capable), add `escalated: <from>→<to>` to the round-4 line, and allow
+  rounds 4–5 there.
 - Park the loop when round 5's re-review still finds issues, or after round 3 when no higher tier
   is left (the fix already runs at `most-capable`, or the harness offers no per-dispatch model).
-  Manual drive: stop and give the user the open issues artifact (`task-N-issues.md` or
-  `final-review-issues.md`) with the ledger's round lines. Autopilot (`drive: autopilot`): append
-  the correlated `BLOCKED` marker from `autopilot-protocol.md` and exit non-zero.
+  Append `Task N: fix loop parked by the fix-round cap` — or `Final review: fix loop parked by the
+  fix-round cap` — to the ledger, ending it with ` (attempt <A>)` in autopilot. Manual drive: stop
+  and give the user the open issues artifact (`task-N-issues.md` or `final-review-issues.md`) with
+  the ledger's round lines. Autopilot (`drive: autopilot`): append the correlated `BLOCKED` marker
+  from `autopilot-protocol.md` with the reason `fix-round cap: Task N` (or `fix-round cap: final
+  review`) and exit non-zero.
 - Only the user restarts a parked loop. Record their decision as `Task N: fix loop restarted by
   user (<reason>)` — or `Final review: fix loop restarted by user (<reason>)` — and count rounds
-  after the latest such line. Never raise the cap or restart the count on your own.
+  after the latest such line. In autopilot the user restarts by resuming the run: when a new
+  attempt finds the loop still parked — its latest parked line comes from an earlier attempt and no
+  restart line follows it — record the restart with the reason `autopilot resume, attempt <A>`.
+  Never raise the cap or restart the count on your own.
 
 ## Procedure
 

@@ -48,7 +48,7 @@ The steps live in co-located files, each read in full at the point named here:
 | Helper commands, JSON input rules, exit codes, persisted work units and recovery | `helper.md` | before you run any helper command |
 | 0–1: classify the starting state, start or resume the run | `entry.md` | at the start of every session, fresh or resumed |
 | 2–5: reconnaissance, architecture decisions, research and versions, project and approval | `project.md` | before reconnaissance |
-| 6–9: pause after approval, bootstrap, effects and checkpoints, pause after bootstrap | `bootstrap.md` | after approval, before the bootstrap |
+| 6–9: pause after approval, bootstrap, effects and checkpoints, pause after bootstrap | `bootstrap.md` | after approval, before the bootstrap; and in any session before you prepare or observe an effect (Step 8) |
 | 10: final verification and conclusion | `verification.md` | after the bootstrap, before final verification |
 | Blocking and abandon | `blocking.md` | as soon as material is unreadable, scope changes, an effect is uncertain, divergence is unexplained, or the user asks to abandon |
 

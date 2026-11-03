@@ -31,7 +31,7 @@ The steps live in co-located files, each read in full at the point named here:
 
 | Steps | File | Read it |
 |---|---|---|
-| Handoff envelope, resume pairs, publication order | `manual-handoff.md` | before accepting any input, and again before Step 7 publishes |
+| Handoff envelope, resume pairs, publication order | `manual-handoff.md` | before accepting any input, and again before the spec is published (Step 7 in Gear 3, Step 8 in Gear 2) |
 | 0–1.5: read the gear, orient against the hub, resolve a CONFLICT or GAP verdict | `entry.md` | at the start of every run, fresh or resumed |
 | 2–5.5: understand the idea, propose approaches, present and finalize the design, self-review, write-back routing | `design.md` | before the first design question |
 | 6–8: validate, human review gate and drive mode, hand off | `finish.md` | after the self-review passes |

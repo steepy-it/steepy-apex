@@ -14,8 +14,8 @@ Autopilot status timestamps must use UTC with three millisecond digits (`YYYY-MM
 **Manifest-backed autopilot:** Take the Step-0 scalar facts from `manifest.contract.verdict`,
 `manifest.contract.gear`, and `manifest.contract.drive`. Require `drive: autopilot` and gear 3, and
 honor the recorded verdict. Do not read or locate the spec: it is deliberately absent from the review
-inventory, and the criteria-only required artifact supplies the review criteria. Apply the Step 4/5
-Autopilot paragraph below and never ask the user anything. A manifest/output failure, success criteria
+inventory, and the criteria-only required artifact supplies the review criteria. Apply the Step 4
+Autopilot paragraph in `finish.md` and never ask the user anything. A manifest/output failure, success criteria
 unmet, `validate-hub` red, or a CONFLICT discovered mid-run → append
 `<ISO timestamp> — review — BLOCKED — run-id=<conductor-supplied> attempt=<positive supplied> <reason>`
 to `.apex/work/tasks/<spec-basename>/autopilot-status.md` and exit non-zero. A CONFLICT discovered

@@ -25,8 +25,9 @@ at `.apex/work/init/<runId>/governance-input.json` and its original operation pl
 reconstruct a plan or choose a historical work file. If the final receipt exists, retain it unchanged;
 ordinary subsequent init/repair remains available, but new changes are not certified by the old receipt.
 Do not prepare a replacement receipt or re-run source verification as a prerequisite for ordinary repair.
-An explicit replay of completed certification may use finish's idempotent check; a failure reports that
-certificate's problem, without silently recreating it. Pending recovery failure stops its writes.
+An explicit replay of completed certification may use the idempotent `inception-governance.mjs finish`
+command in `finish.md` (Step 5); a failure reports that certificate's problem, without silently
+recreating it. Pending recovery failure stops its writes.
 
 Run the coherence linter once in repair to inventory real gaps:
 

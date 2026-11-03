@@ -25,7 +25,7 @@ The steps live in co-located files, each read in full at the point named here:
 | Steps | File | Read it |
 |---|---|---|
 | 0–1: preconditions, run scoping | `entry.md` | at the start of every run |
-| 2: per-surface iterative loop | `surface-loop.md` | before the first surface |
+| 2: per-surface iterative loop | `surface-loop.md` | before the first surface or the inception source (Step 2a reuses its Steps 2.4–2.5) |
 | 2a: inception source, only after a complete inception run | `inception-source.md` | when Step 1 scopes an inception source |
 | 3–4: coherence gate, report | `finish.md` | after the last surface or source |
 

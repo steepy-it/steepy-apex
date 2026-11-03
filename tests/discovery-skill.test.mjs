@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { skillText, stepFiles } from './support/skills.mjs';
+import { skillHead, skillText, stepFiles } from './support/skills.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -106,7 +106,8 @@ test('changed cross-skill contract references resolve named headings and reject 
   for (const reference of references) assertNamedHeadingReference(reference);
 
   const discoveryFiles = stepFiles('discovery').map((file) => join(skillsDir, 'discovery', file));
-  for (const path of [skillPath, ...discoveryFiles, promptPath, implementSkillPath, implementEntryPath]) {
+  const implementFiles = stepFiles('implement').map((file) => join(skillsDir, 'implement', file));
+  for (const path of [skillPath, ...discoveryFiles, promptPath, implementSkillPath, ...implementFiles]) {
     assert.doesNotMatch(
       readFileSync(path, 'utf8'),
       /(?:skills\/)?[^\s`]+\.md:\d+(?:-\d+)?/,
@@ -150,8 +151,7 @@ test('discovery: SKILL.md states the precondition — hub absent → run the abs
 });
 
 test('discovery: SKILL.md has a run-scoping step (surface + cross-cutting docs)', () => {
-  const text = skillText('discovery');
-  const step1 = sectionBetween(text, '### Step 1', '### Step 2');
+  const step1 = sectionBetween(readFileSync(join(skillsDir, 'discovery', 'entry.md'), 'utf8'), '### Step 1');
   assert.match(step1, /scope/i, 'run-scoping step must use the word "scope"');
   assert.match(step1, /surface/i, 'run-scoping step must reference surface(s)');
   assert.match(
@@ -525,8 +525,7 @@ test('discovery inception source (SC12): every decision ends accepted or rejecte
 });
 
 test('discovery inception source (SC12): Model Selection covers the inception explorer', () => {
-  const text = skillText('discovery');
-  const model = flat(sectionBetween(text, '## Model Selection'));
+  const model = flat(sectionBetween(skillHead('discovery'), '## Model Selection'));
   assert.match(
     model,
     /Always set `model:` explicitly when dispatching the Explore subagent in Step 2\.2 and the inception explorer in Step 2a\.2/,

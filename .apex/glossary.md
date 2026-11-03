@@ -45,9 +45,8 @@
   run, so a step file is re-read after a context compaction, never acted on from a summary;
   see [Conventions](conventions.md) → "Compaction-safe skill layout".
 - **Fix-round cap** — `implement`'s bound on a review-fix loop that stops converging: three
-  fix rounds at the task's tier, two more one tier up when one is left, then the loop parks for the human
-  (autopilot: correlated `BLOCKED`). Rounds are counted from ledger lines. It is a
-  convergence guard, not a resource quota.
+  fix rounds, two more one tier up when one is left, then the loop parks for the human. It is a
+  convergence guard, not a resource quota; see [Conventions](conventions.md) → "Execution discipline".
 - **Work artifact** - local planning or execution material under `.apex/work/`;
   intentionally not part of the versioned hub DAG.
 - **Work-input capability** — a phase-local, default-deny authorization to read a work

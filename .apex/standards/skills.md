@@ -17,8 +17,9 @@
 ## Conventions
 - Each `SKILL.md` has YAML frontmatter (`user-invocable: true`) plus deterministic gates; the
   five chain skills (brainstorm/plan/implement/review/loop-engineer) additionally carry a
-  `## Checklist`.
-- Skills are hub-aware: read the `_INDEX.md` routing table, write governed artifacts under `.apex/`, keep the graph coherent.
+  `## Checklist`. Every `SKILL.md` follows `conventions.md` → "Compaction-safe skill layout".
+- Skills are hub-aware: read the `_INDEX.md` routing table, write governed
+  artifacts under `.apex/`, keep the graph coherent.
 - Reviewer dispatch uses abstract model tiers, translated to a concrete model at dispatch time per
   harness (single canonical source: the Model Selection block); weigh **turn count, not just
   token price** (mid-tier is the floor for reviewers and prose-fed implementers); never hardcode
@@ -35,7 +36,6 @@
   work," "write the section on Y") rather than a sketch of the diff to exact paths. Split the task,
   or add a discovery task upfront whose deliverable is the missing facts, before handoff.
 - An argument-taking skill declares `argument-hint:` in its frontmatter (`new-surface`).
-- Every `SKILL.md` stays under the 12,000-byte compaction ceiling: standing rules, checklist, a `## Procedure` step map ending in the canonical re-read rule, and Model Selection stay there; step detail lives in the step files the map names, and each chain skill carries a byte-identical `manual-handoff.md` (`conventions.md` → "Compaction-safe skill layout"). `implement` keeps its fix-round cap in SKILL.md: rounds counted from ledger lines, three at the task's tier, two one tier up, then park (manual: the human gets the issues artifact; autopilot: correlated `BLOCKED`).
 - Engine scripts are invoked as `node <engine-root>/scripts/<x>.mjs`, resolved relative to the
   skill's own base directory — never a machine-specific absolute path or a `CLAUDE_*` env var
   (`conventions.md` → "Multi-harness distribution").

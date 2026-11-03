@@ -85,9 +85,9 @@ node <engine-root>/scripts/inception-state.mjs resume-check --repo-root .
 2. If pending publication exists, use its exact reservation with `publish resume` and recheck. It
    publishes reserved bytes only. For an active unit, follow Persisted work units and recovery;
    do not dispatch another writer or treat absence of a child response as stopped-writer evidence.
-3. Observe uncertain effects via their exact intent, correlation and real evidence (Step 8). Never
-   repeat a concluded or uncertain effect. Reconcile only when proven; ambiguity blocks for a
-   human decision. A similar resource or free text is insufficient.
+3. Observe uncertain effects via their exact intent, correlation and real evidence (Step 8 in
+   `bootstrap.md`). Never repeat a concluded or uncertain effect. Reconcile only when proven;
+   ambiguity blocks for a human decision. A similar resource or free text is insufficient.
 4. Approval has three cases: **absent** means continue the persisted preapproval phase, never
    require a nonexistent approval or jump to bootstrap; **valid** means retain it without asking
    again; **divergent** means stop writers, explain the exact change, return explicitly to approval,

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { skillFile, skillHead, skillText, stepFiles } from './support/skills.mjs';
+import { skillFile, skillHead, skillText } from './support/skills.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const skillsDir = join(here, '..', 'skills');
@@ -412,14 +412,24 @@ test('implement: the fix-round cap sits in the compaction-safe head and parks a 
   assert.match(cap, /each task's loop \(Step 3\)[^]*whole-branch loop \(Step 4\)[^]*inline same-session/);
   assert.match(cap, /`Task N: fix round <R> \(model: <tier>\)`[^]*`Final review: fix round <R> \(model: <tier>\)`/);
   assert.match(cap, /Count rounds from those ledger lines, never from memory/);
+  assert.match(cap, /NEEDS_CONTEXT or BLOCKED and is dispatched again[^]*`--role retry`\) stays in the same round/,
+    'a re-dispatched fix must not open a new round');
+  assert.match(cap, /Rounds 1–3 run the fix at the task's tier, never below `standard`/,
+    'a fix works from prose, so it never runs on the cheapest tier');
+  assert.match(cap, /`Task N: fix loop parked by the fix-round cap`[^]*` \(attempt <A>\)` in autopilot/);
+  assert.match(cap, /reason `fix-round cap: Task N`/);
   assert.match(cap, /Rounds 1–3[^]*round 3's re-review still finds issues, move the fix up one tier[^]*`escalated: <from>→<to>`[^]*rounds 4–5/);
   assert.match(cap, /Park the loop when round 5's re-review still finds issues, or after round 3 when no higher tier\s+is left/);
   assert.match(cap, /Manual drive: stop[^]*`task-N-issues\.md`[^]*`final-review-issues\.md`/);
   assert.match(cap, /Autopilot \(`drive: autopilot`\)[^]*correlated\s+`BLOCKED` marker[^]*exit non-zero/);
   assert.match(cap, /Only the user restarts a parked loop\. Record their decision as `Task N: fix loop restarted by\s+user \(<reason>\)`[^]*`Final review: fix loop restarted by user \(<reason>\)`[^]*count rounds\s+after the latest such line/);
+  assert.match(cap, /In autopilot the user restarts by resuming the run: when a new\s+attempt finds the loop still parked — its latest parked line comes from an earlier attempt and no\s+restart line follows it — record the restart/,
+    'a parked autopilot loop is restartable through a resume, once per park');
   assert.match(readFileSync(join(skillsDir, 'implement', 'autopilot-protocol.md'), 'utf8'),
     /Both fix loops obey the fix-round cap in `SKILL\.md`;\s+a loop that reaches the cap ends with the correlated `BLOCKED` marker/,
     'the autopilot protocol, which takes precedence for its steps, must defer to the cap');
+  assert.match(readFileSync(join(skillsDir, 'implement', 'autopilot-protocol.md'), 'utf8'),
+    /A human restarts it by resuming the run/);
   assert.match(sectionBetween(head, '## Execution discipline', '## Checklist'), /fix loop parked by the fix-round cap/,
     'a parked fix loop must be one of the only reasons to stop mid-run');
   const loop = skillText('implement');
@@ -765,6 +775,10 @@ test('review: gains an autopilot branch — Step 0 BLOCKED note, Autopilot parag
   assert.match(autopilotSection, / — review — READY_FOR_PR — /, 'Autopilot paragraph must describe appending " — review — READY_FOR_PR — " to the status file');
   assert.match(autopilotSection, /autopilot-status\.md/, 'Autopilot paragraph must reference autopilot-status.md');
   assert.match(autopilotSection, /no version bump|no bump/i, 'Autopilot paragraph must state the run stops before any version bump');
+  assert.match(autopilotSection, /if every criterion is met and `validate-hub` is green, append\n`<ISO timestamp> — review — READY_FOR_PR/,
+    'READY_FOR_PR must be conditional where it is written');
+  assert.match(autopilotSection, /Otherwise — a criterion unmet or\s+`validate-hub` red — append the correlated `BLOCKED` marker/,
+    'an unmet review must end BLOCKED in the file that writes the outcome');
 });
 
 test('canonical bootstrap routes root and index context to ownership and semantic workflow skills', () => {
@@ -1371,7 +1385,7 @@ test('loop-engineer: closes exact target routing, ordered standards, and concret
 
 test('loop-engineer: the skill authorizes and routes but never becomes the state controller', () => {
   const text = skillText('loop-engineer');
-  const boundary = sectionBetween(text, '### Controller responsibility boundary', '### Step 0');
+  const boundary = sectionBetween(skillHead('loop-engineer'), '### Controller responsibility boundary', '## Checklist');
   for (const phrase of [
     'allocate attempts',
     'keep/discard policy',
@@ -2401,10 +2415,9 @@ test('on-demand linter skills invoke validate-hub with an explicit `.` cwd argum
 });
 
 test('terminal review, not the loop controller, owns the mandatory hub coherence gate', () => {
-  const loop = skillText('loop-engineer');
   const review = skillText('review');
   const standard = readFileSync(join(root, '.apex', 'standards', 'skills.md'), 'utf8');
-  const controllerBoundary = sectionBetween(loop, '### Controller responsibility boundary', '### Step 0');
+  const controllerBoundary = sectionBetween(skillHead('loop-engineer'), '### Controller responsibility boundary', '## Checklist');
   const reviewEvidence = sectionBetween(review, '### Step 2', '### Step 3');
   assert.doesNotMatch(controllerBoundary, /loop-engineer\.mjs[^]*validate-hub/u);
   assert.match(controllerBoundary, /terminal review owns[^]*validate-hub\.mjs/u);

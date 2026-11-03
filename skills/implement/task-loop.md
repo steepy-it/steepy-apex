@@ -41,7 +41,7 @@ plan basename for plan-backed work and the spec basename for direct Gear 2.
    transport degradation, a test reservation, or an unattributed DONE_WITH_CONCERNS. Missing or
    inconsistent attribution is a result-contract concern, not permission to infer a discovery.
 
-Handle implementer status: **DONE_WITH_CONCERNS** — read the concerns first; **NEEDS_CONTEXT** — provide it and re-dispatch; **BLOCKED** — give more context, re-dispatch on a more capable model (add `escalated: <from>→<to>` to the task's ledger line), or split the task. Never force the same model to retry unchanged.
+Handle implementer status: **DONE_WITH_CONCERNS** — read the concerns first; **NEEDS_CONTEXT** — provide it and re-dispatch; **BLOCKED** — give more context, re-dispatch on a more capable model (add `escalated: <from>→<to>` to the task's ledger line), or split the task. Never force the same model to retry unchanged. A fix re-dispatched this way stays in its fix round (the fix-round cap in `SKILL.md`).
 
 **Autopilot:** when `drive: autopilot`, follow `autopilot-protocol.md` for the no-human escalation and BLOCKED handling.
 

@@ -68,11 +68,13 @@ by a human for Gear 4, is required for another run; neither this review nor the 
 mutation budget.
 
 **Autopilot:** If `drive: autopilot` is present in the verdict contract (Step 0), stop here — this is
-the last unattended phase of the run, and the version-bump/PR decision below (Step 5) stays human. After the report above, append
+the last unattended phase of the run, and the version-bump/PR decision below (Step 5) stays human. After the report above, if every criterion is met and `validate-hub` is green, append
 `<ISO timestamp> — review — READY_FOR_PR — run-id=<conductor-supplied> attempt=<positive supplied> <one-line verdict>` to
 `.apex/work/tasks/<spec-basename>/autopilot-status.md` and end the session: no version bump, no
 CHANGELOG edit, no PR, no Step 5 question. The run's artifacts and this report stay on disk for a
-human to pick up Step 5 later, in an interactive session.
+human to pick up Step 5 later, in an interactive session. Otherwise — a criterion unmet or
+`validate-hub` red — append the correlated `BLOCKED` marker from Step 0 in `entry.md` instead, after
+the same report, and exit non-zero.
 
 ### Step 5 — Offer a pull request
 

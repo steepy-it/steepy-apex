@@ -73,3 +73,13 @@ test('rules that must hold for a whole run stay in the SKILL.md head', () => {
   }
   assert.match(inception, /Persist before work: once a run exists, begin a unit before any decision, research, child\s+dispatch, application write, or effect/);
 });
+
+// A step file whose rules a later or skipped step also relies on must be read there too, or a
+// compaction or a gear that skips its usual trigger leaves those rules out of view.
+test('step-map read points cover every step that relies on the file', () => {
+  const row = (name, file) => skillHead(name).split('\n').find((line) => line.startsWith('|') && line.includes(`\`${file}\``));
+  assert.match(row('brainstorm', 'manual-handoff.md'), /Step 7 in Gear 3, Step 8 in Gear 2/);
+  assert.match(row('discovery', 'surface-loop.md'), /or the inception source/);
+  assert.match(row('inception', 'bootstrap.md'), /in any session before you prepare or observe an effect \(Step 8\)/);
+  assert.match(row('init', 'finish.md'), /explicit certification replay/);
+});

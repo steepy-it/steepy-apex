@@ -4,10 +4,10 @@
 
 **Autopilot:** when the contract says `drive: autopilot`, read the co-located `autopilot-protocol.md`
 first and follow its phase-manifest, correlation, status-marker, and task-local manifest protocol; it
-takes precedence over the manual prose below for the steps it names.
+takes precedence over the manual prose in the step files for the steps it names.
 
 In autopilot always follow `task-results-protocol.md`; the four-field and comma-list examples
-below are the manual-drive grammar. Gear 4 keeps its separate loop contract.
+in `task-loop.md` are the manual-drive grammar. Gear 4 keeps its separate loop contract.
 
 **Manual/no-manifest:** There are two exclusive manual entry paths.
 

@@ -21,7 +21,7 @@ Read the returned `cycle.path`; never construct a record number. It binds approv
 application snapshot and environment. Identical identities reuse the current cycle; changes create
 a new cycle. Verify approved install/build/test/start, representative path, preserved behaviors and
 resolved versions from a clean state as the contract requires. Preparation with effects follows
-Step 8 before beginning the stable cycle; do not allow a verification command to change the
+Step 8 in `bootstrap.md` before beginning the stable cycle; do not allow a verification command to change the
 application and still count as a successful old-cycle check.
 
 Begin a check unit before each automatic/manual check with exact report under `bootstrap/`,

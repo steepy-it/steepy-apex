@@ -826,7 +826,7 @@ test('stable docs lock the compaction-safe skill layout and the implement fix-ro
   assert.match(glossary, /\*\*Fix-round cap\*\*[^]*three\s+fix rounds[^]*one tier up[^]*parks[^]*convergence guard, not a resource quota/);
   assert.match(conventions, /## Compaction-safe skill layout\n[^]*12,000-byte ceiling[^]*`## Procedure` step map[^]*never act on a summary[^]*byte-identical `manual-handoff\.md`[^]*tests\/skill-layout\.test\.mjs/);
   assert.match(conventions, /\*\*Fix-round cap\*\*[^]*three fix rounds[^]*two more one tier up[^]*correlated `BLOCKED`[^]*counted from ledger lines[^]*convergence guard, not a resource quota/);
-  assert.match(skills, /12,000-byte compaction ceiling[^]*canonical re-read rule[^]*byte-identical `manual-handoff\.md`[^]*fix-round cap in SKILL\.md/);
-  assert.match(tests, /`tests\/support\/skills\.mjs`[^]*`skillText`[^]*`skillHead`[^]*`skill-layout`/);
+  assert.match(skills, /Every `SKILL\.md` follows `conventions\.md` → "Compaction-safe skill layout"/);
+  assert.match(tests, /`skill-layout`\); they read split skills through `tests\/support\/skills\.mjs`/);
   assert.match(workflow, /review-fix loop that stops converging is capped: three fix rounds, two more on a stronger model when one is available, then it stops/);
 });

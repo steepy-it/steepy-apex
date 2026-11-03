@@ -23,11 +23,12 @@ Hermetic fake-harness cases may prove parser, redaction, identity, and false-PAS
 
 ## Conventions
 - `node --test` with the built-in runner; no third-party framework.
-- CI validates the supported runtime floor on Node 24; older runtimes are outside the support contract. `package.json`, user-facing docs, and this matrix move together.
+- CI validates the supported runtime floor on Node 24; older runtimes are
+  outside the support contract. `package.json`, user-facing docs, and this matrix move together.
 - At least one suite per engine script (the floor); fixtures under `tests/fixtures`. Extra suites
   exist for cross-script integration (`e2e-smoke`), the live-hub dogfood check (`dogfood-hub`),
   and doc/config content-locks (`workflow-skills`, `release-metadata`, `git-policy`,
-  `discovery-skill`).
+  `discovery-skill`, `skill-layout`); they read split skills through `tests/support/skills.mjs`.
 - Release-gate coverage is split deliberately: `validate-release-evidence` exercises strict
   synthetic records, exact shipped-input identity and evidence-only exclusions, freshness,
   capabilities, digests, and incomplete-bump refusal; `release-workflow`, `git-policy`,
@@ -39,7 +40,6 @@ Hermetic fake-harness cases may prove parser, redaction, identity, and false-PAS
   and `loop-engineer` covers the terminal Gear-4 controller under the one-suite-per-script rule.
   Packaging and public/stable doc locks live in `npm-pack`, `release-metadata`, and `dogfood-hub`.
 - Assert behavior (exit codes, file contents, violations), not internals.
-- Doc locks read a split skill whole through `tests/support/skills.mjs` (`skillText`: SKILL.md plus the step files its step map names) and lock compaction-critical rules against `skillHead` (SKILL.md alone); `skill-layout` locks the SKILL.md byte ceiling, step-map files, canonical re-read rule, and that no co-located Markdown file is orphaned.
 - Temp dirs: `mkdtempSync(join(tmpdir(), 'steepy-<suffix>-'))` with a self-describing,
   greppable suffix (`steepy-e2e-`, `steepy-repair-`, …). Cleanup via `rmSync` in a
   `finally` is the norm for new suites (`bump-version`, `push-version-guard`,

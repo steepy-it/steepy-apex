@@ -79,7 +79,7 @@ The steps live in co-located files, each read in full at the point named here:
 |---|---|---|
 | 0–2: choose fresh init or repair, detect and confirm the model, serialize the record | `entry.md` | at the start of every run, fresh init or repair |
 | 3: preview, resolve exact conflicts, apply, certification and its recovery | `apply.md` | after the record is serialized, before the first preview |
-| 4–5: complete the governed hub, validate and report | `finish.md` | after the planner apply succeeds |
+| 4–5: complete the governed hub, validate and report | `finish.md` | after the planner apply succeeds, or before an explicit certification replay |
 
 Only this SKILL.md is meant to stay in context for the whole run; a context compaction can drop
 the step files you read earlier. Before you act on a step, its file must be fully in view. If it is

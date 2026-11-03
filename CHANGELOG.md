@@ -8,10 +8,11 @@
   `loop-engineer` and `discovery` moved unchanged into step files next to each skill, read in full
   at the step that needs them and re-read after a compaction instead of followed from a summary.
 - The five chain skills carry the manual-handoff block as an identical `manual-handoff.md`.
-- `implement` caps a review-fix loop that stops converging: three fix rounds at the task's tier,
-  two more one tier up when one is left, then the loop stops and hands the open issues to the
-  user (in autopilot it records `BLOCKED`). Rounds are counted from the ledger, so the count
-  survives a compaction, and only the user restarts a stopped loop.
+- `implement` caps a review-fix loop that stops converging: three fix rounds at the task's tier
+  (never below `standard`), two more one tier up when one is left, then the loop stops and hands
+  the open issues to the user (in autopilot it records `BLOCKED`). Rounds are counted from the
+  ledger, so the count survives a compaction, and only the user restarts a stopped loop; in
+  autopilot, resuming the run is that restart.
 - `inception` keeps its "persist a unit before any work" rule in its `SKILL.md`.
 - New test `tests/skill-layout.test.mjs` fails when a `SKILL.md` exceeds the ceiling, a step
   file is missing, or a Markdown file in a skill directory is not reachable from its `SKILL.md`.
