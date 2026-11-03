@@ -70,7 +70,7 @@ import {
   writeContextManifest,
 } from './autopilot-context.mjs';
 import { assertSafeLine, assertSafeRelPath } from './sanitize.mjs';
-import { convergeProcessGroup, processGroupsSupported } from './process-group.mjs';
+import { assertTimingMs, convergeProcessGroup, processGroupsSupported } from './process-group.mjs';
 import {
   classifyWorkflowStart,
   nextWorkflowAttempt,
@@ -1318,6 +1318,7 @@ export function opencodeProviderModelMappings(cwd, { env = process.env, homedir:
 // Grace between SIGTERM and SIGKILL for real stop causes such as interruption
 // or a blocking durable-capture failure.
 const KILL_GRACE_MS = 5000;
+const GROUP_CONVERGENCE_MS = 1000;
 
 // '' means "no status file yet" (a fresh run); every other failure — a symlinked
 // status target or ancestor, a non-ordinary file — propagates and refuses the run.
@@ -1388,8 +1389,8 @@ function runChild({
   logMode,
   context,
   descriptor,
-  killGraceMs = KILL_GRACE_MS,
-  groupConvergenceMs = 1000,
+  killGraceMs,
+  groupConvergenceMs,
   processGroupProbe,
   processGroupSignal,
   onSpawn,
@@ -1934,6 +1935,16 @@ export async function runConductor(specPath, opts = {}) {
     );
     return 1;
   }
+  // Resolved once so the checked values are the ones every phase stops with.
+  const killGraceMs = opts.killGraceMs ?? KILL_GRACE_MS;
+  const groupConvergenceMs = opts.groupConvergenceMs ?? GROUP_CONVERGENCE_MS;
+  try {
+    assertTimingMs('killGraceMs', killGraceMs);
+    assertTimingMs('groupConvergenceMs', groupConvergenceMs);
+  } catch (err) {
+    console.error(`autopilot: refusing to drive ${absSpec}: ${err.message}`);
+    return 1;
+  }
 
   // The run directory is named after the spec: sanitize before it becomes a path.
   // The status path is the run's canonical work artifact — its typed parse also
@@ -2019,7 +2030,9 @@ export async function runConductor(specPath, opts = {}) {
     mkdirWorkPath(cwd, statusPath, { expect: 'work-output', family: 'status' });
     if (existingStatus === '') appendStatus(cwd, statusPath, 'CONDUCTOR', 'STATUS_PROTOCOL', `version=${STATUS_PROTOCOL_VERSION}`);
     statusEstablished = true;
-    result = await driveLocked(contract, absSpec, runDir, statusPath, { ...opts, cwd, runId, recoveredLocks: lock.recovered });
+    result = await driveLocked(contract, absSpec, runDir, statusPath, {
+      ...opts, cwd, runId, recoveredLocks: lock.recovered, killGraceMs, groupConvergenceMs,
+    });
   } catch (error) {
     console.error(`autopilot: ${error.message}`);
   } finally {

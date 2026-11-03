@@ -3721,6 +3721,32 @@ async function runGroupLeader(repo, extraOptions) {
   );
 }
 
+test('streaming runner refuses invalid process-group timings before opening evidence or spawning', async () => {
+  for (const [name, value] of [['killGraceMs', NaN], ['killGraceMs', -1], ['processGroupConvergenceMs', Infinity], ['processGroupConvergenceMs', '500']]) {
+    const repo = fixture();
+    const marker = join(repo, 'spawned');
+    const rawPath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
+    try {
+      await assert.rejects(() => runStreamingHeadlessDescriptor(
+        { cmd: process.execPath, args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, '')`] },
+        'codex',
+        repo,
+        {
+          rawPath,
+          readablePath: `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`,
+          liveStdout: { write() { return true; } },
+          liveStderr: { write() { return true; } },
+          [name]: value,
+        },
+      ), { name: 'TypeError', message: `${name} must be a finite number >= 0` });
+      assert.equal(existsSync(join(repo, rawPath)), false, `${name} = ${String(value)}`);
+      assert.equal(existsSync(marker), false, `${name} = ${String(value)}`);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
 test('default process-group probe treats EPERM as not proven absent', async () => {
   const repo = fixture();
   const originalKill = process.kill;

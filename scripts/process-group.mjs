@@ -24,6 +24,14 @@ export function processGroupsSupported(platform) {
   return PROCESS_GROUP_PLATFORMS.includes(platform);
 }
 
+// Callers run this before spawning: a timing rejected at stop time would leave
+// a live group behind.
+export function assertTimingMs(name, value) {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new TypeError(`${name} must be a finite number >= 0`);
+  }
+}
+
 export function processGroupAbsent(pid, { probe } = {}) {
   if (!validPid(pid)) return true;
   try {
@@ -52,11 +60,8 @@ async function awaitGroupState(pid, wantAbsent, timeoutMs, probe) {
 export async function convergeProcessGroup({
   pid, killGraceMs, convergenceMs, probe, send,
 } = {}) {
-  for (const [name, value] of [['killGraceMs', killGraceMs], ['convergenceMs', convergenceMs]]) {
-    if (!Number.isFinite(value) || value < 0) {
-      throw new TypeError(`${name} must be a finite number >= 0`);
-    }
-  }
+  assertTimingMs('killGraceMs', killGraceMs);
+  assertTimingMs('convergenceMs', convergenceMs);
   if (!validPid(pid)) return true;
   const confirmationMs = Math.min(convergenceMs, CONFIRMATION_CAP_MS);
   if (!await awaitGroupState(pid, false, Math.min(killGraceMs, PRESENCE_CAP_MS), probe)) {

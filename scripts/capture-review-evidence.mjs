@@ -9,7 +9,7 @@ import {
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { convergeProcessGroup, processGroupsSupported } from './process-group.mjs';
+import { assertTimingMs, convergeProcessGroup, processGroupsSupported } from './process-group.mjs';
 import { assertSafeHubRoot, assertSafeLine } from './sanitize.mjs';
 import {
   openWorkPathFd,
@@ -321,6 +321,8 @@ export async function collectReviewEvidence({
   if (!processGroupsSupported(platform)) {
     throw new Error(`unsupported platform for process-group capture: ${platform}`);
   }
+  assertTimingMs('killGraceMs', killGraceMs);
+  assertTimingMs('processGroupConvergenceMs', processGroupConvergenceMs);
   const root = assertSafeHubRoot(repoRoot);
   const evidence = parseWorkPath(evidencePath, 'work-output', 'evidence').path;
   const test = safeCommand(testCommand, 'test command');

@@ -377,6 +377,29 @@ test('collector refuses unsupported process-group platforms before creating evid
   }
 });
 
+test('collector refuses invalid process-group timings before creating evidence or running a command', async () => {
+  const cases = [
+    ['killGraceMs', null], ['killGraceMs', NaN], ['killGraceMs', '500'],
+    ['processGroupConvergenceMs', -1], ['processGroupConvergenceMs', Infinity],
+  ];
+  for (const [name, value] of cases) {
+    const repo = fixture();
+    const marker = join(repo, 'command-ran');
+    try {
+      await assert.rejects(() => collectReviewEvidence({
+        repoRoot: repo,
+        evidencePath: EVIDENCE,
+        testCommand: nodeCommand(`require('node:fs').writeFileSync(${JSON.stringify(marker)}, '')`),
+        [name]: value,
+      }), { name: 'TypeError', message: `${name} must be a finite number >= 0` });
+      assert.equal(existsSync(join(repo, EVIDENCE)), false, `${name} = ${String(value)}`);
+      assert.equal(existsSync(marker), false, `${name} = ${String(value)}`);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
 test('receipt remains bounded for non-UTF-8 and JSON-escaped command output', async () => {
   const repo = fixture();
   try {

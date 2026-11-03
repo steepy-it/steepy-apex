@@ -37,7 +37,9 @@ import {
   readWorkPath,
   writeWorkPath,
 } from './work-paths.mjs';
-import { convergeProcessGroup, processGroupsSupported, signalProcessGroup } from './process-group.mjs';
+import {
+  assertTimingMs, convergeProcessGroup, processGroupsSupported, signalProcessGroup,
+} from './process-group.mjs';
 import { writeAllSync } from './write-all.mjs';
 import {
   WORKFLOW_EVENT_SCHEMA_VERSION,
@@ -2449,6 +2451,10 @@ function durableFdDestination(fd, writeToFd = writeSync) {
 
 export function runStreamingHeadlessDescriptor(descriptor, harness, cwd, options = {}) {
   return new Promise((resolveRun) => {
+    const killGraceMs = options.killGraceMs ?? 500;
+    const processGroupConvergenceMs = options.processGroupConvergenceMs ?? 1000;
+    assertTimingMs('killGraceMs', killGraceMs);
+    assertTimingMs('processGroupConvergenceMs', processGroupConvergenceMs);
     const rawPath = options.rawPath;
     const readablePath = options.readablePath;
     const opened = [];
@@ -2490,8 +2496,6 @@ export function runStreamingHeadlessDescriptor(descriptor, harness, cwd, options
     let abortCleanup = null;
     let interrupted = null;
     let stopForwarding = () => {};
-    const killGraceMs = options.killGraceMs ?? 500;
-    const processGroupConvergenceMs = options.processGroupConvergenceMs ?? 1000;
     const processGroupProbe = options.processGroupProbe ?? null;
     const processGroupSignal = options.processGroupSignal ?? null;
     const requestStop = (error) => {

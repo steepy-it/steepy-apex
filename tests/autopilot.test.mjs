@@ -1156,6 +1156,35 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
     });
   }
 
+  for (const [name, value] of [['killGraceMs', NaN], ['killGraceMs', -1], ['groupConvergenceMs', Infinity], ['groupConvergenceMs', '500']]) {
+    it(`refuses ${name} = ${typeof value === 'string' ? `'${value}'` : String(value)} before coordination, run-state mutation, command construction, or spawn`, async () => {
+      const run = makeRun();
+      let commands = 0;
+      let lockTransitions = 0;
+      try {
+        const result = await drive(run, {}, {
+          [name]: value,
+          commandFor: (...args) => { commands += 1; return stubCommandFor(...args); },
+          lockTransition: () => { lockTransitions += 1; },
+        });
+        assert.equal(result.code, 1);
+        assert.match(result.err, new RegExp(`refusing to drive.*${name} must be a finite number >= 0`));
+        assert.equal(commands, 0);
+        assert.equal(lockTransitions, 0);
+        assert.equal(existsSync(run.taskDir), false, 'status, logs, manifests, and usage must remain absent');
+      } finally { rmSync(run.dir, { recursive: true, force: true }); }
+    });
+  }
+
+  it('treats null process-group timings as the defaults every phase stops with', async () => {
+    const run = makeRun();
+    try {
+      const result = await drive(run, {}, { killGraceMs: null, groupConvergenceMs: null });
+      assert.equal(result.code, 0, result.err);
+      assert.equal(linesWith(statusOf(run), ' — PHASE_ACCEPTED — ').length, 3);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
   class InjectedLiveDestination extends EventEmitter {
     constructor({ results = [true], throwOnWrite = null, autoDrain = false } = {}) {
       super();

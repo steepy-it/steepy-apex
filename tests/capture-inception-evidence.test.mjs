@@ -152,6 +152,17 @@ test('unsupported runtime refuses before any capture reservation or command', as
   finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('invalid process-group timings refuse before any capture reservation or command', async () => {
+  const { collectInceptionEvidence } = await import('../scripts/capture-inception-evidence.mjs'); const root = fixture();
+  try {
+    const before = readFileSync(join(root, area, 'run.json'));
+    for (const [name, value] of [['killGraceMs', null], ['killGraceMs', NaN], ['processGroupConvergenceMs', -1], ['processGroupConvergenceMs', '500']]) {
+      await assert.rejects(collectInceptionEvidence({ ...options(root), [name]: value }), { name: 'TypeError', message: `${name} must be a finite number >= 0` });
+      assert.deepEqual(readFileSync(join(root, area, 'run.json')), before, `${name} = ${String(value)}`); assert.equal(existsSync(join(root, area, 'verification/captures')), false, `${name} = ${String(value)}`);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('API refuses alternative command, external receipt and forged finish ownership before writes', async () => {
   const { collectInceptionEvidence } = await import('../scripts/capture-inception-evidence.mjs'); const root = fixture();
   try {

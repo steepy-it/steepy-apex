@@ -5,6 +5,7 @@ import * as processGroup from '../scripts/process-group.mjs';
 
 const {
   PROCESS_GROUP_PLATFORMS,
+  assertTimingMs,
   convergeProcessGroup,
   processGroupAbsent,
   processGroupsSupported,
@@ -58,6 +59,7 @@ function recordingCalls() {
 test('exports exactly the process-group primitive and a frozen platform list', () => {
   assert.deepEqual(Object.keys(processGroup).sort(), [
     'PROCESS_GROUP_PLATFORMS',
+    'assertTimingMs',
     'convergeProcessGroup',
     'processGroupAbsent',
     'processGroupsSupported',
@@ -86,6 +88,17 @@ test('a missing or invalid pid is absent and never reaches the probe or the send
     assert.equal(processGroupAbsent(pid, { probe }), true, `processGroupAbsent pid ${String(pid)}`);
     assert.equal(signalProcessGroup(pid, 'SIGTERM', { send }), undefined, `signalProcessGroup pid ${String(pid)}`);
     assert.deepEqual(calls, { probe: 0, send: 0 }, `pid ${String(pid)} must not probe or signal`);
+  }
+});
+
+test('assertTimingMs accepts finite non-negative numbers and names the rejected option', () => {
+  for (const value of [0, 1.5, 1000]) assert.equal(assertTimingMs('killGraceMs', value), undefined);
+  for (const value of [undefined, null, NaN, -1, Infinity, '500']) {
+    assert.throws(
+      () => assertTimingMs('killGraceMs', value),
+      { name: 'TypeError', message: 'killGraceMs must be a finite number >= 0' },
+      String(value),
+    );
   }
 });
 

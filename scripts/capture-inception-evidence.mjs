@@ -9,7 +9,7 @@ import { parseArgs } from 'node:util';
 import { beginCapture, finishCapture } from './inception-state.mjs';
 import { openPublicationOutput, validateId, validatePath } from './inception-protocol.mjs';
 import { writeAllSync } from './write-all.mjs';
-import { convergeProcessGroup, processGroupsSupported } from './process-group.mjs';
+import { assertTimingMs, convergeProcessGroup, processGroupsSupported } from './process-group.mjs';
 
 async function within(promise, ms) {
   let timer;
@@ -66,6 +66,7 @@ export async function collectInceptionEvidence(options = {}) {
   for (const key of Object.keys(options)) if (!['repoRoot', 'cycle', 'check', 'unit', 'purpose', 'platform', 'writeToFd', 'closeFd', 'killGraceMs', 'processGroupConvergenceMs', 'streamSettlementMs', 'fault'].includes(key)) throw new Error(`unknown capture option: ${key}`);
   const { repoRoot, cycle, check, unit, purpose = 'check', platform = process.platform, writeToFd = writeSync, closeFd = closeSync, killGraceMs = 500, processGroupConvergenceMs = 1000, streamSettlementMs = 1500, fault } = options;
   if (!processGroupsSupported(platform)) throw new Error(`unsupported platform for process-group capture: ${platform}`);
+  assertTimingMs('killGraceMs', killGraceMs); assertTimingMs('processGroupConvergenceMs', processGroupConvergenceMs);
   const begun = beginCapture(repoRoot, { cycle, check, unit, purpose });
   if (begun.recovery) {
     if (begun.recovery.outcome === 'incomplete') throw new Error('capture remains incomplete; no command was rerun');
