@@ -16,6 +16,14 @@
 - `inception` keeps its "persist a unit before any work" rule in its `SKILL.md`.
 - New test `tests/skill-layout.test.mjs` fails when a `SKILL.md` exceeds the ceiling, a step
   file is missing, or a Markdown file in a skill directory is not reachable from its `SKILL.md`.
+- Autopilot, `loop-engineer`, review capture and inception capture stop their child processes
+  through one shared routine, `scripts/process-group.mjs`: `SIGTERM`, a wait, `SIGKILL`, a wait.
+  A process group counts as gone only when the system reports it no longer exists; a permission
+  error or any other doubt keeps the run from moving on.
+- `loop-engineer` now runs only on Linux and macOS, like Gear-3 autopilot. On other platforms it
+  refuses before writing anything, instead of falling back to a weaker stop.
+- Stop timings passed to these scripts' APIs are checked before any command starts, so an
+  invalid value refuses the run instead of failing while the processes are being stopped.
 
 ## v1.2.1 (2026-10-26)
 
