@@ -3696,3 +3696,145 @@ test('process-group convergence timeout is a blocking result after raw stream fi
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+const GROUP_LEADER_SCRIPT = [
+  "process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'status: DONE\\nartifact: report.md\\nchanged-paths: none\\nsignals: none'}})+'\\n');",
+  "process.stdout.write(JSON.stringify({type:'turn.completed'})+'\\n',()=>process.exit(0));",
+].join('');
+
+async function runGroupLeader(repo, extraOptions) {
+  const rawPath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
+  const readablePath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
+  return runStreamingHeadlessDescriptor(
+    { cmd: process.execPath, args: ['-e', GROUP_LEADER_SCRIPT] },
+    'codex',
+    repo,
+    {
+      rawPath,
+      readablePath,
+      killGraceMs: 10,
+      processGroupConvergenceMs: 20,
+      liveStdout: { write() { return true; } },
+      liveStderr: { write() { return true; } },
+      ...extraOptions,
+    },
+  );
+}
+
+test('streaming runner refuses invalid process-group timings before opening evidence or spawning', async () => {
+  for (const [name, value] of [['killGraceMs', NaN], ['killGraceMs', -1], ['processGroupConvergenceMs', Infinity], ['processGroupConvergenceMs', '500']]) {
+    const repo = fixture();
+    const marker = join(repo, 'spawned');
+    const rawPath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
+    try {
+      await assert.rejects(() => runStreamingHeadlessDescriptor(
+        { cmd: process.execPath, args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, '')`] },
+        'codex',
+        repo,
+        {
+          rawPath,
+          readablePath: `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`,
+          liveStdout: { write() { return true; } },
+          liveStderr: { write() { return true; } },
+          [name]: value,
+        },
+      ), { name: 'TypeError', message: `${name} must be a finite number >= 0` });
+      assert.equal(existsSync(join(repo, rawPath)), false, `${name} = ${String(value)}`);
+      assert.equal(existsSync(marker), false, `${name} = ${String(value)}`);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
+test('default process-group probe treats EPERM as not proven absent', async () => {
+  const repo = fixture();
+  const originalKill = process.kill;
+  process.kill = (pid, signal) => {
+    if (typeof pid === 'number' && pid < 0 && signal === 0) {
+      throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    }
+    return originalKill.call(process, pid, signal);
+  };
+  try {
+    const result = await runGroupLeader(repo, {});
+    assert.match(result.error?.message ?? '', /process-group convergence timed out/iu);
+  } finally {
+    process.kill = originalKill;
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('injected process-group probe errors follow the one probe contract', async () => {
+  const cases = [
+    { name: 'EPERM', probe: () => { throw Object.assign(new Error('eperm'), { code: 'EPERM' }); }, timedOut: true, signalled: true },
+    { name: 'false return', probe: () => false, timedOut: true, signalled: true },
+    { name: 'ESRCH', probe: () => { throw Object.assign(new Error('esrch'), { code: 'ESRCH' }); }, timedOut: false, signalled: false },
+  ];
+  for (const { name, probe, timedOut, signalled } of cases) {
+    const repo = fixture();
+    try {
+      const signals = [];
+      const result = await runGroupLeader(repo, {
+        processGroupProbe: probe,
+        processGroupSignal: (pid, signal) => { signals.push(signal); },
+      });
+      if (timedOut) {
+        assert.match(result.error?.message ?? '', /process-group convergence timed out/iu, name);
+      } else {
+        assert.equal(result.error, null, name);
+      }
+      if (signalled) {
+        assert.ok(signals.includes('SIGTERM') && signals.includes('SIGKILL'), `${name}: ${signals}`);
+      } else {
+        assert.deepEqual(signals, [], name);
+      }
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
+function snapshotTree(root) {
+  const entries = new Map();
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        entries.set(full.slice(root.length), null);
+        walk(full);
+      } else {
+        entries.set(full.slice(root.length), readFileSync(full).toString('base64'));
+      }
+    }
+  };
+  walk(root);
+  return entries;
+}
+
+test('CLI refuses unsupported platforms before any lock, event, or evidence write', async () => {
+  const repo = fixture();
+  try {
+    writeWorkPath(repo, GOAL_PATH, goalText(), { expect: 'goal', family: 'goal' });
+    const before = snapshotTree(repo);
+    for (const platform of ['win32', 'aix']) {
+      const out = [];
+      const err = [];
+      const status = await main([
+        '--repo-root', repo, '--goal', GOAL_PATH, '--harness', 'codex', '--commit-authorized',
+        '--routing-index', ROUTING_PATH, '--standard', SCRIPT_STANDARD,
+      ], {
+        platform,
+        stdout: { write: (value) => out.push(String(value)) },
+        stderr: { write: (value) => err.push(String(value)) },
+      });
+      assert.equal(status, 1, platform);
+      assert.match(err.join(''), /unsupported platform "(win32|aix)"/u);
+      assert.doesNotMatch(err.join(''), /runner-unavailable/u);
+      assert.equal(out.join(''), '');
+      assert.deepEqual(snapshotTree(repo), before, platform);
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});

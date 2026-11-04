@@ -1,15 +1,15 @@
 # implement — autopilot protocol
 
 > Read this file only when the Step 0 verdict contract says `drive: autopilot`. In manual drive it is
-> never read — the manual-drive path in `SKILL.md` stays self-contained. This file carries the
+> never read — the manual-drive path in `SKILL.md` and its step files stays self-contained. This file carries the
 > conductor phase-manifest protocol, the correlated BLOCKED/DONE status-marker protocol, and the
-> task-local manifest protocol, keyed to the `SKILL.md` step it supplements.
+> task-local manifest protocol, keyed to the step it supplements.
 
 ## Step 0 — phase manifest, scalars, and correlation
 
 Read `manifest.contract.taskResultProtocol` as a pinned scalar alongside verdict/gear/drive.
 `taskResultProtocol` is always `2`; read `task-results-protocol.md` before any writer dispatch; the
-four-field and `- Task` examples in SKILL.md are manual-drive grammar. The conductor records
+four-field and `- Task` examples in the step files are manual-drive grammar. The conductor records
 `TASK_RESULT_PROTOCOL` for fresh runs. Manual drive and Gear 4 are unaffected.
 
 **Autopilot preflight:** When the conductor's `phasePrompt` supplies a conductor-supplied phase manifest,
@@ -89,7 +89,9 @@ task-local manifest protocol below, then pass only its path plus scalar dispatch
 reads the manifest's authoritative inventory. When you dispatch the task reviewer, first create and
 validate its iteration manifest, then follow `reviewer-recovery.md` before dispatch and after return.
 This deterministic gate also applies to the Step-4 whole-branch reviewer. On **Issues Found**, create and validate a fix manifest before
-dispatching the fix back to the same `<surface>-agent`.
+dispatching the fix back to the same `<surface>-agent`. Both fix loops obey the fix-round cap in `SKILL.md`;
+a loop that reaches the cap ends with the correlated `BLOCKED` marker below, never another fix dispatch.
+A human restarts it by resuming the run; the cap says how the new attempt records that restart.
 
 Preserve `discovery:unplanned` from the validated implementer/fix envelope in the compact
 task-result index and retain the occurrence through later fixes, paired with DONE_WITH_CONCERNS.
@@ -113,7 +115,7 @@ aggregate branch diff, and relevant standards are its exact required inventory.
 
 ## Step 5 — hand off
 
-**Autopilot:** after the handoff verifies and the SKILL.md → "Step 5 — Hand off" lifecycle completes
+**Autopilot:** after the handoff verifies and the `finish.md` → "Step 5 — Hand off" lifecycle completes
 (output READY first, input CONSUMED second), run the `reviewer-recovery.md` verify-handoff command, then append `<ISO timestamp> — implement — DONE — run-id=<conductor-supplied> attempt=<positive supplied> <commit range>` to `.apex/work/tasks/<spec-basename>/autopilot-status.md`. The session then simply ends — the conductor spawns the `review` skill next. Resume uses only manifest-authorized paths and the same exact-pair proof; manual resume capabilities do not widen an autopilot manifest or authorize scanning for prior outputs.
 
 ## Task-local manifest protocol

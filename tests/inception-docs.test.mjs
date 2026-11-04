@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { skillText } from './support/skills.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...parts) => readFileSync(join(repoRoot, ...parts), 'utf8');
@@ -262,11 +263,11 @@ test('native protocol requires every recovery and verification case without clai
 });
 
 test('pre-merge rules agree across skills and guides', () => {
-  const init = norm(read('skills', 'init', 'SKILL.md'));
+  const init = norm(skillText('init'));
   assert.ok(init.includes('node <engine-root>/scripts/inception-governance.mjs documents --repo-root <repo-root> --input <governance-input-json>'));
   assert.match(init, /never write certified document bytes/i);
   assert.match(init, /mode 0644/);
-  const inception = norm(read('skills', 'inception', 'SKILL.md'));
+  const inception = norm(skillText('inception'));
   assert.match(inception, /Git status leaves out the same reserved areas, recognized scaffold leases and approved exclusions/i);
   assert.match(inception, /recognized scaffold lease is not divergence/i);
   assert.doesNotMatch(inception, /with only reserved protocol areas excluded/i);
@@ -280,7 +281,7 @@ test('pre-merge rules agree across skills and guides', () => {
   assert.match(inception, /Older approvals and a reserved completion verify their frozen copies/);
   assert.match(inception, /Changes outside the intent scope never prevent recording the observed result/);
   assert.match(inception, /only the human accepts those paths, through `unit reconcile` with their explicit statement/);
-  const discovery = norm(read('skills', 'discovery', 'SKILL.md'));
+  const discovery = norm(skillText('discovery'));
   assert.match(discovery, /does not cover every registered decision document/i);
   assert.match(discovery, /uncovered decision/);
   const guide = norm(read('docs', 'inception.md'));

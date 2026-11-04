@@ -1156,6 +1156,35 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
     });
   }
 
+  for (const [name, value] of [['killGraceMs', NaN], ['killGraceMs', -1], ['groupConvergenceMs', Infinity], ['groupConvergenceMs', '500']]) {
+    it(`refuses ${name} = ${typeof value === 'string' ? `'${value}'` : String(value)} before coordination, run-state mutation, command construction, or spawn`, async () => {
+      const run = makeRun();
+      let commands = 0;
+      let lockTransitions = 0;
+      try {
+        const result = await drive(run, {}, {
+          [name]: value,
+          commandFor: (...args) => { commands += 1; return stubCommandFor(...args); },
+          lockTransition: () => { lockTransitions += 1; },
+        });
+        assert.equal(result.code, 1);
+        assert.match(result.err, new RegExp(`refusing to drive.*${name} must be a finite number >= 0`));
+        assert.equal(commands, 0);
+        assert.equal(lockTransitions, 0);
+        assert.equal(existsSync(run.taskDir), false, 'status, logs, manifests, and usage must remain absent');
+      } finally { rmSync(run.dir, { recursive: true, force: true }); }
+    });
+  }
+
+  it('treats null process-group timings as the defaults every phase stops with', async () => {
+    const run = makeRun();
+    try {
+      const result = await drive(run, {}, { killGraceMs: null, groupConvergenceMs: null });
+      assert.equal(result.code, 0, result.err);
+      assert.equal(linesWith(statusOf(run), ' — PHASE_ACCEPTED — ').length, 3);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
   class InjectedLiveDestination extends EventEmitter {
     constructor({ results = [true], throwOnWrite = null, autoDrain = false } = {}) {
       super();
@@ -1212,8 +1241,32 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
         groupConvergenceMs: 0,
       });
       assert.equal(result.code, 0);
-      assert.equal(probes, 3);
+      assert.equal(probes, 6, 'a presence probe and a confirmation probe for each of three children');
       assert.deepEqual(signals, [], 'absent group must never be signaled');
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('terminates a group whose first probe is a transient absence', async () => {
+    const run = makeRun();
+    const signals = [];
+    const seen = new Set();
+    const terminated = new Set();
+    const absent = () => Object.assign(new Error('absent'), { code: 'ESRCH' });
+    try {
+      const result = await drive(run, {}, {
+        processGroupProbe: (pid) => {
+          if (!seen.has(pid)) { seen.add(pid); throw absent(); }
+          if (terminated.has(pid)) throw absent();
+        },
+        processGroupSignal: (pid, signal) => {
+          signals.push(signal);
+          if (signal === 'SIGTERM') terminated.add(pid);
+        },
+        killGraceMs: 50,
+        groupConvergenceMs: 50,
+      });
+      assert.equal(result.code, 0);
+      assert.deepEqual(signals, ['SIGTERM', 'SIGTERM', 'SIGTERM'], 'one TERM per phase child and no KILL');
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.3.0 (2026-11-02)
+
+- Long skills survive context compaction. Every `SKILL.md` now stays under 12,000 bytes and holds
+  what must hold for the whole run: purpose, standing rules, checklist, a step map, and Model
+  Selection. The step detail of `inception`, `implement`, `review`, `brainstorm`, `plan`, `init`,
+  `loop-engineer` and `discovery` moved unchanged into step files next to each skill, read in full
+  at the step that needs them and re-read after a compaction instead of followed from a summary.
+- The five chain skills carry the manual-handoff block as an identical `manual-handoff.md`.
+- `implement` caps a review-fix loop that stops converging: three fix rounds at the task's tier
+  (never below `standard`), two more one tier up when one is left, then the loop stops and hands
+  the open issues to the user (in autopilot it records `BLOCKED`). Rounds are counted from the
+  ledger, so the count survives a compaction, and only the user restarts a stopped loop; in
+  autopilot, resuming the run is that restart.
+- `inception` keeps its "persist a unit before any work" rule in its `SKILL.md`.
+- New test `tests/skill-layout.test.mjs` fails when a `SKILL.md` exceeds the ceiling, a step
+  file is missing, or a Markdown file in a skill directory is not reachable from its `SKILL.md`.
+- Autopilot, `loop-engineer`, review capture and inception capture stop their child processes
+  through one shared routine, `scripts/process-group.mjs`: `SIGTERM`, a wait, `SIGKILL`, a wait.
+  A process group counts as gone only when the system reports it no longer exists; a permission
+  error or any other doubt keeps the run from moving on.
+- `loop-engineer` now runs only on Linux and macOS, like Gear-3 autopilot. On other platforms it
+  refuses before writing anything, instead of falling back to a weaker stop.
+- Stop timings passed to these scripts' APIs are checked before any command starts, so an
+  invalid value refuses the run instead of failing while the processes are being stopped.
+
 ## v1.2.1 (2026-10-26)
 
 - The README presents inception: it is listed under "What it does" and in the documentation

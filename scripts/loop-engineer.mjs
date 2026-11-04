@@ -37,6 +37,9 @@ import {
   readWorkPath,
   writeWorkPath,
 } from './work-paths.mjs';
+import {
+  assertTimingMs, convergeProcessGroup, processGroupsSupported, signalProcessGroup,
+} from './process-group.mjs';
 import { writeAllSync } from './write-all.mjs';
 import {
   WORKFLOW_EVENT_SCHEMA_VERSION,
@@ -2420,82 +2423,6 @@ function appendBoundedDiagnostic(current, chunk, limit = DIAGNOSTIC_LIMIT) {
   return combined.subarray(Math.max(0, combined.length - limit)).toString('utf8');
 }
 
-function killProcessTree(child, signal, processGroupSignal = null) {
-  if (!child) return;
-  if (processGroupSignal !== null) {
-    try { processGroupSignal(child.pid, signal); } catch { /* convergence will fail closed */ }
-    return;
-  }
-  try {
-    process.kill(-child.pid, signal);
-  } catch {
-    try { child.kill(signal); } catch { /* the process tree is already gone */ }
-  }
-}
-
-function processTreeAlive(child, processGroupProbe = null) {
-  if (!child?.pid) return false;
-  if (processGroupProbe !== null) {
-    try {
-      return processGroupProbe(child.pid) !== false;
-    } catch {
-      return true;
-    }
-  }
-  try {
-    process.kill(-child.pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function awaitProcessTreeExit(child, timeoutMs, processGroupProbe = null) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    if (!processTreeAlive(child, processGroupProbe)) return true;
-    if (Date.now() >= deadline) return false;
-    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
-  }
-}
-
-async function awaitProcessTreePresence(child, timeoutMs, processGroupProbe = null) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    if (processTreeAlive(child, processGroupProbe)) return true;
-    if (Date.now() >= deadline) return false;
-    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
-  }
-}
-
-async function convergeProcessTree(
-  child,
-  termGraceMs,
-  convergenceMs,
-  processGroupProbe = null,
-  processGroupSignal = null,
-) {
-  if (!child?.pid) return true;
-  const confirmationMs = Math.min(convergenceMs, 100);
-  if (!await awaitProcessTreePresence(
-    child,
-    Math.min(termGraceMs, 100),
-    processGroupProbe,
-  )) {
-    await new Promise((resolveWait) => setTimeout(resolveWait, confirmationMs));
-    if (!processTreeAlive(child, processGroupProbe)) return true;
-  }
-  killProcessTree(child, 'SIGTERM', processGroupSignal);
-  if (await awaitProcessTreeExit(child, termGraceMs, processGroupProbe)) {
-    await new Promise((resolveWait) => setTimeout(resolveWait, confirmationMs));
-    if (!processTreeAlive(child, processGroupProbe)) return true;
-  }
-  killProcessTree(child, 'SIGKILL', processGroupSignal);
-  if (!await awaitProcessTreeExit(child, convergenceMs, processGroupProbe)) return false;
-  await new Promise((resolveWait) => setTimeout(resolveWait, confirmationMs));
-  return !processTreeAlive(child, processGroupProbe);
-}
-
 function durableFdDestination(fd, writeToFd = writeSync) {
   let closed = false;
   return {
@@ -2524,6 +2451,10 @@ function durableFdDestination(fd, writeToFd = writeSync) {
 
 export function runStreamingHeadlessDescriptor(descriptor, harness, cwd, options = {}) {
   return new Promise((resolveRun) => {
+    const killGraceMs = options.killGraceMs ?? 500;
+    const processGroupConvergenceMs = options.processGroupConvergenceMs ?? 1000;
+    assertTimingMs('killGraceMs', killGraceMs);
+    assertTimingMs('processGroupConvergenceMs', processGroupConvergenceMs);
     const rawPath = options.rawPath;
     const readablePath = options.readablePath;
     const opened = [];
@@ -2565,17 +2496,15 @@ export function runStreamingHeadlessDescriptor(descriptor, harness, cwd, options
     let abortCleanup = null;
     let interrupted = null;
     let stopForwarding = () => {};
-    const killGraceMs = options.killGraceMs ?? 500;
-    const processGroupConvergenceMs = options.processGroupConvergenceMs ?? 1000;
     const processGroupProbe = options.processGroupProbe ?? null;
     const processGroupSignal = options.processGroupSignal ?? null;
     const requestStop = (error) => {
       if (stopRequested) return;
       stopRequested = true;
       if (error && bridgeError === null) bridgeError = error;
-      killProcessTree(child, 'SIGTERM', processGroupSignal);
+      signalProcessGroup(child?.pid, 'SIGTERM', { send: processGroupSignal });
       graceTimer = setTimeout(
-        () => killProcessTree(child, 'SIGKILL', processGroupSignal),
+        () => signalProcessGroup(child?.pid, 'SIGKILL', { send: processGroupSignal }),
         killGraceMs,
       );
     };
@@ -2723,13 +2652,13 @@ export function runStreamingHeadlessDescriptor(descriptor, harness, cwd, options
       if (convergenceStarted) return;
       convergenceStarted = true;
       if (graceTimer) clearTimeout(graceTimer);
-      void convergeProcessTree(
-        child,
+      void convergeProcessGroup({
+        pid: child?.pid,
         killGraceMs,
-        processGroupConvergenceMs,
-        processGroupProbe,
-        processGroupSignal,
-      ).then((converged) => {
+        convergenceMs: processGroupConvergenceMs,
+        probe: processGroupProbe,
+        send: processGroupSignal,
+      }).then((converged) => {
         convergenceError = converged
           ? null
           : new Error(`process-group convergence timed out after ${processGroupConvergenceMs}ms`);
@@ -3088,6 +3017,11 @@ export async function main(argv = process.argv.slice(2), io = {}) {
       stderr.write(`${message}\n`);
       return 1;
     }
+  }
+  const platform = io.platform ?? process.platform;
+  if (!processGroupsSupported(platform)) {
+    stderr.write(`loop-engineer: refusing to run: unsupported platform "${platform}" — deterministic Gear 4 process-group ownership is unavailable\n`);
+    return 1;
   }
   if (headlessCommand(values.harness, 'Validate Gear-4 runner availability.', { modelTier: 'standard' }) === null) {
     stderr.write(`runner-unavailable: ${values.harness}\n`);

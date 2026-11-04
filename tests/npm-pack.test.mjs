@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stepFiles } from './support/skills.mjs';
 
 // Locks the multi-harness release payload (spec criterion 11): everything a
 // Codex/OpenCode/Pi/Claude Code install needs must actually land in the npm tarball,
@@ -99,6 +100,8 @@ test('npm tarball includes all ten SKILL.md files', () => {
     'loop-engineer',
   ];
   assertPacked(skillNames.map((name) => `skills/${name}/SKILL.md`), 'ten SKILL.md files');
+  assertPacked(skillNames.flatMap((name) => stepFiles(name).map((file) => `skills/${name}/${file}`)),
+    'step files named by each SKILL.md step map');
 });
 
 test('npm tarball includes the six subagent prompt templates', () => {

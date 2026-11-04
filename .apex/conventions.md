@@ -162,9 +162,11 @@ value, drive mode says *who pushes the button between phases*. Gear 3 only:
   not phase authority until the owning conductor correlates the attempt and records its acceptance.
 
   Wall-clock duration and resource consumption are observability signals, but neither a timer nor
-  a predetermined fixed-consumption quota terminates a healthy phase by itself. Autopilot's phase/task
-  topology is finite, but that is not a wall-clock liveness guarantee: a live silent child remains
-  active until it exits or receives an explicit stop.
+  a predetermined fixed-consumption quota terminates a healthy phase by itself. The fix-round cap
+  ("Execution discipline") is not such a quota: it parks only a review-fix loop that is still open
+  after its last allowed round, which counts as a loop that has stopped converging. Autopilot's
+  phase/task topology is finite, but that is not a wall-clock liveness guarantee: a live silent
+  child remains active until it exits or receives an explicit stop.
   Each fresh phase starts with a deterministic, versioned context manifest: its role-local
   `required` inventory is read eagerly, while `onDemand` entries require a named missing fact and
   are recorded. This governs eager upstream context, not repository authorization: source files
@@ -337,6 +339,19 @@ Skills stay self-contained: the per-skill Model Selection and gear-0 ("Read the 
 duplicated on purpose. Only one SKILL.md loads per invocation, so folding them into a shared file
 would add a read, not save tokens — do not DRY them.
 
+## Compaction-safe skill layout
+
+A harness may keep only the start of an invoked skill after a context compaction (Claude Code
+re-attaches the first 5,000 tokens of each skill and drops files read earlier). So every SKILL.md
+stays under a 12,000-byte ceiling and holds what must hold for the whole run: purpose, standing
+rules, checklist, a `## Procedure` step map, and Model Selection. Step detail lives in co-located
+step files that the map names, each read in full at every step that relies on it. The map
+carries one canonical rule: re-read a step file that is not fully in view, and never act on a summary
+of it.
+Each chain skill carries the same manual-handoff block as a byte-identical `manual-handoff.md`.
+`tests/skill-layout.test.mjs` locks the ceiling, the rule, and that every co-located Markdown file
+is reachable from its SKILL.md.
+
 ## Execution discipline
 
 - **Branch & commit authorization** — on `main`/`master`, ask once whether to branch; take
@@ -348,6 +363,13 @@ would add a read, not save tokens — do not DRY them.
 - **Next-step routing** — every chain skill ends by naming the next skill; a downstream
   skill whose precondition artifact is missing refuses and bounces upstream instead of
   fabricating it. `loop-engineer` likewise refuses a missing or partial authorization contract.
+- **Fix-round cap** — in `implement`, each task's review-fix loop and the whole-branch loop get
+  three fix rounds at the task's tier (never below `standard`), then two more one tier up when one
+  is left, then park: manual drive stops for the human with the open issues artifact, autopilot
+  records the correlated `BLOCKED`. Rounds are counted from ledger lines, not memory, and only a
+  user restart recorded in the ledger resets them; in autopilot the user restarts by resuming the
+  run. A loop that stops converging is not healthy work, so this is a
+  convergence guard, not a resource quota.
 - **Session per phase** — a phase of the chain runs in a session of its own; the phase handoff is
   where context resets. Declared on entry and exit, **never imposed** — sound work proceeds either
   way, and an uncertain session history is stated as such, not gated on. Why: session cost is

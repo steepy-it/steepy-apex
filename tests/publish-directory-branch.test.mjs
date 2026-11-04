@@ -6,6 +6,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stepFiles } from './support/skills.mjs';
 import {
   DIRECTORY_DENYLIST,
   directoryCommitMessage,
@@ -558,8 +559,10 @@ test('directoryPaths keeps every inception helper, reached engine module, and sk
   const list = [
     ...[...reached].sort(),
     'skills/inception/SKILL.md',
+    ...stepFiles('inception').map((file) => `skills/inception/${file}`),
     'skills/inception/research-prompt.md',
     'skills/inception/bootstrap-part-prompt.md',
+    'skills/discovery/inception-source.md',
     'skills/discovery/explore-inception-prompt.md',
   ];
   assert.deepEqual(directoryPaths(list), list);

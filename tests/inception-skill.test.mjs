@@ -6,13 +6,14 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { skillText } from './support/skills.mjs';
 import { planProjectScaffold, applyProjectScaffold } from '../scripts/project-scaffold.mjs';
 import { renderTemplate } from '../scripts/template.mjs';
 import { publicationRef } from '../scripts/inception-protocol.mjs';
 import { sectionBetween, frontmatter } from './support/markdown.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const skill = readFileSync(join(root, 'skills/inception/SKILL.md'), 'utf8');
+const skill = skillText('inception');
 const flat = text => text.replace(/\s+/g, ' ');
 const area = '.apex/inception';
 const doc = name => readFileSync(join(root, 'skills/inception', name), 'utf8');
@@ -99,7 +100,7 @@ test('entry remains portable, human-led, pre-hub and outside the workflow chain'
 });
 
 test('helper table covers v2 recovery, unit, effect, verification and terminal commands without retired mutation flags', () => {
-  const helper = sectionBetween(skill, '## Helper commands', '## Procedure');
+  const helper = doc('helper.md');
   for (const command of ['inspect', 'unit begin', 'unit finish', 'unit reconcile', 'unit close-incomplete', 'publish resume', 'resume-check', 'block resolve', 'effect intent', 'effect outcome', 'effect reconcile', 'verification begin', 'verification resume', 'verification attest', 'verification status', 'verification summarize', 'verify-complete']) assert.ok(helper.includes(`inception-state.mjs ${command} --repo-root .`), command);
   assert.match(helper, /--previous-unit <id>/);
   assert.match(helper, /--contract <path>/);
@@ -354,8 +355,8 @@ test('live registered capture retains its active unit and cannot claim blocked s
 
 // Task 11: execute init/discovery's documented CLIs against a completed v2 run.
 test('complete source recipe verifies before source reads, certifies init, and rejects later drift without mutating the run', t => {
-  const init = readFileSync(join(root, 'skills/init/SKILL.md'), 'utf8');
-  const discovery = readFileSync(join(root, 'skills/discovery/SKILL.md'), 'utf8');
+  const init = skillText('init');
+  const discovery = skillText('discovery');
   const prepare = init.match(/node <engine-root>\/scripts\/inception-governance\.mjs prepare --repo-root <repo-root> --input <governance-input-json>/)?.[0];
   const finish = init.match(/node <engine-root>\/scripts\/inception-governance\.mjs finish --repo-root <repo-root>/)?.[0];
   const gate = discovery.match(/node <engine-root>\/scripts\/inception-state\.mjs verify-complete --repo-root \./)?.[0];
@@ -470,7 +471,7 @@ for (const prefix of ['full-scaffold', 'through-customized-replacement']) test(`
   });
   const before = metadata();
   governance('prepare'); // byte-identical retained governance input after actual replacement
-  const init = readFileSync(join(root, 'skills/init/SKILL.md'), 'utf8');
+  const init = skillText('init');
   const recipe = init.match(/<!-- example:retained-scaffold-apply -->\n```javascript\n([\s\S]*?)\n```/)?.[1];
   assert.ok(recipe, 'document a concrete public retained-plan recovery recipe');
   const code = recipe.replaceAll('<engine-root>', root).replaceAll('<repo-root>', f.repo).replaceAll('<governance-input-json>', inputPath).replaceAll('<scaffold-plan-json>', planPath);

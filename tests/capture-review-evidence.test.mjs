@@ -377,6 +377,29 @@ test('collector refuses unsupported process-group platforms before creating evid
   }
 });
 
+test('collector refuses invalid process-group timings before creating evidence or running a command', async () => {
+  const cases = [
+    ['killGraceMs', null], ['killGraceMs', NaN], ['killGraceMs', '500'],
+    ['processGroupConvergenceMs', -1], ['processGroupConvergenceMs', Infinity],
+  ];
+  for (const [name, value] of cases) {
+    const repo = fixture();
+    const marker = join(repo, 'command-ran');
+    try {
+      await assert.rejects(() => collectReviewEvidence({
+        repoRoot: repo,
+        evidencePath: EVIDENCE,
+        testCommand: nodeCommand(`require('node:fs').writeFileSync(${JSON.stringify(marker)}, '')`),
+        [name]: value,
+      }), { name: 'TypeError', message: `${name} must be a finite number >= 0` });
+      assert.equal(existsSync(join(repo, EVIDENCE)), false, `${name} = ${String(value)}`);
+      assert.equal(existsSync(marker), false, `${name} = ${String(value)}`);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
 test('receipt remains bounded for non-UTF-8 and JSON-escaped command output', async () => {
   const repo = fixture();
   try {
@@ -489,6 +512,65 @@ test('CLI refuses an existing symlinked evidence target without changing its ref
     assert.equal(result.status, 1);
     assert.match(result.stderr, /symlink target blocks/u);
     assert.equal(readFileSync(target, 'utf8'), 'sentinel');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+for (const [name, processGroupProbe] of [
+  ['a non-EPERM, non-ESRCH probe error is not proof of absence', () => {
+    throw Object.assign(new Error('injected I/O error'), { code: 'EIO' });
+  }],
+  ['a probe returning false is no longer absence', () => false],
+]) {
+  test(`${name}: capture fails closed`, {
+    timeout: 5_000,
+    skip: !GROUPS_SUPPORTED,
+  }, async () => {
+    const repo = fixture();
+    const signals = [];
+    try {
+      await assert.rejects(
+        collectReviewEvidence({
+          repoRoot: repo,
+          evidencePath: EVIDENCE,
+          testCommand: nodeCommand("process.stdout.write('ok')"),
+          killGraceMs: 20,
+          processGroupConvergenceMs: 20,
+          processGroupProbe,
+          processGroupSignal(pid, signal) { signals.push(signal); },
+        }),
+        /process-group convergence timed out after 20ms/u,
+      );
+      assert.deepEqual(signals.slice(0, 2), ['SIGTERM', 'SIGKILL']);
+      const report = readFileSync(join(repo, EVIDENCE), 'utf8');
+      assert.doesNotMatch(report, /steepy validate-hub: OK/u);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+}
+
+test('an injected ESRCH probe throw proves absence and delivers no signal', {
+  timeout: 5_000,
+  skip: !GROUPS_SUPPORTED,
+}, async () => {
+  const repo = fixture();
+  const signals = [];
+  try {
+    const receipt = await collectReviewEvidence({
+      repoRoot: repo,
+      evidencePath: EVIDENCE,
+      testCommand: nodeCommand("process.stdout.write('ok')"),
+      killGraceMs: 20,
+      processGroupConvergenceMs: 20,
+      processGroupProbe() {
+        throw Object.assign(new Error('no such group'), { code: 'ESRCH' });
+      },
+      processGroupSignal(pid, signal) { signals.push(signal); },
+    });
+    assert.deepEqual(receipt.commands.map(({ label }) => label), ['surface-test', 'validate-hub']);
+    assert.deepEqual(signals, []);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

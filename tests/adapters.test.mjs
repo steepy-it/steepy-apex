@@ -21,6 +21,7 @@ import {
   CLAUDE_ALLOWED_TOOLS, CODEX_MODEL_MAPPING_SOURCE, headlessCommand,
 } from '../adapters/headless.mjs';
 import { sessionStoreDescriptor } from '../adapters/session-store.mjs';
+import { stepFiles } from './support/skills.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -1737,6 +1738,11 @@ describe('dsh adapter (adapters/dsh/steepy-apex.js)', () => {
       assert.equal(typeof value, 'string', `${skill}: execute must return a string`);
       assert.ok(value.endsWith(expectedBytes), `${skill}: output must end with the exact SKILL.md bytes, with nothing following`);
       assert.ok(value.includes(`${skillDir}/`), `${skill}: output must state the skill's base directory`);
+      const baseDir = value.match(/^Skill base directory: (.+)\/$/m)?.[1];
+      assert.equal(baseDir, skillDir, `${skill}: output must state "Skill base directory: <dir>/" on its own line`);
+      for (const file of stepFiles(skill)) {
+        assert.ok(existsSync(join(baseDir, file)), `${skill}: step file ${file} must resolve from the stated base directory`);
+      }
 
       const rendered = tool.output.render({ skill }, value);
       assert.ok(Array.isArray(rendered) && rendered.length === 1, `${skill}: render must return a single content block`);

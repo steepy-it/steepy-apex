@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { skillText } from './support/skills.mjs';
 import { renderTemplate } from '../scripts/template.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -36,7 +37,7 @@ test('skip / git-libero (empty directive) leaves required directives 1-3', () =>
 });
 
 test('SKILL.md and the _INDEX template agree on the gitPolicyDirective placeholder', () => {
-  const skill = readFileSync(join(here, '..', 'skills', 'init', 'SKILL.md'), 'utf8');
+  const skill = skillText('init');
   assert.match(indexTpl, /\{\{gitPolicyDirective\}\}/);
   assert.match(skill, /\{\{gitPolicyDirective\}\}/);
   assert.match(skill, /\*\*Git policy:\*\*/);
