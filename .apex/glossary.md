@@ -39,6 +39,14 @@
   extras (`user-invocable`, `argument-hint`) ride along only while verified tolerated by
   the other three (Codex, OpenCode, Pi). DeepSeek Harness parses no frontmatter at all —
   the whole file reaches the model as opaque prose — so neither claim applies to it.
+- **Step file** — a co-located Markdown file that a skill's `## Procedure` step map names
+  (e.g. `skills/implement/task-loop.md`). It holds one stretch of the procedure and is read
+  in full at the step that needs it. Only SKILL.md is meant to stay in context for a whole
+  run, so a step file is re-read after a context compaction, never acted on from a summary;
+  see [Conventions](conventions.md) → "Compaction-safe skill layout".
+- **Fix-round cap** — `implement`'s bound on a review-fix loop that stops converging: three
+  fix rounds, two more one tier up when one is left, then the loop parks for the human. It is a
+  convergence guard, not a resource quota; see [Conventions](conventions.md) → "Execution discipline".
 - **Work artifact** - local planning or execution material under `.apex/work/`;
   intentionally not part of the versioned hub DAG.
 - **Work-input capability** — a phase-local, default-deny authorization to read a work

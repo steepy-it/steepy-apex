@@ -3,7 +3,7 @@
 > Owning surface: `skills`. Read this before editing `skills`.
 
 ## Scope
-- Owns: slash-command `SKILL.md` files and co-located prompts under `skills/`, including implementer,
+- Owns: slash-command `SKILL.md` files, their step files, and co-located prompts under `skills/`, including implementer,
   task/final reviewer, discovery explorer, and `skills/loop-engineer/loop-implementer-prompt.md` plus
   `skills/loop-engineer/loop-final-review-prompt.md`. The five chain skills
   short-circuit Gear 2 through brainstorm → implement, run Gear 3 through brainstorm → plan →
@@ -17,7 +17,7 @@
 ## Conventions
 - Each `SKILL.md` has YAML frontmatter (`user-invocable: true`) plus deterministic gates; the
   five chain skills (brainstorm/plan/implement/review/loop-engineer) additionally carry a
-  `## Checklist`.
+  `## Checklist`. Every `SKILL.md` follows `conventions.md` → "Compaction-safe skill layout".
 - Skills are hub-aware: read the `_INDEX.md` routing table, write governed
   artifacts under `.apex/`, keep the graph coherent.
 - Reviewer dispatch uses abstract model tiers, translated to a concrete model at dispatch time per

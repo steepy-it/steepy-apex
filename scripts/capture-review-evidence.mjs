@@ -9,6 +9,7 @@ import {
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { assertTimingMs, convergeProcessGroup, processGroupsSupported } from './process-group.mjs';
 import { assertSafeHubRoot, assertSafeLine } from './sanitize.mjs';
 import {
   openWorkPathFd,
@@ -32,10 +33,6 @@ function writeText(fd, value, writeToFd) {
   writeAllSync(fd, Buffer.from(value, 'utf8'), writeToFd);
 }
 
-function delay(ms) {
-  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
-}
-
 async function settlesWithin(promise, timeoutMs) {
   let timer;
   const settled = await Promise.race([
@@ -46,69 +43,6 @@ async function settlesWithin(promise, timeoutMs) {
   ]);
   if (settled) clearTimeout(timer);
   return settled;
-}
-
-function signalProcessGroup(child, signal, processGroupSignal) {
-  if (!child?.pid) return;
-  if (processGroupSignal !== null) {
-    processGroupSignal(child.pid, signal);
-    return;
-  }
-  process.kill(-child.pid, signal);
-}
-
-function processGroupAlive(child, processGroupProbe) {
-  if (!child?.pid) return false;
-  try {
-    if (processGroupProbe !== null) return processGroupProbe(child.pid) !== false;
-    process.kill(-child.pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === 'EPERM';
-  }
-}
-
-async function awaitProcessGroupState(child, expectedAlive, timeoutMs, processGroupProbe) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    if (processGroupAlive(child, processGroupProbe) === expectedAlive) return true;
-    if (Date.now() >= deadline) return false;
-    await delay(10);
-  }
-}
-
-async function convergeProcessGroup({
-  child,
-  killGraceMs,
-  processGroupConvergenceMs,
-  processGroupProbe,
-  processGroupSignal,
-}) {
-  if (!child?.pid) return true;
-  const confirmationMs = Math.min(processGroupConvergenceMs, 100);
-  if (!await awaitProcessGroupState(
-    child,
-    true,
-    Math.min(killGraceMs, 100),
-    processGroupProbe,
-  )) {
-    await delay(confirmationMs);
-    if (!processGroupAlive(child, processGroupProbe)) return true;
-  }
-  try { signalProcessGroup(child, 'SIGTERM', processGroupSignal); } catch { /* escalate below */ }
-  if (await awaitProcessGroupState(child, false, killGraceMs, processGroupProbe)) {
-    await delay(confirmationMs);
-    if (!processGroupAlive(child, processGroupProbe)) return true;
-  }
-  try { signalProcessGroup(child, 'SIGKILL', processGroupSignal); } catch { /* verify below */ }
-  if (!await awaitProcessGroupState(
-    child,
-    false,
-    processGroupConvergenceMs,
-    processGroupProbe,
-  )) return false;
-  await delay(confirmationMs);
-  return !processGroupAlive(child, processGroupProbe);
 }
 
 async function settleChildStreams(child, streamSettlements, streamSettlementMs) {
@@ -250,11 +184,11 @@ async function captureCommand({
     cleanupPromise ??= readyForCleanup.then(async () => {
       const [converged, streams] = await Promise.all([
         convergeProcessGroup({
-          child,
+          pid: child.pid,
           killGraceMs,
-          processGroupConvergenceMs,
-          processGroupProbe,
-          processGroupSignal,
+          convergenceMs: processGroupConvergenceMs,
+          probe: processGroupProbe,
+          send: processGroupSignal,
         }),
         settleChildStreams(child, streamSettlements, streamSettlementMs),
       ]);
@@ -384,9 +318,11 @@ export async function collectReviewEvidence({
   processGroupSignal = null,
   platform = process.platform,
 }) {
-  if (platform !== 'linux' && platform !== 'darwin') {
+  if (!processGroupsSupported(platform)) {
     throw new Error(`unsupported platform for process-group capture: ${platform}`);
   }
+  assertTimingMs('killGraceMs', killGraceMs);
+  assertTimingMs('processGroupConvergenceMs', processGroupConvergenceMs);
   const root = assertSafeHubRoot(repoRoot);
   const evidence = parseWorkPath(evidencePath, 'work-output', 'evidence').path;
   const test = safeCommand(testCommand, 'test command');

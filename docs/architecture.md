@@ -46,6 +46,7 @@ Pure Node, no dependencies. The skills and the hook shell out to these.
 | `live-scaffold-canary.mjs` | Builds an isolated scaffold fixture and binds every row to source revision, exact payload hash, product version, and installation composition. Claude/Codex/OpenCode can PASS only `descriptor-nonce-response`, an evidence slice rather than plugin-load or specialist proof; Pi and DSH remain descriptor-free for Steepy's deterministic runner and unsupported/unauthenticated outcomes stay `NOT RUN`. |
 | `loop-engineer.mjs` | The **terminal Gear-4 controller**. It validates the ratified goal and commit authorization, drives verifier-bounded attempts through an injected headless runner, enforces blast radius and controller-owned keep/discard commits, performs whole-branch review, resumes from durable events, and emits only validated terminal projections. |
 | `new-surface.mjs` | Scaffolds one surface: a surface **standard**, a specialist **agent**, and a routing-table **row**. Hardened — safe-slug validation, refuses path traversal and the filesystem root, anti-clobber, plus a `--repair` mode for half-scaffolded surfaces. |
+| `process-group.mjs` | Supplies the shared detached-process-group convergence primitive for every controller and collector stop path: an `ESRCH`-only absence probe, error-tolerant group signalling, and bounded `SIGTERM` → `SIGKILL` convergence with a presence wait and a confirmation probe. It never spawns processes or settles streams, and it supports only `linux` and `darwin`. |
 | `project-scaffold.mjs` | Public v1 planner and applicator for portable project instructions. It validates a confirmed project model, previews an explicit operation/conflict plan, applies it under an exclusive repository lock, and makes a second repair a zero-write no-op. |
 | `publish-directory-branch.mjs` | Builds the Claude directory payload commit from a source commit's tracked tree minus the root-anchored denylist (`tests/`, `.github/`, `.codex-plugin/`, `CLAUDE.md`) through a temporary index, leaving the working tree and real index untouched. It skips a version the branch already carries, refuses a lower one, parents each new commit on the previous payload commit with a `Source-Commit` trailer, and pushes to `claude-directory` without ever forcing. |
 | `push-version-guard.mjs` | Implements the development-only Claude PreToolUse guard that blocks invalid, equal or numerically downgraded versions on `git push` from `main`, while failing open for unrelated commands or unavailable Git state. |
@@ -81,11 +82,15 @@ composition, capability commands, PASS results, and the digest of the redacted a
 documents evidence and does not establish that a provider actually ran; live review owns that
 provenance.
 
-Review-evidence process-group ownership is supported only on tested `linux` and `darwin`. It uses a
-detached session boundary, waits for leader and stream settlement independently, and performs bounded
+Process-group ownership in review capture, inception capture, the autopilot conductor, and
+loop-engineer is supported only on tested `linux` and `darwin`, and every stop path converges
+through the shared `scripts/process-group.mjs` primitive, where only an `ESRCH` probe proves
+the group is gone. Each caller uses a detached session boundary and performs bounded
 `SIGTERM` then `SIGKILL` convergence on failures and ordinary/nonzero exits. Descendants that
-deliberately escape the spawned session are outside containment; bounded local stream settlement
-prevents an escaped inherited-pipe holder from blocking descriptor closure indefinitely.
+deliberately escape the spawned session are outside containment for all four callers. Review
+capture and inception capture also bound local stream settlement, so an escaped inherited-pipe
+holder cannot block descriptor closure indefinitely there. Autopilot and loop-engineer wait for
+stream closure.
 
 ## Deterministic Gear-4 controller boundary
 
@@ -160,7 +165,7 @@ The bridge enforces bounded backpressure across raw, readable, aggregate, and li
 
 The resource-usage ledger is append-only JSONL scoped to run, phase, and attempt. It records each direct provider measurement once with a source-event fingerprint: exact retransmissions deduplicate, while distinct provider phase aggregates from one session remain separate. Those distinct phase aggregates must not be summed unless provider evidence establishes disjoint scopes. Derived displays read the records rather than re-recording them, but persistence deduplication alone does not establish additivity. The ledger is observational evidence for context efficiency, never a budget or a healthy-work stop condition.
 
-Process lifetime converges in `scripts/autopilot.mjs`: terminal interruption, optional native stop, explicit safety/failure condition, and a blocking bridge failure all enter one stop path, send `SIGTERM` to the detached child group, escalate to `SIGKILL` after a short grace, close destinations once, and settle the attempt once. A bounded I/O integrity timeout may protect a stalled read, write, or drain operation; it is not a phase duration or work timer. A live child that emits no output therefore remains active until it exits or receives an explicit stop; the conductor does not infer a hang from silence. This keeps descendants from outliving a halted phase. The entire path uses Node >= 24 built-ins only and has zero runtime dependencies.
+Process lifetime converges in `scripts/autopilot.mjs`: terminal interruption, optional native stop, explicit safety/failure condition, and a blocking bridge failure all enter one stop path, send `SIGTERM` to the detached child group and escalate to `SIGKILL` after a short grace through the shared `scripts/process-group.mjs` primitive that loop-engineer and both evidence collectors also use, close destinations once, and settle the attempt once. A bounded I/O integrity timeout may protect a stalled read, write, or drain operation; it is not a phase duration or work timer. A live child that emits no output therefore remains active until it exits or receives an explicit stop; the conductor does not infer a hang from silence. This keeps descendants from outliving a halted phase. The entire path uses Node >= 24 built-ins only and has zero runtime dependencies.
 
 The Gear-3 authority sequence is checkout lease and locked preflight → versioned status-protocol
 declaration/validation → correlated child evidence plus process-group convergence → conductor-authored

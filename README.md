@@ -128,7 +128,7 @@ Claude Code syntax is shown below; see the [installation guide](docs/installatio
 | `/steepy-apex:review` | Verify the result against the spec. |
 | `/steepy-apex:loop-engineer` | Run an authorized, bounded autonomous loop. |
 
-Deterministic runners support Claude, Codex, and OpenCode; Pi and DeepSeek report `runner-unavailable`. Gear-3 autopilot supports Linux and macOS. Native hooks and model selection depend on the host; use `check` and `review` as explicit verification gates.
+Deterministic runners support Claude, Codex, and OpenCode; Pi and DeepSeek report `runner-unavailable`. Gear-3 autopilot and Gear-4 `loop-engineer` support Linux and macOS. Native hooks and model selection depend on the host; use `check` and `review` as explicit verification gates.
 
 ## Data and external services
 
