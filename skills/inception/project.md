@@ -113,12 +113,12 @@ approved decision/component, current or future. Give every register row its own 
 the lowercase register ID (`DR-1` → `dr-1`): discovery reads a decision's status only from that
 entry. Component entries may be added. `approve` refuses a register row without its `dr-n` entry. Do not exclude pertinent manifests, lockfiles,
 configuration or migrations to conceal failure. Before approval the helper inventories `.`
-excluding only the reserved protocol areas, recognized scaffold leases and the exclusions bound at
-`start`; Gitignore is not the inventory rule. From approval the contract's exclusions replace the
+excluding only the reserved protocol areas, recognized scaffold leases, linked worktrees of this
+repository and the exclusions bound at `start`; Gitignore is not the inventory rule. From approval the contract's exclusions replace the
 start ones: repeat every start exclusion that still applies. An omitted one is inventoried from
 approval on: approval refuses if it holds a symlink or hard link, and otherwise its files silently
 join the approved baseline. The recorded Git status
-leaves out the same reserved areas, recognized scaffold leases and approved exclusions as the
+leaves out the same reserved areas, recognized scaffold leases, linked worktrees and approved exclusions as the
 inventory (before approval, the start exclusions), tracked or untracked; branch and HEAD stay compared.
 
 For mutable remote resources use reuse policy reobserve with approved automatic and/or manual

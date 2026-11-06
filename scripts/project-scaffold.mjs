@@ -711,6 +711,16 @@ function makeOperation(artifact, classification) {
   };
 }
 
+// A linked Git worktree's `.git` file is a one-line pointer to its administrative
+// directory, `<git dir>/worktrees/<id>`, written absolute or relative. That
+// directory is another checkout, not this project's content. A submodule's pointer
+// names `<git dir>/modules/<name>` and does not match: its files are project content.
+const LINKED_WORKTREE_POINTER = /^gitdir: .*[\\/]worktrees[\\/][^\\/\r\n]+\r?\n?$/u;
+
+export function isLinkedWorktreePointer(text) {
+  return LINKED_WORKTREE_POINTER.test(text);
+}
+
 function boundedGeneratedEntries(hubRoot) {
   const entries = [];
   let reservedWork;
@@ -736,7 +746,12 @@ function boundedGeneratedEntries(hubRoot) {
       if (entry.isSymbolicLink()) {
         entries.push({ path, kind: 'symlink' });
       } else if (entry.isDirectory()) {
-        visit(target, path);
+        // Same exact-directory exclusion as walkProviderFiles in validate-hub.mjs.
+        // readObserved yields text only for an ordinary file, never a link or FIFO.
+        if (
+          entry.name !== 'node_modules'
+          && !isLinkedWorktreePointer(readObserved(hubRoot, `${path}/.git`).text ?? '')
+        ) visit(target, path);
       } else if (entry.isFile()) {
         entries.push({ path, kind: 'file' });
       }

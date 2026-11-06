@@ -1,15 +1,17 @@
 // Full application observations. Local workflow/Git areas are bound before traversal;
 // evidence is consumed separately through exact references, never discovered here.
 // The walk and Git status share one excluded set, computed once per observation:
-// reserved areas, recognized scaffold lease directories, and the exclusions in force
-// (the start exclusions before approval, the approved contract's after).
-// Structurally recognized lease directories, live or dead, are excluded by exact path
-// for every observer; every other lock-like path remains inventory. Recognition runs
-// once before the walk and again after it: any change is a transient refusal.
+// reserved areas, recognized scaffold lease directories, recognized linked worktrees,
+// and the exclusions in force (the start exclusions before approval, the approved
+// contract's after). Structurally recognized lease directories, live or dead, are
+// excluded by exact path for every observer; every other lock-like path remains
+// inventory. Linked worktrees are recognized from Git's own registry, because Git status
+// covers the whole repository while the walk covers only the approved roots. Recognition
+// runs once before the walk and again after it: any change is a transient refusal.
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { validatePath, validateSnapshotScope, validateGit } from './inception-protocol.mjs';
 
 import { withProjectScaffoldLock, recognizeProjectScaffoldLeases } from './project-scaffold.mjs';
@@ -24,19 +26,46 @@ const within = (path, root) => root === '.' || path === root || path.startsWith(
 function statOrNull(path) { try { return fs.lstatSync(path); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } }
 // Name the rejected path in a refusal so the user can exclude it; escapes keep it one line.
 const named = path => JSON.stringify(path).replace(/[\x7f-\x9f]/gu, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
-function excludedPaths(leases, exclusions) {
-  return [...new Set([...RESERVED, ...leases.map(lease => lease.name), ...exclusions.map(e => e.path)])].sort();
+function excludedPaths(leases, worktrees, exclusions) {
+  return [...new Set([...RESERVED, ...leases.map(lease => lease.name), ...worktrees, ...exclusions.map(e => e.path)])].sort();
 }
 // Inherited pathspec modes would reinterpret or disable the exclude magic.
 const PATHSPEC_ENV = ['GIT_LITERAL_PATHSPECS', 'GIT_GLOB_PATHSPECS', 'GIT_NOGLOB_PATHSPECS', 'GIT_ICASE_PATHSPECS'];
-export function observeSnapshotGit(root, excluded) {
+// A Git runner for this exact root, or null when Git is absent, the root is not a
+// repository, or the root lies below its repository's top level.
+function gitAtRoot(root) {
   const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
   for (const key of PATHSPEC_ENV) delete env[key];
   // Status of a large untracked tree exceeds the 1 MiB default; match source-observation.mjs.
   const run = args => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', env, maxBuffer: 128 * 1024 * 1024 });
   const probe = run(['rev-parse', '--show-toplevel']);
   if (probe.error && probe.error.code !== 'ENOENT') throw probe.error;
-  if (probe.status !== 0 || fs.realpathSync(probe.stdout.trim()) !== fs.realpathSync(root)) return absentGit();
+  return probe.status === 0 && fs.realpathSync(probe.stdout.trim()) === fs.realpathSync(root) ? run : null;
+}
+// A registered path can be gone or lie under what is now a file, so neither refuses.
+function holdsGitFile(directory) {
+  try { return fs.lstatSync(join(directory, '.git')).isFile(); }
+  catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false; throw error; }
+}
+// The linked worktrees below the root: registered with this repository (the first record
+// is the main worktree) and still holding an ordinary `.git` file, since a registration
+// outlives its directory. A copied pointer, a submodule and a nested repository are not
+// registered here and stay application bytes. A Git that cannot list them leaves them too.
+function recognizeLinkedWorktrees(root) {
+  const run = gitAtRoot(root);
+  if (run === null) return [];
+  const list = run(['worktree', 'list', '--porcelain', '-z']);
+  if (list.error) throw list.error;
+  if (list.status !== 0) return [];
+  const top = fs.realpathSync(root);
+  const below = list.stdout.split('\0').filter(field => field.startsWith('worktree ')).slice(1)
+    .map(field => relative(top, field.slice('worktree '.length)))
+    .filter(path => path !== '' && path !== '..' && !path.startsWith(`..${sep}`));
+  return below.filter(path => holdsGitFile(join(top, path))).sort();
+}
+export function observeSnapshotGit(root, excluded) {
+  const run = gitAtRoot(root);
+  if (run === null) return absentGit();
   const branch = run(['symbolic-ref', '--quiet', '--short', 'HEAD']);
   const head = run(['rev-parse', '--verify', '--quiet', 'HEAD']);
   // Submodule work trees are application bytes the inventory already observes; a
@@ -51,9 +80,10 @@ export function observeApplication(repoRoot, { contract = null, roots = ['.'], e
   const rootStat = fs.lstatSync(root);
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('snapshot root must be a physical directory');
   const leases = recognizeProjectScaffoldLeases(root);
-  const excluded = excludedPaths(leases, exclusions);
-  // Only reserved areas skip physical aliases. A lease directory is excluded by its
-  // exact path alone, so a symlink to it anywhere else remains an error.
+  const worktrees = recognizeLinkedWorktrees(root);
+  const excluded = excludedPaths(leases, worktrees, exclusions);
+  // Only reserved areas skip physical aliases. A lease directory or linked worktree is
+  // excluded by its exact path alone, so a symlink to it anywhere else remains an error.
   const excludedIdentities = new Set();
   for (const path of RESERVED) {
     const absolute = join(root, path);
@@ -107,6 +137,7 @@ export function observeApplication(repoRoot, { contract = null, roots = ['.'], e
   }
   const observedGit = git === undefined ? observeSnapshotGit(root, excluded) : validateGit(git);
   if (JSON.stringify(recognizeProjectScaffoldLeases(root)) !== JSON.stringify(leases)) throw new Error('recognized lease directories changed during observation');
+  if (JSON.stringify(recognizeLinkedWorktrees(root)) !== JSON.stringify(worktrees)) throw new Error('recognized linked worktrees changed during observation');
   return { contract, roots: [...roots], exclusions: structuredClone(exclusions), files: [...files.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0), git: observedGit };
 }
 export function applicationIdentity(snapshot) {

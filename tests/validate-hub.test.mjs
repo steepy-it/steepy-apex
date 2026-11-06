@@ -2620,6 +2620,119 @@ test('a node_modules symlink at an unmarked scan boundary remains a controlled r
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, new RegExp(secret));
 });
 
+test('a real linked worktree inside the repository is not scanned', () => {
+  const hub = portableHub();
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: hub, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  putPortable(hub, 'apps/web/index.js', '');
+  git('init', '-q');
+  git('add', '-A');
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-q', '-m', 'baseline');
+  git('worktree', 'add', '-q', '--detach', '.claude/worktrees/feature');
+  git('worktree', 'add', '-q', '--detach', '.worktrees/feature');
+
+  assert.deepEqual(collectViolations(hub), []);
+  assert.equal(runValidator(hub).status, 0);
+
+  // A worktree's own run still lints that checkout; its root `.git` is a pointer too.
+  const nested = join(hub, '.claude', 'worktrees', 'feature');
+  assert.deepEqual(collectViolations(nested), []);
+  putPortable(nested, '.apex/orphan.md', '# Orphan\n');
+  assert.match(
+    collectViolations(nested).map(({ msg }) => msg).join('\n'),
+    /anti-orphan: \.apex\/orphan\.md/u,
+  );
+  assert.deepEqual(collectViolations(hub), []);
+});
+
+test('every stable walker skips a linked worktree subtree without visiting it', () => {
+  const external = mkdtempSync(join(tmpdir(), 'steepy-linked-worktree-external-'));
+  putPortable(external, 'skill.md', '# LINK_TARGET_SENTINEL\n');
+  for (const [label, pointer] of [
+    ['absolute', 'gitdir: /elsewhere/repo/.git/worktrees/feature\n'],
+    ['relative', 'gitdir: ../../../.git/worktrees/feature\n'],
+    ['crlf', 'gitdir: C:/repo/.git/worktrees/feature\r\n'],
+    ['backslash', 'gitdir: C:\\repo\\.git\\worktrees\\feature\n'],
+    ['no-newline', 'gitdir: /elsewhere/repo/.git/worktrees/feature'],
+    ['of-a-submodule', 'gitdir: ../../../.git/modules/pack/worktrees/feature\n'],
+  ]) {
+    const hub = mkdtempSync(join(tmpdir(), `steepy-linked-worktree-${label}-`));
+    putPortable(hub, '.apex/_INDEX.md', '# Index\n');
+    for (const root of [
+      '.agents/feature',
+      '.claude/worktrees/feature',
+      '.claude/agents/feature',
+      '.claude/skills/feature',
+      '.codex/nested/feature',
+      '.opencode/feature',
+      '.apex/feature',
+      'apps/feature',
+      'libs/feature',
+    ]) {
+      putPortable(hub, `${root}/.git`, pointer);
+      putPortable(hub, `${root}/agent.md`, '# HIDDEN_SENTINEL\n');
+      putPortable(hub, `${root}/SKILL.md`, '[standard](standards/HIDDEN_SENTINEL.md)\n');
+      putPortable(hub, `${root}/CLAUDE.md`, '# HIDDEN_SENTINEL\n');
+      putPortable(hub, `${root}/renamed.any`, '<!-- steepy:generated:HIDDEN_SENTINEL:v1 -->\n');
+      putPortable(
+        hub,
+        `${root}/oversized.any`,
+        `<!-- steepy:generated:HIDDEN_SENTINEL:v1 -->\n${'x'.repeat(1024 * 1024)}`,
+      );
+      symlinkSync(join(external, 'skill.md'), join(hub, root, 'linked.md'));
+    }
+
+    assert.deepEqual(collectViolations(hub, { enforceSingleClaudeMd: true }), [], label);
+    const quiet = captureMain(['--quiet', '--single-claude', hub]);
+    assert.equal(quiet.code, 0, `${label}: ${quiet.err}`);
+    assert.doesNotMatch(`${quiet.out}\n${quiet.err}`, /HIDDEN_SENTINEL|LINK_TARGET_SENTINEL/u, label);
+  }
+});
+
+test('only a linked-worktree pointer hides a directory: submodules and near-names stay scanned', () => {
+  const pointerFile = (content) => (hub, directory) => putPortable(hub, `${directory}/.git`, content);
+  for (const [label, arrange] of [
+    ['submodule', pointerFile('gitdir: ../../../.git/modules/pack\n')],
+    ['submodule-in-worktree', pointerFile('gitdir: /repo/.git/worktrees/feature/modules/pack\n')],
+    ['near-name-parent', pointerFile('gitdir: /repo/.git/worktrees-old/feature\n')],
+    ['bare-worktrees-dir', pointerFile('gitdir: /repo/.git/worktrees\n')],
+    ['no-parent', pointerFile('gitdir: worktrees/feature\n')],
+    ['no-prefix', pointerFile('/repo/.git/worktrees/feature\n')],
+    ['extra-line', pointerFile('gitdir: /repo/.git/worktrees/feature\nextra\n')],
+    ['empty-file', pointerFile('')],
+    ['git-directory', (hub, directory) => putPortable(hub, `${directory}/.git/HEAD`, 'ref: refs/heads/main\n')],
+    ['git-symlink', (hub, directory) => {
+      const target = mkdtempSync(join(tmpdir(), 'steepy-linked-worktree-pointer-'));
+      putPortable(target, 'pointer', 'gitdir: /repo/.git/worktrees/feature\n');
+      symlinkSync(join(target, 'pointer'), join(hub, directory, '.git'));
+    }],
+    ['git-fifo', (hub, directory) => makeFifo(join(hub, directory, '.git'))],
+    ['no-git', () => {}],
+  ]) {
+    const hub = mkdtempSync(join(tmpdir(), `steepy-linked-worktree-near-${label}-`));
+    putPortable(hub, '.apex/_INDEX.md', '# Index\n');
+    const directory = '.claude/worktrees/feature';
+    putPortable(hub, `${directory}/renamed.any`, `<!-- steepy:generated:near-${label}:v1 -->\n`);
+    arrange(hub, directory);
+
+    const messages = portableErrors(hub).map(({ msg }) => msg).join('\n');
+    assert.match(messages, new RegExp(`portable-v1:.*near-${label}.*renamed\\.any`), label);
+    assert.equal(runValidator(hub).status, 1, label);
+  }
+
+  // The walk's own start is never tested: a provider namespace checked out on its own is the mount.
+  const mounted = mkdtempSync(join(tmpdir(), 'steepy-linked-worktree-start-'));
+  putPortable(mounted, '.apex/_INDEX.md', '# Index\n');
+  putPortable(mounted, '.claude/.git', 'gitdir: /repo/.git/worktrees/feature\n');
+  putPortable(mounted, '.claude/renamed.any', '<!-- steepy:generated:near-start:v1 -->\n');
+  assert.match(
+    portableErrors(mounted).map(({ msg }) => msg).join('\n'),
+    /portable-v1:.*near-start.*renamed\.any/u,
+  );
+});
+
 test('renamed nested copies remain duplicate and wrong-target provenance beside a canonical set', () => {
   const hub = portableHub();
   const copies = [

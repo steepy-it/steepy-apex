@@ -51,7 +51,8 @@ never a glob. Never exclude manifests, lockfiles, configuration or migrations. A
 confirm the list, then pass it as one strict JSON array on standard input with `--exclusions-stdin`
 and a quoted heredoc; omit the option when nothing qualifies. `start` observes the repository once before writing anything: a symlink, hard
 link or special file outside the exclusions refuses the start and names the path. Add that path
-only when it is dependency, cache or generated material; otherwise stop and ask the user. These
+only when it is dependency, cache or generated material; otherwise stop and ask the user. A linked
+Git worktree of this repository is left out automatically and needs no exclusion. These
 exclusions hold until approval, when the contract's roots and exclusions replace them.
 
 Then start. This executable illustration uses shell only and forbids commits; adapt it to the
