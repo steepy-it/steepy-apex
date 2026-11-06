@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.3.1 (2026-11-06)
+
+- The Claude directory build no longer ships hooks. The directory accepts command hooks only from
+  Verified organizations, so `hooks/` and `.claude/settings.json` are now left out of the
+  `claude-directory` payload. A directory install has no automatic check at the end of a turn: the
+  workflow skills still run `validate-hub`, and `/steepy-apex:check` runs it on demand. GitHub
+  installs keep the Stop hook.
+- A new test fails if a file in the directory payload declares a command hook.
+
 ## v1.3.0 (2026-11-02)
 
 - Long skills survive context compaction. Every `SKILL.md` now stays under 12,000 bytes and holds

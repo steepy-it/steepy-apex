@@ -432,14 +432,21 @@ served verbatim to every harness; per-harness manifests and thin runtime adapter
   `claude-directory`, never `main`. Each new version appends one commit built by
   `scripts/publish-directory-branch.mjs`, parented on the previous payload commit and
   never force-pushed. The payload is the release commit's tracked tree minus the
-  root-anchored denylist `tests/`, `.github/`, `.codex-plugin/`, `CLAUDE.md`; no file
-  content is rewritten, so fixes land on `main` and both channels share them. Why: the
+  root-anchored denylist `tests/`, `.github/`, `.codex-plugin/`, `CLAUDE.md`, `hooks/`,
+  `.claude/settings.json`; no file content is rewritten, so fixes land on `main` and both
+  channels share them. Why: the
   directory scans the whole plugin folder and puts every version that ships dev files
   referencing images or credential-shaped names into reviewer holds. The payload removes
   those dev-file causes, but the scanner is heuristic and can still raise reviewer holds:
   submit with 0 Blocking and record each remaining hold with its reason. Repository and
   folder are fixed at submission, so this is hard to reverse. The listing's links and
   keywords are also read only once, from the version the submission was created at.
+- **No command hooks in the directory payload:** the directory refuses command hooks from
+  organizations that are not Verified, and that status cannot be requested. So a directory
+  install has no Stop hook: the workflow gates and `check` still run `validate-hub`, and a
+  GitHub install keeps the hook. A prompt hook is no replacement, because it is a model call
+  that cannot run the linter. `tests/publish-directory-branch.test.mjs` fails if a payload
+  file declares a command hook. Drop this rule if the organization becomes Verified.
 - **Scoping:** this policy governs THIS repo's own automation. The shipped `review`
   skill's bump step self-disables in target repos that lack `scripts/bump-version.mjs`
   + `.github/workflows/version-gate.yml`.

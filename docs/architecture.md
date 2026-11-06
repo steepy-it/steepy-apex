@@ -48,7 +48,7 @@ Pure Node, no dependencies. The skills and the hook shell out to these.
 | `new-surface.mjs` | Scaffolds one surface: a surface **standard**, a specialist **agent**, and a routing-table **row**. Hardened — safe-slug validation, refuses path traversal and the filesystem root, anti-clobber, plus a `--repair` mode for half-scaffolded surfaces. |
 | `process-group.mjs` | Supplies the shared detached-process-group convergence primitive for every controller and collector stop path: an `ESRCH`-only absence probe, error-tolerant group signalling, and bounded `SIGTERM` → `SIGKILL` convergence with a presence wait and a confirmation probe. It never spawns processes or settles streams, and it supports only `linux` and `darwin`. |
 | `project-scaffold.mjs` | Public v1 planner and applicator for portable project instructions. It validates a confirmed project model, previews an explicit operation/conflict plan, applies it under an exclusive repository lock, and makes a second repair a zero-write no-op. |
-| `publish-directory-branch.mjs` | Builds the Claude directory payload commit from a source commit's tracked tree minus the root-anchored denylist (`tests/`, `.github/`, `.codex-plugin/`, `CLAUDE.md`) through a temporary index, leaving the working tree and real index untouched. It skips a version the branch already carries, refuses a lower one, parents each new commit on the previous payload commit with a `Source-Commit` trailer, and pushes to `claude-directory` without ever forcing. |
+| `publish-directory-branch.mjs` | Builds the Claude directory payload commit from a source commit's tracked tree minus the root-anchored denylist (`tests/`, `.github/`, `.codex-plugin/`, `CLAUDE.md`, `hooks/`, `.claude/settings.json`) through a temporary index, leaving the working tree and real index untouched. It skips a version the branch already carries, refuses a lower one, parents each new commit on the previous payload commit with a `Source-Commit` trailer, and pushes to `claude-directory` without ever forcing. |
 | `push-version-guard.mjs` | Implements the development-only Claude PreToolUse guard that blocks invalid, equal or numerically downgraded versions on `git push` from `main`, while failing open for unrelated commands or unavailable Git state. |
 | `render-claude-md.mjs` | Root-instruction CLI for the public planner: it maintains the managed `AGENTS.md` root spine and its thin `CLAUDE.md` import without overwriting user-owned bytes. |
 | `sanitize.mjs` | Provides shared dependency-free validation for safe relative paths, single-line values, YAML double-quoted scalars, non-root hub targets, and physical binding of supported project symlink mounts. |
@@ -178,7 +178,7 @@ containment of descendants that deliberately escape that group.
 
 ## `hooks/` — the Stop hook
 
-`hooks.json` registers a single Claude Code `Stop` hook that runs `stop-hook.mjs` at the end of every turn. `hooks-codex.json` declares Codex wiring using `$PLUGIN_ROOT`; native loading and protocol compatibility depend on the host version and require a real-host check. On a compatible host, violations produce a `decision: block` response; coherent or absent hubs stay silent. The hook does not re-block while `stop_hook_active` is set. The path is quoted to survive spaces. When native hooks are unavailable, `check` and `review` remain the explicit gates.
+`hooks.json` registers a single Claude Code `Stop` hook that runs `stop-hook.mjs` at the end of every turn. `hooks-codex.json` declares Codex wiring using `$PLUGIN_ROOT`; native loading and protocol compatibility depend on the host version and require a real-host check. On a compatible host, violations produce a `decision: block` response; coherent or absent hubs stay silent. The hook does not re-block while `stop_hook_active` is set. The path is quoted to survive spaces. When native hooks are unavailable, `check` and `review` remain the explicit gates. The Claude directory build ships without this folder, because the directory accepts command hooks only from Verified organizations.
 
 ## Portable project instructions
 
@@ -292,7 +292,7 @@ Inception effect ownership stays with the coordinator: children can research or 
 Claude/Codex/OpenCode agent triads in the target project. This does not promise that
 every command writes only there; review the command family before granting trust.
 
-As with any plugin, review plugin hooks before trusting them: the full hook wiring is three small files, [`hooks/hooks.json`](../hooks/hooks.json) (Claude Code), [`hooks/hooks-codex.json`](../hooks/hooks-codex.json) (Codex), and [`scripts/stop-hook.mjs`](../scripts/stop-hook.mjs).
+As with any plugin, review plugin hooks before trusting them: the full hook wiring is three small files, [`hooks/hooks.json`](https://github.com/steepy-it/steepy-apex/blob/main/hooks/hooks.json) (Claude Code), [`hooks/hooks-codex.json`](https://github.com/steepy-it/steepy-apex/blob/main/hooks/hooks-codex.json) (Codex), and [`scripts/stop-hook.mjs`](../scripts/stop-hook.mjs). The Claude directory build ships no hooks.
 
 ### Autopilot task execution receipts
 
