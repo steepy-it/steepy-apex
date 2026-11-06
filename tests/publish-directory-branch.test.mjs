@@ -18,7 +18,7 @@ const script = join(here, '..', 'scripts', 'publish-directory-branch.mjs');
 const BRANCH = 'claude-directory';
 const SHA = 'a'.repeat(40);
 
-// The five fixture paths the denylist must drop, written out literally so the
+// The seven fixture paths the denylist must drop, written out literally so the
 // expectation never depends on the code under test.
 const DENYLISTED_FIXTURE_PATHS = [
   'tests/a.test.mjs',
@@ -26,6 +26,8 @@ const DENYLISTED_FIXTURE_PATHS = [
   '.github/workflows/release.yml',
   '.codex-plugin/plugin.json',
   'CLAUDE.md',
+  'hooks/hooks.json',
+  '.claude/settings.json',
 ];
 
 function hermeticEnv(root) {
@@ -99,6 +101,8 @@ function makeFixture() {
     write('.github/workflows/release.yml', 'denylisted\n');
     write('.codex-plugin/plugin.json', '{"name":"fixture"}\n');
     write('CLAUDE.md', 'denylisted\n');
+    write('hooks/hooks.json', '{"hooks":{}}\n');
+    write('.claude/settings.json', '{"hooks":{}}\n');
     git(work, 'add', '-A');
     git(work, 'commit', '-q', '-m', 'v1.0.0 - first payload');
     git(work, 'remote', 'add', 'origin', remote);
@@ -161,7 +165,14 @@ const treeEntry = (mode, type, sha, name) =>
 // ---------------------------------------------------------------------------
 
 test('DIRECTORY_DENYLIST is the frozen root-anchored denylist', () => {
-  assert.deepEqual(DIRECTORY_DENYLIST, ['tests/', '.github/', '.codex-plugin/', 'CLAUDE.md']);
+  assert.deepEqual(DIRECTORY_DENYLIST, [
+    'tests/',
+    '.github/',
+    '.codex-plugin/',
+    'CLAUDE.md',
+    'hooks/',
+    '.claude/settings.json',
+  ]);
   assert.ok(Object.isFrozen(DIRECTORY_DENYLIST));
 });
 
@@ -177,6 +188,15 @@ test('directoryPaths drops only root-anchored denylist matches and keeps input o
     '.codex-plugin/plugin.json',
     '.githubx/a',
     'CLAUDE.md',
+    'hooks/hooks.json',
+    'hooks/hooks-codex.json',
+    'docs/hooks/a',
+    'hooks-extra/a',
+    '.claude/settings.json',
+    '.claude/settings.json.bak',
+    '.claude/agents/a.md',
+    'docs/.claude/settings.json',
+    'scripts/stop-hook.mjs',
   ];
   assert.deepEqual(directoryPaths(input), [
     'docs/tests/a',
@@ -184,6 +204,12 @@ test('directoryPaths drops only root-anchored denylist matches and keeps input o
     'tests-extra/a',
     'CLAUDE.md.bak',
     '.githubx/a',
+    'docs/hooks/a',
+    'hooks-extra/a',
+    '.claude/settings.json.bak',
+    '.claude/agents/a.md',
+    'docs/.claude/settings.json',
+    'scripts/stop-hook.mjs',
   ]);
 });
 
@@ -566,4 +592,20 @@ test('directoryPaths keeps every inception helper, reached engine module, and sk
     'skills/discovery/explore-inception-prompt.md',
   ];
   assert.deepEqual(directoryPaths(list), list);
+});
+
+test('the directory payload declares no command hook', () => {
+  const repoRoot = join(here, '..');
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
+  const listed = spawnSync('git', ['ls-files', '-z'], { cwd: repoRoot, env, encoding: 'utf8' });
+  assert.equal(listed.status, 0, listed.stderr);
+  const payload = directoryPaths(listed.stdout.split('\0').filter(Boolean));
+  assert.ok(payload.includes('.claude-plugin/plugin.json'), 'the listing must cover the real payload');
+  const offenders = payload.filter((path) => {
+    if (/\.(?:png|jpe?g|gif|webp)$/i.test(path) || !existsSync(join(repoRoot, path))) return false;
+    const text = readFileSync(join(repoRoot, path), 'utf8');
+    const frontMatter = path.endsWith('.md') ? /^---\r?\n[\s\S]*?\r?\n---/.exec(text)?.[0] ?? '' : '';
+    return /"type"\s*:\s*"command"/.test(text) || /^\s*hooks\s*:/m.test(frontMatter);
+  });
+  assert.deepEqual(offenders, []);
 });
