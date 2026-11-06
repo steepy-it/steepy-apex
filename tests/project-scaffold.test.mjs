@@ -660,6 +660,81 @@ test('generated provenance detects customization, wrong targets, duplicates, and
   assert.equal(duplicate.conflicts.find(({ artifactId }) => artifactId === 'web-agent-codex').reason, 'duplicate');
 });
 
+test('generated provenance skips a linked worktree subtree, and only that', () => {
+  const normalized = normalizeProjectModel(model());
+  const hubRoot = tempHub();
+  applyProjectScaffold({ hubRoot, plan: planProjectScaffold({ hubRoot, model: model(), templatesDir }) });
+  const directory = '.claude/worktrees/feature';
+  put(hubRoot, `${directory}/.claude/agents/web-agent.md`, renderProjectArtifact('web-agent-claude', normalized));
+  put(hubRoot, `${directory}/.claude/agents/old-agent.md`, '<!-- steepy:generated:old-agent-claude:v1 -->\n');
+  const plan = () => planProjectScaffold({ hubRoot, model: model(), templatesDir });
+  const reasons = () => plan().conflicts.map(({ artifactId, reason }) => `${artifactId}:${reason}`).sort();
+  const scanned = ['old-agent-claude:orphan', 'web-agent-claude:duplicate'];
+
+  for (const pointer of [
+    'gitdir: /elsewhere/repo/.git/worktrees/feature\n',
+    'gitdir: ../../../.git/worktrees/feature\n',
+    'gitdir: C:/repo/.git/worktrees/feature\r\n',
+  ]) {
+    put(hubRoot, `${directory}/.git`, pointer);
+    assert.deepEqual(plan().operations, [], pointer);
+    assert.deepEqual(plan().conflicts, [], pointer);
+  }
+
+  for (const pointer of [
+    'gitdir: ../../../.git/modules/feature\n',
+    'gitdir: /repo/.git/worktrees/feature/modules/pack\n',
+    'not a pointer\n',
+  ]) {
+    put(hubRoot, `${directory}/.git`, pointer);
+    assert.deepEqual(reasons(), scanned, pointer);
+  }
+
+  rmSync(join(hubRoot, directory, '.git'));
+  assert.deepEqual(reasons(), scanned, 'no .git');
+  const fifo = spawnSync('mkfifo', [join(hubRoot, directory, '.git')], { encoding: 'utf8' });
+  assert.equal(fifo.status, 0, fifo.stderr);
+  assert.deepEqual(reasons(), scanned, '.git FIFO');
+});
+
+test('orphan discovery excludes only exact node_modules directory subtrees', () => {
+  const normalized = normalizeProjectModel(model());
+  const excluded = tempHub();
+  for (const provider of ['.agents', '.claude', '.codex', '.opencode']) {
+    put(excluded, `${provider}/node_modules/pkg/x.md`, `<!-- steepy:generated:dependency-${provider.slice(1)}:v1 -->\n`);
+  }
+  put(excluded, '.claude/agents/team/node_modules/pkg/deep.md', '<!-- steepy:generated:dependency-deep:v1 -->\n');
+  // A dependency's copy of an expected artifact must not read as a relocated one.
+  put(excluded, '.codex/node_modules/pkg/web-agent.toml', renderProjectArtifact('web-agent-codex', normalized));
+  const excludedPlan = planProjectScaffold({ hubRoot: excluded, model: model(), templatesDir });
+  assert.deepEqual(excludedPlan.conflicts, []);
+  assert.ok(excludedPlan.operations.some(({ artifactId }) => artifactId === 'web-agent-codex'));
+
+  for (const [artifact, path] of [
+    ['dash', '.agents/node_modules-copy/renamed.any'],
+    ['suffix', '.claude/node_modulesx/renamed.any'],
+    ['singular', '.codex/node_module/renamed.any'],
+    ['case', '.opencode/Node_Modules/renamed.any'],
+    ['file', '.codex/node_modules'],
+  ]) {
+    const hubRoot = tempHub();
+    put(hubRoot, path, `<!-- steepy:generated:near-${artifact}:v1 -->\n`);
+    const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+    assert.deepEqual(
+      plan.conflicts.map((conflict) => [conflict.artifactId, conflict.path, conflict.reason]),
+      [[`near-${artifact}`, path, 'orphan']],
+      path,
+    );
+  }
+
+  const linked = tempHub();
+  const external = mkdtempSync(join(tmpdir(), 'steepy-project-external-node-modules-'));
+  put(external, 'pkg/x.md', '<!-- steepy:generated:external-dependency:v1 -->\n');
+  mkdirSync(join(linked, '.codex'));
+  symlinkSync(external, join(linked, '.codex', 'node_modules'), 'dir');
+  assert.deepEqual(planProjectScaffold({ hubRoot: linked, model: model(), templatesDir }).conflicts, []);
+});
+
 test('unsupported explicit Codex inheritance is refused without automatic repair', () => {
   const hubRoot = tempHub();
   applyProjectScaffold({ hubRoot, plan: planProjectScaffold({ hubRoot, model: model(), templatesDir }) });

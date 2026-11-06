@@ -238,3 +238,138 @@ test('a root or root ancestor that does not exist yet contributes no files; a fi
   assert.deepEqual(observeApplication(root, { roots: ['src', 'web'], git }).files.map(f => f.path), ['src/a', 'web/index.html']);
   assert.throws(() => observeApplication(root, { roots: ['package.json/x'], git }), /ENOTDIR|not a directory/);
 }));
+
+// A linked worktree is another checkout. Git's own registry decides what counts, so a
+// `.git` file's text alone hides nothing, and one excluded set drives the walk and status.
+function committedRepo(root) {
+  const run = (...args) => { const r = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout; };
+  run('init', '-q'); run('config', 'user.name', 'Test'); run('config', 'user.email', 'test@example.test');
+  put(root, 'src/app.js'); run('add', '.'); run('commit', '-qm', 'Initial');
+  return run;
+}
+const paths = snapshot => snapshot.files.map(f => f.path);
+test('a linked worktree below the root is absent from files and Git status, even with a symlink inside', () => fixture(root => hermeticGit(() => {
+  const run = committedRepo(root);
+  put(root, '.claude/settings.json', '{}');
+  run('worktree', 'add', '-q', '-b', 'side', '.claude/worktrees/side');
+  fs.symlinkSync('missing', join(root, '.claude/worktrees/side/link'));
+  const snapshot = observeApplication(root);
+  assert.deepEqual(paths(snapshot), ['.claude/settings.json', 'src/app.js']);
+  assert.deepEqual(snapshot.git.status, ['?? .claude/settings.json']);
+})));
+test('creating and removing a linked worktree is neither application nor Git drift', () => fixture(root => hermeticGit(() => {
+  const run = committedRepo(root);
+  const before = observeApplication(root);
+  run('worktree', 'add', '-q', '-b', 'side', '.claude/worktrees/side');
+  const during = observeApplication(root);
+  assert.deepEqual(applicationChanges(before, during), []);
+  assert.equal(applicationIdentity(during), applicationIdentity(before));
+  assert.deepEqual(during.git, before.git);
+  run('worktree', 'remove', '.claude/worktrees/side');
+  assert.deepEqual(observeApplication(root), before);
+})));
+test('a linked worktree outside the approved roots is absent from Git status too', () => fixture(root => hermeticGit(() => {
+  const run = committedRepo(root);
+  run('worktree', 'add', '-q', '-b', 'side', '.claude/worktrees/side');
+  const snapshot = observeApplication(root, { roots: ['src'] });
+  assert.deepEqual(paths(snapshot), ['src/app.js']);
+  assert.deepEqual(snapshot.git.status, []);
+})));
+test('a hand-written exclusion over a linked worktree keeps working, with or without the worktree', () => fixture(root => hermeticGit(() => {
+  const run = committedRepo(root);
+  const exclusions = [{ path: '.claude/worktrees', kind: 'generated', reason: 'Other checkouts' }];
+  const before = observeApplication(root, { exclusions });
+  run('worktree', 'add', '-q', '-b', 'side', '.claude/worktrees/side');
+  const during = observeApplication(root, { exclusions });
+  assert.deepEqual(paths(during), ['src/app.js']);
+  assert.deepEqual(during.git.status, []);
+  assert.equal(applicationIdentity(during), applicationIdentity(before));
+  assert.deepEqual(during.git, before.git);
+})));
+test('a linked worktree name is literal, including spaces, pathspec syntax and a newline', () => fixture(root => hermeticGit(() => {
+  const run = committedRepo(root);
+  for (const [n, name] of ['with space', '[x]*?', ':(glob)top', 'new\nline'].entries()) run('worktree', 'add', '-q', '-b', `side-${n}`, `.claude/worktrees/${name}`);
+  const snapshot = observeApplication(root);
+  assert.deepEqual(paths(snapshot), ['src/app.js']);
+  assert.deepEqual(snapshot.git.status, []);
+})));
+test('a root that is itself a linked worktree leaves out the worktrees below it, never itself', () => fixture(root => hermeticGit(() => {
+  const run = committedRepo(root);
+  run('worktree', 'add', '-q', '-b', 'outer', 'outer');
+  run('-C', 'outer', 'worktree', 'add', '-q', '-b', 'inner', '.claude/worktrees/inner');
+  const snapshot = observeApplication(join(root, 'outer'));
+  assert.deepEqual(paths(snapshot), ['src/app.js']);
+  assert.equal(snapshot.git.present, true);
+  assert.deepEqual(snapshot.git.status, []);
+})));
+test('a root reached through a symlinked parent still matches the physical paths Git lists', () => fixture(root => hermeticGit(() => {
+  fs.mkdirSync(join(root, 'real/repo'), { recursive: true }); fs.symlinkSync('real', join(root, 'alias'));
+  const run = committedRepo(join(root, 'alias/repo'));
+  run('worktree', 'add', '-q', '-b', 'side', 'side');
+  const snapshot = observeApplication(join(root, 'alias/repo'));
+  assert.deepEqual(paths(snapshot), ['src/app.js']);
+  assert.deepEqual(snapshot.git.status, []);
+})));
+test('what Git does not list as a live linked worktree of this root stays application inventory', () => fixture(root => hermeticGit(() => {
+  const run = committedRepo(root);
+  // A forged pointer, and a copy whose pointer names a real registration.
+  put(root, 'forged/.git', 'gitdir: /elsewhere/.git/worktrees/forged\n'); put(root, 'forged/app.js');
+  run('worktree', 'add', '-q', '-b', 'real', 'real');
+  fs.cpSync(join(root, 'real'), join(root, 'copied'), { recursive: true });
+  // Registrations left behind: replaced by a plain directory, by a nested repository,
+  // by a file standing where a parent directory was.
+  run('worktree', 'add', '-q', '-b', 'plain', 'plain'); fs.rmSync(join(root, 'plain'), { recursive: true }); put(root, 'plain/app.js');
+  run('worktree', 'add', '-q', '-b', 'nested', 'nested'); fs.rmSync(join(root, 'nested'), { recursive: true }); fs.mkdirSync(join(root, 'nested'));
+  run('-C', 'nested', 'init', '-q');
+  run('worktree', 'add', '-q', '-b', 'gone', 'gone/side'); fs.rmSync(join(root, 'gone'), { recursive: true }); put(root, 'gone');
+  const files = paths(observeApplication(root));
+  for (const path of ['forged/.git', 'forged/app.js', 'copied/.git', 'copied/src/app.js', 'plain/app.js', 'nested/.git/HEAD', 'gone']) assert.ok(files.includes(path), path);
+  assert.equal(files.some(path => path.startsWith('real/')), false);
+  // A registered path whose `.git` became a link is not recognized, and a link refuses.
+  run('worktree', 'add', '-q', '-b', 'linked', 'linked'); fs.rmSync(join(root, 'linked/.git')); fs.symlinkSync('../src', join(root, 'linked/.git'));
+  assert.throws(() => observeApplication(root), /linked\/\.git: symlink/);
+})));
+test('a submodule work tree and its pointer stay application inventory', () => fixture(root => hermeticGit(() => {
+  const library = join(root, 'library'); fs.mkdirSync(library);
+  committedRepo(library);
+  fs.mkdirSync(join(root, 'repo'));
+  const run = committedRepo(join(root, 'repo'));
+  run('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', library, 'vendor/lib'); run('commit', '-qm', 'Add library');
+  const files = paths(observeApplication(join(root, 'repo')));
+  assert.ok(files.includes('vendor/lib/.git')); assert.ok(files.includes('vendor/lib/src/app.js'));
+})));
+test('a root below its repository top level observes no Git and recognizes no worktree', () => fixture(root => hermeticGit(() => {
+  const run = committedRepo(root);
+  run('worktree', 'add', '-q', '-b', 'side', 'src/side');
+  const snapshot = observeApplication(join(root, 'src'));
+  assert.equal(snapshot.git.present, false);
+  assert.ok(paths(snapshot).includes('side/.git'));
+})));
+test('a Git that cannot list worktrees leaves them as inventory and still observes status', () => fixture(root => hermeticGit(() => {
+  const run = committedRepo(root);
+  run('worktree', 'add', '-q', '-b', 'side', 'side');
+  const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  const bin = join(root, '.git/shim'); fs.mkdirSync(bin);
+  fs.writeFileSync(join(bin, 'git'), `#!/bin/sh\nfor arg in "$@"; do [ "$arg" = worktree ] && exit 129; done\nexec ${JSON.stringify(real)} "$@"\n`, { mode: 0o755 });
+  const snapshot = withEnv({ PATH: `${bin}:${process.env.PATH}` }, () => observeApplication(root));
+  assert.ok(paths(snapshot).includes('side/.git'));
+  assert.deepEqual(snapshot.git.status, ['?? side/']);
+})));
+test('a symlink alias to a recognized linked worktree stays an error', () => fixture(root => hermeticGit(() => {
+  const run = committedRepo(root);
+  run('worktree', 'add', '-q', '-b', 'side', '.claude/worktrees/side');
+  fs.symlinkSync(join(root, '.claude/worktrees/side'), join(root, 'alias'));
+  assert.throws(() => observeApplication(root), /alias: symlink/);
+})));
+test('a linked worktree created during the walk refuses the observation', () => fixture(root => hermeticGit(() => {
+  const run = committedRepo(root);
+  const original = fs.readdirSync; let listed = false;
+  fs.readdirSync = function (path, ...rest) {
+    if (!listed && path === root) { listed = true; run('worktree', 'add', '-q', '-b', 'side', 'side'); }
+    return original.call(this, path, ...rest);
+  };
+  try {
+    assert.throws(() => observeApplication(root), /recognized linked worktrees changed during observation/);
+  } finally { fs.readdirSync = original; }
+  assert.equal(listed, true);
+})));

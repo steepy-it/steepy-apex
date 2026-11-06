@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.3.2 (2026-11-06)
+
+- The hub linter and the project scaffold planner no longer scan a linked Git worktree inside the
+  repository, such as one under `.claude/worktrees/`. A clean worktree used to raise false
+  violations, and the Stop hook then blocked every turn in the main checkout. A submodule, a `.git`
+  directory or link, and any other `.git` file stay scanned.
+- The project scaffold planner no longer looks inside `node_modules` directories in the provider
+  folders, as the hub linter already did. A dependency file carrying a generated marker used to
+  raise a conflict in the planner while the linter reported nothing. Directories with similar
+  names, an ordinary file named `node_modules` and a symlink named `node_modules` are handled as
+  before.
+- Inception no longer counts a linked Git worktree inside the repository as part of the
+  application. A directory below the snapshot root that Git lists as a linked worktree of that
+  repository, and that still holds its `.git` file, is left out of the inventory and of the
+  recorded Git status. A Claude Code worktree under `.claude/worktrees/` needs no exclusion, a
+  symlink inside it no longer refuses the snapshot, and creating or removing one during a run is
+  no drift. Changes inside it are not observed.
+- A copied `.git` pointer, a registration left behind, a submodule, a nested repository and another
+  repository's worktree stay in the inception inventory, and a root below its repository's top level
+  recognizes none. Exclusions written by hand keep working.
+- Upgrading during an inception run: if its snapshots already include a worktree's files, they now
+  show as removed and `unit finish` refuses them. Accept them with `unit reconcile` and an explicit
+  human statement. A run that excluded the worktrees by hand is not affected.
+
 ## v1.3.1 (2026-11-06)
 
 - The Claude directory build no longer ships hooks. The directory accepts command hooks only from

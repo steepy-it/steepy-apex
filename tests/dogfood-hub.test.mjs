@@ -158,6 +158,7 @@ test('scripts standard locks bounded physical stable reads and canonical provide
   assert.match(scripts, /portable provenance[\s\S]*every ordinary file[\s\S]*four provider namespaces[\s\S]*name[\s\S]*extension/i);
   assert.match(scripts, /node_modules[\s\S]*exact directory[\s\S]*not inspect[\s\S]*blind spot[\s\S]*near-name/i);
   assert.match(scripts, /all recursive[\s\S]*provider presence[\s\S]*reverse agent[\s\S]*skill[\s\S]*node_modules/i);
+  assert.match(scripts, /linked Git worktree[\s\S]*blind spot[\s\S]*gitdir[\s\S]*submodule pointer[\s\S]*stay scanned/i);
   assert.match(scripts, /package\.json[\s\S]*unsafe[\s\S]*controlled error[\s\S]*absent[\s\S]*malformed/i);
   assert.match(scripts, /terminal separator[\s\S]*dot[\s\S]*directory/i);
   assert.match(scripts, /reverse routing[\s\S]*canonical provider agent identities[\s\S]*nested namesake/i);

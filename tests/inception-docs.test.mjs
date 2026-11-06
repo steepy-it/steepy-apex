@@ -268,10 +268,11 @@ test('pre-merge rules agree across skills and guides', () => {
   assert.match(init, /never write certified document bytes/i);
   assert.match(init, /mode 0644/);
   const inception = norm(skillText('inception'));
-  assert.match(inception, /Git status leaves out the same reserved areas, recognized scaffold leases and approved exclusions/i);
+  assert.match(inception, /Git status leaves out the same reserved areas, recognized scaffold leases, linked worktrees and approved exclusions/i);
   assert.match(inception, /recognized scaffold lease is not divergence/i);
+  assert.match(inception, /linked Git worktree of this repository is left out automatically/);
   assert.doesNotMatch(inception, /with only reserved protocol areas excluded/i);
-  assert.match(inception, /Before approval the helper inventories `\.` excluding only the reserved protocol areas, recognized scaffold leases and the exclusions bound at `start`; Gitignore is not the inventory rule/i);
+  assert.match(inception, /Before approval the helper inventories `\.` excluding only the reserved protocol areas, recognized scaffold leases, linked worktrees of this repository and the exclusions bound at `start`; Gitignore is not the inventory rule/i);
   assert.match(inception, /contract's exclusions replace the start ones/i);
   // Literal to the helper is not literal to the shell or Git: the skill quotes and uses literal pathspecs.
   assert.match(inception, /Single-quote every path argument/);
@@ -288,6 +289,7 @@ test('pre-merge rules agree across skills and guides', () => {
   assert.match(guide, /A recognized lease is a repository-root directory/);
   for (const suffix of [/\.stale-<token>/, /\.retired-<token>/, /\.candidate-<pid>-<token>/]) assert.match(guide, suffix);
   assert.match(guide, /Git status uses the same excluded set as the inventory/);
+  assert.match(guide, /A recognized linked worktree is a directory below the snapshot root that Git lists/);
   assert.match(guide, /the helper never reads a path, exclusion or allowed path as a pattern/);
   assert.match(guide, /covered by the latest approval/);
   assert.match(guide, /outcome records the observed result even when the effect changed paths outside its declared scope/);
@@ -298,6 +300,7 @@ test('pre-merge rules agree across skills and guides', () => {
   assert.doesNotMatch(guide, /recognized active lease/);
   const architecture = read('docs', 'architecture.md').split('\n');
   assert.match(architecture.find(line => line.startsWith('| `inception-snapshot.mjs` |')), /recognized scaffold lease/);
+  assert.match(architecture.find(line => line.startsWith('| `inception-snapshot.mjs` |')), /linked worktrees/);
   assert.match(architecture.find(line => line.startsWith('| `inception-governance.mjs` |')), /writes the certified stable documents/);
   const acceptance = read('docs', 'inception-acceptance.md').split('\n');
   assert.match(acceptance.find(line => /complete → init → discovery/.test(line)), /`documents`/);
@@ -310,8 +313,10 @@ test('hub promotes the pre-merge inception rules', () => {
   assert.match(lease, /0600/);
   assert.match(lease, /live or dead/i);
   assert.match(glossaryEntry('Fotografia applicativa'), /Git status/);
+  assert.match(glossaryEntry('Worktree collegato riconosciuto'), /Git lists as a linked worktree/);
   const section = conventionsSection('Inception (pre-hub)');
   assert.match(section, /recognized lease/i);
+  assert.match(section, /A recognized linked worktree is a path below the root that Git lists/);
   assert.match(section, /Git status excludes the same set as the inventory/i);
   assert.match(section, /covered by the latest approval/i);
   assert.match(section, /outside its declared scope; unit finish refuses those paths, and only a unit reconciliation with an explicit human statement accepts them/);
@@ -321,6 +326,7 @@ test('hub promotes the pre-merge inception rules', () => {
   assert.match(section, /documents[\s\S]*0644/);
   const scripts = read('.apex', 'standards', 'scripts.md');
   assert.match(scripts, /recognized scaffold leases/);
+  assert.match(scripts, /recognized linked worktrees/);
   assert.match(scripts, /documents/);
   assert.match(read('.apex', 'standards', 'skills.md'), /governance `documents` command/);
   const tests = read('.apex', 'standards', 'tests.md');

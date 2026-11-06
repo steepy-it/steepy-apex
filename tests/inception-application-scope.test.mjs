@@ -228,3 +228,20 @@ test('CR6 a root .gitignore change cannot explain a new untracked file outside t
   f.put('.gitignore', '*.log\n'); f.put('notes/outside.txt', 'Outside the roots\n'); f.report('ignore');
   assert.match(f.refuse('unit', 'finish', '--id', 'ignore').error, DRIFT);
 });
+test('a linked worktree neither refuses the start nor drifts a run, from before start or created later', t => {
+  const f = fixture(t, { git: true, start: false });
+  f.git('worktree', 'add', '-q', '-b', 'early', '.claude/worktrees/early');
+  fs.symlinkSync('missing', join(f.root, '.claude/worktrees/early/link'));
+  start(f);
+  for (const to of ['architecture', 'research', 'approval']) f.transition(to);
+  f.put(`${area}/project/decision-register.md`, 'Approved application decisions');
+  f.json(`${area}/project/verification-contract.json`, f.contract);
+  f.approve(); f.transition('bootstrap');
+  bootstrapUnit(f, 'docs', ['docs']);
+  f.git('worktree', 'add', '-q', '-b', 'late', '.claude/worktrees/late');
+  f.put('docs/guide.md', 'Guide\n'); f.report('docs'); f.finish('docs');
+  const after = f.read(unitAfter(f, 'docs').path).body;
+  assert.deepEqual(after.files.map(file => file.path), ['docs/guide.md', 'src/app.js']);
+  assert.equal(after.git.status.some(entry => entry.includes('worktrees')), false);
+  assert.equal(f.cli('resume-check').ok, true);
+});
