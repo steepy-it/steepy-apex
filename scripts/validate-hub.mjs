@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { bindProjectMount, PROJECT_MOUNTS } from './sanitize.mjs';
 import {
   countActiveClaudeImports,
+  isLinkedWorktreePointer,
   normalizeProjectModel,
   parseProjectInstructions,
   renderProjectArtifact,
@@ -359,6 +360,14 @@ function createStableReader(hubRoot, violations, rootAdmission = admitHubRoot(hu
   return { fromAbsolute, inspect, read, report, root };
 }
 
+// Only directories found during a walk are tested, never its start: a hub root or
+// provider namespace that is itself a linked worktree is still the checkout under
+// validation.
+function isLinkedWorktree(reader, directory) {
+  const pointer = reader.read(join(directory, '.git'), { reportUnsafe: false }).text;
+  return pointer !== undefined && isLinkedWorktreePointer(pointer);
+}
+
 function walkStableFiles(reader, directory, pred, acc = [], opts = {}) {
   const directoryState = reader.inspect(directory, { kind: 'directory' });
   if (directoryState.state !== 'present') return acc;
@@ -373,6 +382,7 @@ function walkStableFiles(reader, directory, pred, acc = [], opts = {}) {
     const relativePath = [directory, entry.name].filter(Boolean).join(sep);
     if (entry.isDirectory()) {
       if (opts.skipDir && opts.skipDir(relativePath)) continue;
+      if (isLinkedWorktree(reader, relativePath)) continue;
       walkStableFiles(reader, relativePath, pred, acc, opts);
     } else if (entry.isFile()) {
       if (pred(relativePath)) acc.push(relativePath);
