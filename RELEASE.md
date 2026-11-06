@@ -163,7 +163,9 @@ new main version and must re-bump before it can merge.
 The Claude plugin directory scans the whole plugin folder of the submitted branch, so submit
 the payload branch `claude-directory`, never `main`. The Release workflow appends one commit
 per new version, built by `scripts/publish-directory-branch.mjs` from the release commit minus
-`tests/`, `.github/`, `.codex-plugin/` and `CLAUDE.md`. The branch is append-only and never
+`tests/`, `.github/`, `.codex-plugin/`, `CLAUDE.md`, `hooks/` and `.claude/settings.json`. The
+last two hold the only command hooks, which the directory accepts only from Verified
+organizations, so a directory install has no Stop hook. The branch is append-only and never
 force-pushed. The script copies the release commit's subject through `git log`, so on any host
 that runs it, leave `i18n.logOutputEncoding` and `i18n.commitEncoding` unset or set to UTF-8.
 

@@ -24,8 +24,17 @@ const MANIFEST = '.claude-plugin/plugin.json';
 const OBJECT_NAME_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 // Root-anchored: an entry ending in `/` drops that top-level directory, any other entry
-// drops exactly that root file. Nested namesakes such as `docs/tests/` survive.
-export const DIRECTORY_DENYLIST = Object.freeze(['tests/', '.github/', '.codex-plugin/', 'CLAUDE.md']);
+// drops exactly that path. Nested namesakes such as `docs/tests/` survive. `hooks/` and
+// `.claude/settings.json` hold the only command hooks, which the directory accepts only
+// from Verified organizations.
+export const DIRECTORY_DENYLIST = Object.freeze([
+  'tests/',
+  '.github/',
+  '.codex-plugin/',
+  'CLAUDE.md',
+  'hooks/',
+  '.claude/settings.json',
+]);
 
 export function directoryPaths(paths) {
   return paths.filter(
