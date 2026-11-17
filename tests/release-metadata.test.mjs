@@ -326,7 +326,11 @@ test('README and linked guides document install paths and release safety notes',
 
   assert.match(readme, /\/plugin marketplace add steepy-it\/steepy-apex/);
   assert.match(readme, /\/plugin install steepy-apex@steepy-apex/);
-  assert.match(readme, /\/plugin install steepy-apex@claude-community/);
+  assert.doesNotMatch(
+    readme,
+    /\/plugin install steepy-apex@claude-community/,
+    'guides must not advertise the community install before the directory approves the plugin',
+  );
   assert.doesNotMatch(readme, /<owner>\/steepy/);
   assert.doesNotMatch(readme, /steepy@steepy/);
   assert.doesNotMatch(readme, /Initialize steepy in your repo\./);
