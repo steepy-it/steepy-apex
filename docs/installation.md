@@ -16,16 +16,8 @@ a store listing. See the [distribution checklist](../RELEASE.md#public-distribut
 /plugin install steepy-apex@steepy-apex
 ```
 
-**From the Claude community marketplace** (after community review and catalog sync):
-
-```
-/plugin marketplace add anthropics/claude-plugins-community
-/plugin install steepy-apex@claude-community
-```
-
-This build ships without the Stop hook, so the hub check does not run by itself at the end of
-each turn. The workflow skills still run it, and `/steepy-apex:check` runs it on demand. Install
-from GitHub to keep the hook.
+The listing in the Claude plugin directory is under review. Until it is approved, install from
+GitHub.
 
 **From a local checkout** (for development):
 
