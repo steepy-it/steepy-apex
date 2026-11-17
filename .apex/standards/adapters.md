@@ -108,6 +108,10 @@ Adapters declare configured host wiring, not a timeless host-runtime guarantee. 
 - Concrete tier mappings are provider-keyed engine tables (`adapters/model-mappings.mjs`):
   provider → tier → concrete model id, every row carrying per-row provenance (`source` and
   `verifiedAt`) — never an unlabeled id.
+- Provider-table ids are exact catalog ids, because OpenCode rejects a family word such as
+  haiku under the anthropic provider. Claude Code keeps its own haiku, sonnet and opus aliases
+  in a separate row with its own provenance, so it follows the newest model on each Claude
+  provider.
 - Interactive-path tier resolution requires config-time provider knowledge — a pinned
   `config.model` whose provider prefix selects the shared table; without a mapped pin,
   nothing tier-related registers and dispatch degrades to the session model, declared as

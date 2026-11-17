@@ -1838,14 +1838,14 @@ describe('headless adapter model-tier routing', () => {
   const prompt = 'complete the current phase';
   const tiers = ['cheap', 'standard', 'most-capable'];
   const claudeModels = ['haiku', 'sonnet', 'opus'];
-  const codexModels = ['gpt-6-luna', 'gpt-6-sol', 'gpt-6-sol'];
+  const codexModels = ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-sol'];
   // Frontier models per harness: the tier ladder must never resolve one of these
   // for `cheap`, or every mechanical task runs on the most expensive model.
   const frontierModels = {
     claude: ['fable', 'opus', 'claude-fable-5', 'claude-opus-5'],
-    codex: ['gpt-6-astra', 'gpt-6-sol'],
+    codex: ['gpt-6-astra', 'gpt-6.1-sol'],
   };
-  // openai repeats its top rung (gpt-6-sol on standard and most-capable).
+  // openai repeats its top rung (gpt-6.1-sol on standard and most-capable).
   const distinctTierModels = { claude: 3, codex: 2 };
 
   it('pins Codex model-tier provenance to the official model guide', () => {
@@ -1934,19 +1934,19 @@ describe('headless adapter model-tier routing', () => {
 
   it('applies a verified injected OpenCode mapping at the model flag before its prompt', () => {
     const descriptor = descriptorFor('opencode', 'standard', {
-      modelMappings: { standard: 'openai/gpt-6-sol' },
+      modelMappings: { standard: 'openai/gpt-6.1-sol' },
     });
-    assert.equal(descriptor.resolvedModel, 'openai/gpt-6-sol');
+    assert.equal(descriptor.resolvedModel, 'openai/gpt-6.1-sol');
     assert.equal(descriptor.modelSelection, 'applied');
     assert.deepEqual(descriptor.args, [
       'run', '--auto', '--format', 'json', '--title', 'phase-controller',
-      '--model', 'openai/gpt-6-sol', prompt,
+      '--model', 'openai/gpt-6.1-sol', prompt,
     ]);
   });
 
   it('degrades a requested OpenCode tier when its injected mapping omits that tier', () => {
     const descriptor = descriptorFor('opencode', 'most-capable', {
-      modelMappings: { standard: 'openai/gpt-6-sol' },
+      modelMappings: { standard: 'openai/gpt-6.1-sol' },
     });
     assert.equal(descriptor.modelSelection, 'degraded');
     assert.equal(descriptor.resolvedModel, undefined);
@@ -2002,8 +2002,8 @@ describe('model-mappings module (adapters/model-mappings.mjs)', () => {
   const expectedModels = {
     'zai-coding-plan': ['zai-coding-plan/glm-5.3-flash', 'zai-coding-plan/glm-5.3-highspeed', 'zai-coding-plan/glm-5.3'],
     deepseek: ['deepseek/deepseek-flash', 'deepseek/deepseek-v4-pro', 'deepseek/deepseek-v4-pro'],
-    anthropic: ['anthropic/haiku', 'anthropic/sonnet', 'anthropic/opus'],
-    openai: ['openai/gpt-6-luna', 'openai/gpt-6-sol', 'openai/gpt-6-sol'],
+    anthropic: ['anthropic/claude-haiku-5-5', 'anthropic/claude-sonnet-5-5', 'anthropic/claude-opus-5-5'],
+    openai: ['openai/gpt-6-luna', 'openai/gpt-6.1-sol', 'openai/gpt-6.1-sol'],
   };
 
   let mm;
@@ -2055,7 +2055,7 @@ describe('model-mappings module (adapters/model-mappings.mjs)', () => {
         const row = mm.PROVIDER_MODEL_MAPPINGS[provider][tier];
         assert.equal(typeof row.source, 'string', `${provider}/${tier}.source must be a string`);
         assert.ok(row.source.length > 0, `${provider}/${tier}.source must be non-empty`);
-        const expectedVerifiedAt = provider === 'zai-coding-plan' ? '2026-08-27' : '2026-09-29';
+        const expectedVerifiedAt = { 'zai-coding-plan': '2026-08-27', deepseek: '2026-09-29' }[provider] ?? '2026-11-17';
         assert.equal(row.verifiedAt, expectedVerifiedAt, `${provider}/${tier}.verifiedAt must be the ISO verification date`);
       }
     }
@@ -2129,12 +2129,14 @@ describe('model-mappings module (adapters/model-mappings.mjs)', () => {
     assert.equal(mm.tierModelsForProvider('constructor'), undefined, 'prototype keys must not resolve');
   });
 
-  it('bareModelMappingsForHarness strips the provider prefix for claude/codex only', () => {
+  it('bareModelMappingsForHarness keeps Claude Code family aliases and strips the prefix for codex only', () => {
+    // Claude Code resolves its own aliases per provider; OpenCode needs the
+    // pinned anthropic snapshots, so the claude row is not the stripped table.
     assert.deepEqual(mm.bareModelMappingsForHarness('claude'), {
       cheap: 'haiku', standard: 'sonnet', 'most-capable': 'opus',
     });
     assert.deepEqual(mm.bareModelMappingsForHarness('codex'), {
-      cheap: 'gpt-6-luna', standard: 'gpt-6-sol', 'most-capable': 'gpt-6-sol',
+      cheap: 'gpt-6-luna', standard: 'gpt-6.1-sol', 'most-capable': 'gpt-6.1-sol',
     });
     assert.equal(mm.bareModelMappingsForHarness('opencode'), undefined);
     assert.equal(mm.bareModelMappingsForHarness('pi'), undefined);

@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.3.3 (2026-11-17)
+
+- OpenCode sessions on an Anthropic model now get working `steepy-cheap`, `steepy-standard`
+  and `steepy-most-capable` agents. They used the family words `anthropic/haiku`,
+  `anthropic/sonnet` and `anthropic/opus`, which are not in OpenCode's catalog and failed as
+  "Model unavailable". They now use `anthropic/claude-haiku-5-5`, `anthropic/claude-sonnet-5-5`
+  and `anthropic/claude-opus-5-5`.
+- Claude Code keeps the `haiku`, `sonnet` and `opus` aliases, so it still follows the newest
+  model on each Claude provider, including Bedrock, Google Cloud and Foundry.
+- The OpenAI standard and most-capable tiers move from `gpt-6-sol` to `gpt-6.1-sol`, which
+  replaces it at the same price. The cheap tier stays on `gpt-6-luna`.
+- DeepSeek and Z.ai Coding Plan tiers were checked and are unchanged.
+
 ## v1.3.2 (2026-11-06)
 
 - The hub linter and the project scaffold planner no longer scan a linked Git worktree inside the

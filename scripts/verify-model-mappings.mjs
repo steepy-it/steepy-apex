@@ -10,7 +10,9 @@
 // Evidence sources per harness (SUPPORTED_HARNESSES):
 //   opencode — `opencode models` catalog output, all configured providers.
 //   codex    — the CODEX_MODEL_MAPPING_SOURCE guide, openai aliased ids.
-//   claude   — the ANTHROPIC_MODEL_MAPPING_SOURCE catalog, anthropic aliased ids.
+//   claude   — the ANTHROPIC_MODEL_MAPPING_SOURCE catalog, the anthropic
+//              table's snapshot ids (the ids OpenCode uses). Claude Code's own
+//              haiku/sonnet/opus aliases float and need no freshness check.
 //
 // Fixture injection (tests, offline runs): --catalog-file <path> replaces the
 // `opencode models` shell-out; --source-file <provider=path> (repeatable)
@@ -37,9 +39,9 @@ const TIERS = Object.freeze(['cheap', 'standard', 'most-capable']);
 // sleep the full 30s to observe the timeout degrade to UNKNOWN.
 const LIVE_TIMEOUT_MS = Number(process.env.STEEPY_VERIFY_MAPPINGS_TIMEOUT_MS ?? '') || 30_000;
 
-// codex/claude address models without the provider prefix (headless.mjs
-// BARE_MAPPINGS_BY_HARNESS), so their check is an aliased-id check against
-// one provenance page per harness.
+// codex/claude are checked by provider table id with the provider prefix
+// stripped, against one provenance page per harness. For codex that is the id
+// it runs; for claude it is the anthropic snapshot id, not its family alias.
 const HARNESS_SOURCE_PROVIDER = Object.freeze({ claude: 'anthropic', codex: 'openai' });
 
 const SOURCE_URL_BY_PROVIDER = Object.freeze({
@@ -182,8 +184,8 @@ export function verdictsFromCatalog(catalogText, { mappings = PROVIDER_MODEL_MAP
   return verdicts;
 }
 
-// provenance-text → verdicts: checks one provider's tier rows (as bare
-// aliased ids, the codex/claude addressing) against its cited source page.
+// provenance-text → verdicts: checks one provider's tier rows (as bare ids,
+// provider prefix stripped) against its cited source page.
 export function verdictsFromSource(sourceText, provider, { mappings = PROVIDER_MODEL_MAPPINGS } = {}) {
   const text = String(sourceText);
   const rows = mappings[provider];

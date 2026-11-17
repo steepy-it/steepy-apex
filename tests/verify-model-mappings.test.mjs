@@ -99,8 +99,8 @@ test('source verdicts: codex openai guide snapshot confirms the aliased ids', ()
   assert.equal(verdicts.length, 3);
   assert.ok(verdicts.every((v) => v.verdict === 'OK'), JSON.stringify(verdicts));
   const top = verdicts.find((v) => v.tier === 'most-capable');
-  assert.equal(top.alias, 'gpt-6-sol');
-  assert.ok(top.evidence.includes('gpt-6-sol'));
+  assert.equal(top.alias, 'gpt-6.1-sol');
+  assert.ok(top.evidence.includes('gpt-6.1-sol'));
 });
 
 test('source verdicts: a drifted repeated openai top rung is STALE on both tiers with a prefixed proposal', () => {
@@ -108,9 +108,9 @@ test('source verdicts: a drifted repeated openai top rung is STALE on both tiers
   const stale = verdicts.filter((v) => v.verdict === 'STALE');
   assert.deepEqual(stale.map((v) => v.tier), ['standard', 'most-capable']);
   for (const v of stale) {
-    assert.equal(v.configured, 'openai/gpt-6-sol');
-    assert.equal(v.observed, 'gpt-6.1-sol');
-    assert.equal(v.proposedModel, 'openai/gpt-6.1-sol');
+    assert.equal(v.configured, 'openai/gpt-6.1-sol');
+    assert.equal(v.observed, 'gpt-6.2-sol');
+    assert.equal(v.proposedModel, 'openai/gpt-6.2-sol');
   }
   assert.equal(verdicts.filter((v) => v.verdict === 'OK').length, 1);
 });
@@ -121,7 +121,7 @@ test('source verdicts: a loaded page with no family ids yields UNKNOWN, not STAL
   assert.ok(verdicts.every((v) => v.verdict === 'UNKNOWN' && v.evidence === null));
 });
 
-test('source verdicts: claude anthropic snapshot confirms the aliased ids', () => {
+test('source verdicts: claude anthropic snapshot confirms the snapshot ids', () => {
   const verdicts = verdictsFromSource(fixture('claude-anthropic-source-ok.md'), 'anthropic');
   assert.equal(verdicts.length, 3);
   assert.ok(verdicts.every((v) => v.verdict === 'OK'), JSON.stringify(verdicts));
@@ -169,10 +169,10 @@ test('CLI: provider-absent catalog reports UNKNOWN and still exits 0 (offline de
 test('CLI: codex aliased-id check runs offline via --source-file; drift exits 1', () => {
   const run = runCli(['--harness', 'codex', '--source-file', `openai=${join(fixturesDir, 'codex-openai-source-drift.md')}`]);
   assert.equal(run.status, 1, run.stderr);
-  assert.match(run.stdout, /gpt-6\.1-sol/);
+  assert.match(run.stdout, /gpt-6\.2-sol/);
 });
 
-test('CLI: claude aliased-id check confirms the anthropic snapshot offline (exit 0)', () => {
+test('CLI: claude snapshot-id check confirms the anthropic snapshot offline (exit 0)', () => {
   const run = runCli(['--harness', 'claude', '--source-file', `anthropic=${join(fixturesDir, 'claude-anthropic-source-ok.md')}`]);
   assert.equal(run.status, 0, run.stderr);
   assert.doesNotMatch(run.stdout, / STALE \S/);
