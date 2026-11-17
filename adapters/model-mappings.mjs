@@ -8,6 +8,7 @@ export const CODEX_MODEL_MAPPING_SOURCE =
   'https://developers.openai.com/api/docs/guides/latest-model';
 export const ANTHROPIC_MODEL_MAPPING_SOURCE =
   'https://docs.anthropic.com/en/docs/about-claude/models/overview';
+const ANTHROPIC_ALIAS_SOURCE = 'https://code.claude.com/docs/en/model-config';
 
 const ZAI_MODEL_MAPPING_SOURCE = 'opencode models live catalog';
 const DEEPSEEK_MODEL_MAPPING_SOURCE =
@@ -42,18 +43,34 @@ export const PROVIDER_MODEL_MAPPINGS = Object.freeze({
     DEEPSEEK_MODEL_MAPPING_SOURCE,
     'deepseek/deepseek-flash', 'deepseek/deepseek-v4-pro', 'deepseek/deepseek-v4-pro',
   ),
+  // 5.5 snapshot ids (human-ratified 2026-11-17). OpenCode accepts only
+  // catalog ids: the family words `anthropic/haiku|sonnet|opus` are not in its
+  // catalog and fail as "Model unavailable". Fable stays off the ladder.
   anthropic: tierRows(
     ANTHROPIC_MODEL_MAPPING_SOURCE,
-    'anthropic/haiku', 'anthropic/sonnet', 'anthropic/opus',
+    'anthropic/claude-haiku-5-5', 'anthropic/claude-sonnet-5-5', 'anthropic/claude-opus-5-5',
+    '2026-11-17',
   ),
-  // GPT-6 ladder (human-ratified 2026-09-29): gpt-6-sol tops the ladder and
-  // gpt-6-astra stays off it, as Fable does for anthropic — astra is priced
-  // like Fable ($10/$50, 5x sol), so it is reached only by a ledgered override.
+  // GPT-6 ladder (human-ratified 2026-11-17): gpt-6.1-sol supersedes
+  // gpt-6-sol at the same price and tops the ladder. gpt-6-astra stays off it,
+  // as Fable does for anthropic — astra ($10/$50, 5x sol) is priced above
+  // Fable 5.2 ($8/$40), so it is reached only by a ledgered override.
   openai: tierRows(
     CODEX_MODEL_MAPPING_SOURCE,
-    'openai/gpt-6-luna', 'openai/gpt-6-sol', 'openai/gpt-6-sol',
+    'openai/gpt-6-luna', 'openai/gpt-6.1-sol', 'openai/gpt-6.1-sol',
+    '2026-11-17',
   ),
 });
+
+// Claude Code keeps its own family aliases instead of the pinned anthropic
+// snapshots above: `haiku`/`sonnet`/`opus` resolve to the newest model on the
+// Anthropic API (Haiku/Sonnet/Opus 5.5 on 2026-11-17) and to the provider's
+// own id on Bedrock, Google Cloud and Foundry, where snapshot ids differ.
+const ANTHROPIC_ALIAS_ROWS = tierRows(
+  ANTHROPIC_ALIAS_SOURCE,
+  'haiku', 'sonnet', 'opus',
+  '2026-11-17',
+);
 
 const tierModels = (rows) => Object.freeze({
   cheap: rows.cheap.model,
@@ -65,9 +82,9 @@ const TIER_MODELS_BY_PROVIDER = Object.freeze(Object.fromEntries(
   Object.entries(PROVIDER_MODEL_MAPPINGS).map(([provider, rows]) => [provider, tierModels(rows)]),
 ));
 
-// headless harnesses address models without the provider prefix (claude
-// `--model haiku`, codex `--model gpt-6-luna`), so their rows are the
-// provider tables with the `provider/` prefix stripped.
+// headless harnesses address models without the provider prefix: codex
+// (`--model gpt-6-luna`) uses the openai table with the `provider/` prefix
+// stripped, claude (`--model haiku`) uses ANTHROPIC_ALIAS_ROWS.
 const stripProviderPrefix = (model) => model.slice(model.indexOf('/') + 1);
 
 const bareTiers = (provider) => {
@@ -80,7 +97,7 @@ const bareTiers = (provider) => {
 };
 
 const BARE_MAPPINGS_BY_HARNESS = Object.freeze({
-  claude: bareTiers('anthropic'),
+  claude: tierModels(ANTHROPIC_ALIAS_ROWS),
   codex: bareTiers('openai'),
 });
 
