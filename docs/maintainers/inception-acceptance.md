@@ -30,7 +30,7 @@ A project with an asynchronous boundary or a strong compatibility constraint, po
 
 ## Recovery and verification scenarios
 
-Run these through the packaged skill, in new sessions where indicated. They supplement both scenarios above; record each case separately with exact refs, observed application differences, check IDs and human responses. Interruptions in every phase are required:
+Run these through the packaged skill, in new sessions where indicated. They supplement scenarios A and B above; record each case separately with exact refs, observed application differences, check IDs and human responses. Interruptions in every phase are required:
 
 | Case | Required observation |
 |---|---|

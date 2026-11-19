@@ -139,8 +139,9 @@ use the shipped `headless` profile: an arbitrary new profile name may have no fr
 In a JavaScript or TypeScript workspace, `init` proposes one surface per package listed in
 `pnpm-workspace.yaml` or in the `workspaces` field of `package.json`. It expands entries
 written as a plain path, `dir/*`, or `dir/**`. Other forms, such as `!` exclusions or
-braces, are not expanded, and in `pnpm-workspace.yaml` they stop the whole proposal. Either
-way, you confirm or edit the surface list during setup.
+braces, are not expanded. In `package.json` they are skipped, so a package you excluded with
+`!` is still proposed. In `pnpm-workspace.yaml` they stop the whole proposal. Either way, you
+confirm or edit the surface list during setup.
 
 A successful `init` creates `.apex/_INDEX.md`, project instructions, and the local
 `.apex/work/` area. `check` should report a coherent hub. See [workflow](workflow.md)
@@ -155,8 +156,9 @@ Update the plugin in your harness, then run `check` in each repository it govern
 - **Claude Code:** run `claude plugin marketplace update steepy-apex`, then
   `claude plugin update steepy-apex@steepy-apex`, then `/reload-plugins` or a restart. Inside a
   session, `/plugin marketplace update steepy-apex` refreshes the listing and **Update now** in
-  the `/plugin` Installed tab updates the plugin. With auto-update on for the marketplace, this
-  happens on its own.
+  the `/plugin` Installed tab updates the plugin. Auto-update can do this on its own, but it is
+  off by default for this marketplace: turn it on from the marketplace's menu in the `/plugin`
+  Marketplaces tab.
 - **Codex:** run `codex plugin marketplace upgrade steepy-apex`, then start a new session.
 - **OpenCode:** change the tag in your `opencode.json` entry to the new release.
 - **Pi:** `pi update <source>` does not move a pinned tag. Remove the old source with
