@@ -129,6 +129,14 @@ Ambiguity appends `RECONCILIATION_REQUIRED` then `RUN_HALTED`; it never resets u
 Claude, Codex, and OpenCode have deterministic CLI descriptors. Pi and DeepSeek remain explicit
 `runner-unavailable` refusals rather than falling back to a weaker inline loop.
 
+The log records the branch and Git baseline once. Commit and discard intent is durable before the Git side effect. A crash-safe resume replays events
+and completes an interrupted side effect only when the event identity, expected parent, snapshot,
+changed paths, and commit metadata prove controller ownership. Ambiguous branch, HEAD, dirty-tree,
+artifact, commit, discard, or review state records `RECONCILIATION_REQUIRED` and `RUN_HALTED`, leaves
+the ledger `DRAFT`, and permanently abandons that run; the controller never resets uncertain work.
+After preserving the halted evidence, recovery uses a new ratified goal at a distinct goal path and
+new loop workspace rather than deleting, editing, or resuming the abandoned state.
+
 ## `adapters/` — the harness adapters
 
 The `adapters` surface: thin, dependency-free wiring that serves the canonical `skills/` tree to each harness — never workflow behavior, which lives once in the core. Skills reference engine scripts skill-relatively (`node <engine-root>/scripts/<x>.mjs`, resolved from the skill's own base directory), so no adapter has to rewrite prose and no `CLAUDE_*` variable appears in the core (test-locked).
@@ -137,15 +145,62 @@ The `adapters` surface: thin, dependency-free wiring that serves the canonical `
 |---|---|
 | Claude Code | `.claude-plugin/` manifest + marketplace — the pre-existing plugin, unchanged behavior. |
 | Codex | `.codex-plugin/plugin.json` (points at `skills/` and `hooks/hooks-codex.json`) + `.agents/plugins/marketplace.json`, which makes the repo itself a marketplace root. |
-| OpenCode | `adapters/opencode/steepy-apex.js` — a config hook pushes `skills/` into `config.skills.paths`, registers ten `steepy-apex-<skill>` commands where supported, and injects a marker-guarded bootstrap block into the first message. Project hub agents are read only from `.opencode/agents/*.md`; missing or invalid native directories register no project specialists, and Claude descriptors are never read. It also registers D2 dispatch agents: the tier trio (`steepy-cheap`/`steepy-standard`/`steepy-most-capable`) when `config.model` is a mapped provider pin — that trio is the per-dispatch tier choice — and without a mapped pin dispatch degrades to the declared session model. |
+| OpenCode | `adapters/opencode/steepy-apex.js` — a config hook pushes `skills/` into `config.skills.paths`, registers ten `steepy-apex-<skill>` commands where supported, and injects a marker-guarded bootstrap block into the first message. Project hub agents are read only from `.opencode/agents/*.md`; missing or invalid native directories register no project specialists, and Claude descriptors are never read. It also registers tier dispatch agents: the trio (`steepy-cheap`/`steepy-standard`/`steepy-most-capable`) when `config.model` is a mapped provider pin — that trio is the per-dispatch tier choice — and without a mapped pin dispatch degrades to the declared session model. |
 | Pi | the `"pi"` manifest in `package.json` (`skills`, `extensions`) + `adapters/pi/steepy-apex.js` — `session_start` bootstrap injection and optional `/steepy-<skill>` command wrappers. |
-| DeepSeek Harness | `adapters/dsh/steepy-apex.js`, wired via the root `cordis.patch.yml` bundle-patch file and `package.json`'s `dsh.bundle.patch` key. Registers three capabilities, each on its own dependency-gated child fiber: a `ctx.systemPrompt` section for bootstrap, ten `steepy-<skill>` commands, and the model-invocable `steepy_skill` tool. A command's output is rendered to the human and never enters model history, so a command can only name the tool call to make — that is why `steepy_skill` exists as the model-facing channel that actually loads a skill's exact prose (F3). |
+| DeepSeek Harness | `adapters/dsh/steepy-apex.js`, wired via the root `cordis.patch.yml` bundle-patch file and `package.json`'s `dsh.bundle.patch` key. Registers three capabilities, each on its own dependency-gated child fiber: a `ctx.systemPrompt` section for bootstrap, ten `steepy-<skill>` commands, and the model-invocable `steepy_skill` tool. A command's output is rendered to the human and never enters model history, so a command can only name the tool call to make — that is why `steepy_skill` exists as the model-facing channel that actually loads a skill's exact prose. |
 
-Adapters are fail-open: every optional host API sits behind a capability check, so a host without a feature degrades to a no-op instead of an error. Where a harness lacks a capability the skills degrade along a declared path (inline specialist, session model) — stated in the output, never silent. Concrete D2 tier models come from `adapters/model-mappings.mjs` (the provider-keyed tier tables with per-row provenance) — the same tables `scripts/verify-model-mappings.mjs` checks for drift.
+Adapters are fail-open: every optional host API sits behind a capability check, so a host without a feature degrades to a no-op instead of an error. Where a harness lacks a capability the skills degrade along a declared path (inline specialist, session model) — stated in the output, never silent. Concrete tier models come from `adapters/model-mappings.mjs` (the provider-keyed tier tables with per-row provenance) — the same tables `scripts/verify-model-mappings.mjs` checks for drift.
 
-DeepSeek Harness's fail-open shape is dependency-gated activation rather than a synchronous presence check: each of its three capabilities runs on its own child fiber, gated on exactly the one host service it needs. A host that never composes one of those services leaves only that one capability's fiber pending forever — silently, with no error and no timeout — while the adapter's own fiber and the other two capabilities stay unaffected. This wiring degradation is declared in the adapter's own bootstrap block as well as here, per `.apex/conventions.md`'s "degradations are explicit, never silent" rule.
+DeepSeek Harness's fail-open shape is dependency-gated activation rather than a synchronous presence check: each of its three capabilities runs on its own child fiber, gated on exactly the one host service it needs. A host that never composes one of those services leaves only that one capability's fiber pending forever — silently, with no error and no timeout — while the adapter's own fiber and the other two capabilities stay unaffected. This wiring degradation is declared in the adapter's own bootstrap block as well as here: a degradation is always stated, never silent.
 
-`adapters/headless.mjs` is the odd one out: not a session-injection adapter but a harness → headless one-shot command map (`claude -p`, `codex exec`, `opencode run`; `null` for a harness with no headless mode, e.g. Pi). It is what `scripts/autopilot.mjs` — the gear-3 autopilot conductor — uses to spawn each phase, and what tells `brainstorm` Step 7 whether autopilot can be offered on the current harness.
+`adapters/headless.mjs` is the odd one out: not a session-injection adapter but a harness → headless one-shot command map (`claude -p`, `codex exec`, `opencode run`; `null` for a harness with no headless mode, e.g. Pi). It is what `scripts/autopilot.mjs` — the gear-3 autopilot conductor — uses to spawn each phase, and what tells `brainstorm`'s drive-mode step whether autopilot can be offered on the current harness.
+
+### Native capability matrix — 2026-08-19, steepy-apex v0.8.5
+
+This versioned matrix is the conservative contract used by `adapters/headless.mjs`. States are exactly `yes | unavailable | unproven`: **yes** is implemented and supported by the mapped command; **unavailable** is not offered by that harness descriptor; **unproven** is deliberately withheld pending a successful canary. Session identity, discoverability, and successful open/resume are independent claims. There is no flag-only promotion: a flag alone never promotes a capability. Claude agent/subagent identity is `yes` because the raw captures of a 2026-08-17 autopilot run showed explicit subagent task events (`subagent_type`, `task_id`, completion `status`/`summary`), which is event evidence, not a flag. OpenCode native session identity and open/resume are `yes` on the same principle: a real autopilot run's raw capture showed a `sessionID` on every structured event (event evidence, not a flag), `opencode session list --format json` returned persisted sessions on a live install, and `opencode run --session <session-id>` is the documented resume invocation.
+
+| Harness and mapped command | Structured baseline | Agent/subagent identity | Native session identity | Native discovery | Native open/resume | Display name | Parent link | Native stop |
+|---|---|---|---|---|---|---|---|---|
+| Claude Code — command 1 below | yes | yes | yes | unproven | unproven: `claude --resume <session-id>` is a hint only | yes | unavailable | unavailable |
+| Codex — command 2 below | yes | unavailable | yes | yes: `codex resume --include-non-interactive` | yes: `codex exec resume <thread-id>` | unavailable | unavailable | unavailable |
+| OpenCode — command 3 below | yes | unavailable | yes | yes: `opencode session list --format json` | yes: `opencode run --session <session-id>` | yes | unavailable | unavailable |
+
+The exact supported invocations currently mapped by `adapters/headless.mjs` are:
+
+1. `claude -p <prompt> --dangerously-skip-permissions --allowedTools Task,Bash,Glob,Grep,Read,Edit,Write,TodoWrite,Skill --output-format stream-json --verbose --forward-subagent-text --name <display-name>`
+2. `codex exec --dangerously-bypass-approvals-and-sandbox --color never --json <prompt>`
+3. `opencode run --auto --format json --title <display-name> <prompt>`
+
+When a task's model tier resolves to a concrete model, the adapter also passes `--model <model>`: at the end of the Claude arguments, before `exec` for Codex, and before the prompt for OpenCode.
+
+A local canary run observed a Claude source session ID, so identity remains `yes`, but did not observe a picker/list and ended in an API error before a resumed request completed; Claude discovery and open/resume therefore remain `unproven`. That 2026-08-17 autopilot run's raw captures recorded explicit subagent task events (`system/task_started`, `system/task_progress`, `system/task_notification`, `system/task_updated`) carrying `subagent_type`, `task_id`, and a completion `status`/`summary`, which is the event evidence behind Claude agent/subagent identity being `yes`. A 2026-08-19 autopilot run's raw captures (`phase-*-attempt-*.raw.jsonl`) recorded OpenCode's real `--format json` event vocabulary — `step_start`, `text`, `tool_use`, `step_finish` — each carrying a top-level `sessionID`, which is the event evidence behind OpenCode native session identity being `yes`; the same sessionID is what `opencode session list --format json` lists and what `opencode run --session <session-id>` resumes. Codex was absent from the local canary environment, which is an availability result rather than a contradiction of its documented command baseline. Parent-link and native-stop data are unavailable in every current descriptor. Claude's `--forward-subagent-text` requires Claude Code >=2.1.211; it does not itself prove agent/subagent identity.
+
+The source snapshot for this matrix is 2026-08-19 against steepy-apex v0.8.5 and the command map in `adapters/headless.mjs`. Planning used the official [Claude Code CLI usage](https://code.claude.com/docs/en/cli-usage) documentation (forward-subagent requirement, name and resume), the [Codex CLI reference](https://developers.openai.com/codex/cli/reference), [Codex non-interactive documentation](https://developers.openai.com/codex/noninteractive), and the [OpenCode CLI documentation](https://opencode.ai/docs/cli/).
+
+## Gear-3 phase context and handoffs
+
+How the phases of the [Gear-3 workflow chain](workflow.md#gear-3-the-workflow-chain) load their context and hand off to each other.
+
+Autopilot phases start fresh from deterministic, versioned role manifests: required artifacts are eagerly loaded; named missing facts are the only `onDemand` upstream-document reads, and verdict/gear/drive come from manifest contract scalars rather than an automatic spec reload. The manifest is a context-loading protocol, not repository access control, so agents still inspect source needed to implement and verify work. Modular routes preserve the exact core and leaf links. Plan matches each required core's mini-routing conditions against the required spec's exact paths/topics; review matches them using only its required criteria-only artifact, task-result index, and branch diff; implement matches task exact paths/topics. Each phase reads every matching leaf from its declared inventory and records a concrete reason. Zero matches means core only, with no read-all fallback; unrelated leaves stay unloaded. Selected task leaves become required task-local inputs in mini-routing order. Children write their durable report before returning the drive's completion envelope (three fields in autopilot, four in manual drive); the implement skill/controller validates that artifact-first completion, then carries artifact references rather than report bodies. Review receives an attributed criteria-only artifact, the exact task-result index, and `branch-diff.txt`, never the full spec body as required criteria. The criteria artifact and the aggregate diff are derived by the conductor from the spec and from `git`, so the review gate never turns on whether a child remembered to write them; the index, which only implement can author, is parsed by implement itself before it claims completion.
+
+Fresh brainstorm derives coverage and gear from your request, stable routed rules and source—not
+historical specs or logs. It follows the actual single standard or modular core plus matching leaves,
+recording each match rather than guessing filenames. Regular review needs only criteria, the compact
+task index and diff, including for a proposed version bump; the bump/PR decision remains human.
+
+Manual handoffs authorize exact paths, including both sides when resuming publication: plan adds
+`onDemand.output-plan`, implement requires `progress-ledger` and `task-results` (and `source-spec`
+for plan-backed entry), and regular review adds `onDemand.review-report`. Each phase publishes its
+verified output READY first, then marks its input CONSUMED in a separate per-file replacement.
+An interruption leaving READY/READY is repaired only after checking the same pair's provenance,
+approval and verification; a verified CONSUMED/READY pair is a no-op. Missing capability/proof or a
+mismatched pair stops without selecting recent files. These instructions are model-based; content
+tests are not deterministic enforcement or a claim of multi-file atomicity. Gear-4 controller
+recovery remains a separate deterministic protocol.
+
+An implementer that unexpectedly had to discover what to change records DONE_WITH_CONCERNS and
+`discovery:unplanned`. That exact signal survives fixes and the task-result index. Review reports it
+separately from ordinary or unattributed concerns: DONE_WITH_CONCERNS alone is not discovery proof.
 
 ## Autopilot live-observability boundary
 
@@ -163,7 +218,7 @@ For each child stdout/stderr line, the conductor uses a raw-first flow: frame �
 
 The bridge enforces bounded backpressure across raw, readable, aggregate, and live destinations: it pauses a source while a required writer drains and bounds partial lines and pending writes. Its policy is intentionally hybrid. Failure to open, redact, fully write, or drain the immutable raw destination is blocking: the conductor terminates the whole child process group and halts. A readable, aggregate, or live destination write/drain failure is non-blocking: it records `OBSERVABILITY_DEGRADED`, disables that destination, and continues through the durable raw capture plus any healthy curated destinations.
 
-The resource-usage ledger is append-only JSONL scoped to run, phase, and attempt. It records each direct provider measurement once with a source-event fingerprint: exact retransmissions deduplicate, while distinct provider phase aggregates from one session remain separate. Those distinct phase aggregates must not be summed unless provider evidence establishes disjoint scopes. Derived displays read the records rather than re-recording them, but persistence deduplication alone does not establish additivity. The ledger is observational evidence for context efficiency, never a budget or a healthy-work stop condition.
+The resource JSONL usage ledger is append-only and scoped to run, phase, and attempt. It records each direct provider measurement once with a non-content-revealing source-event fingerprint: exact retransmissions deduplicate, while distinct provider phase aggregates from one session remain separate. Those distinct phase aggregates must not be summed unless provider evidence establishes disjoint scopes. Derived displays read the records rather than re-recording them, but persistence deduplication alone does not establish additivity. The ledger is observational evidence for context efficiency, never a budget or a healthy-work stop condition: the `budget` field is rejected on fresh and resumed gear-3 contracts, and no fixed resource quota terminates healthy work.
 
 Process lifetime converges in `scripts/autopilot.mjs`: terminal interruption, optional native stop, explicit safety/failure condition, and a blocking bridge failure all enter one stop path, send `SIGTERM` to the detached child group and escalate to `SIGKILL` after a short grace through the shared `scripts/process-group.mjs` primitive that loop-engineer and both evidence collectors also use, close destinations once, and settle the attempt once. A bounded I/O integrity timeout may protect a stalled read, write, or drain operation; it is not a phase duration or work timer. A live child that emits no output therefore remains active until it exits or receives an explicit stop; the conductor does not infer a hang from silence. This keeps descendants from outliving a halted phase. The entire path uses Node >= 24 built-ins only and has zero runtime dependencies.
 
@@ -176,9 +231,29 @@ parallel conductors require distinct Git worktrees. Deterministic process-group 
 only on tested `linux` and `darwin`, owns only the group it spawned, and is neither OS sandboxing nor
 containment of descendants that deliberately escape that group.
 
+### Attempt evidence, status stream and resume inputs
+
+The attempt log files are listed in the [workflow guide](workflow.md#autopilot-live-observability).
+
+The status stream correlates every run, attempt, and discovered session: `run-id`, phase, attempt, display name, readable/raw filenames, then `session-id` plus the descriptor's native identity/open-resume states and qualification. An `ATTEMPT_RESERVED` event durably claims the attempt number before any create-only manifest or log is written, so a crash in artifact preparation cannot collide with that path on resume. A `BASELINE` event records the commit the run starts from, once, so a resumed run keeps it and the aggregate diff still spans the whole chain. A spec's cross-cutting entry that matches no routing row loads no standard and is recorded as `CONTEXT_SURFACE_IGNORED` rather than halting the phase; an unrouted owning or per-task surface still halts as a binding error. Supported references are labelled `open`/`resume`; an `unproven` command is labelled only as an `open-hint`/`resume-hint`. On resume, already-completed phases are skipped, but an unfinished phase always receives a **new attempt** number and new immutable files; no earlier attempt is overwritten. Resuming an `implement` phase that stopped at the fix-round cap restarts that review-fix loop: the new attempt records the restart in the ledger and gets a fresh set of fix rounds.
+
+When an unfinished implementation needs additional existing evidence, name each exact
+repo-relative path with repeatable `--resume-input <path>` arguments to
+`node <engine-root>/scripts/autopilot.mjs <spec-path>`, where `<engine-root>` is the installed
+steepy-apex plugin directory (API: `runConductor(specPath, { resumeInputs })`).
+Each file must be inside the selected spec's task directory. The conductor checks the
+bindings before acquiring the lease and again before publication, then adds them only
+to the new implement manifest's `onDemand` inventory. It reads metadata rather than file
+bodies and never scans for sibling or recent artifacts. Missing files, aliases, globs,
+duplicates (including physical case aliases of inputs or the already inventoried ledger/index), other-run paths, symlinked
+ancestors/targets and hardlinks are rejected. Existing manifests and logs stay immutable;
+plan/review inventories and the run's pinned task-result protocol stay unchanged. These
+capabilities provide context, not approval: malformed results still require the existing
+recovery protocol and fresh valid review evidence.
+
 ## `hooks/` — the Stop hook
 
-`hooks.json` registers a single Claude Code `Stop` hook that runs `stop-hook.mjs` at the end of every turn. `hooks-codex.json` declares Codex wiring using `$PLUGIN_ROOT`; native loading and protocol compatibility depend on the host version and require a real-host check. On a compatible host, violations produce a `decision: block` response; coherent or absent hubs stay silent. The hook does not re-block while `stop_hook_active` is set. The path is quoted to survive spaces. When native hooks are unavailable, `check` and `review` remain the explicit gates. The Claude directory build ships without this folder, because the directory accepts command hooks only from Verified organizations.
+`hooks.json` registers a single Claude Code `Stop` hook that runs `stop-hook.mjs` at the end of every turn. `hooks-codex.json` declares Codex wiring using `$PLUGIN_ROOT`; native loading and protocol compatibility depend on the host version and require a real-host check. On a compatible host, violations produce a `decision: block` response; coherent or absent hubs stay silent. The hook does not re-block while `stop_hook_active` is set. The path is quoted to survive spaces. When native hooks are unavailable, `check` and `review` remain the explicit gates. The build prepared for the Claude plugin directory, where steepy-apex is not listed yet, ships without this folder, because the directory accepts command hooks only from Verified organizations.
 
 ## Portable project instructions
 
@@ -293,7 +368,7 @@ Inception effect ownership stays with the coordinator: children can research or 
 Claude/Codex/OpenCode agent triads in the target project. This does not promise that
 every command writes only there; review the command family before granting trust.
 
-As with any plugin, review plugin hooks before trusting them: the full hook wiring is three small files, [`hooks/hooks.json`](https://github.com/steepy-it/steepy-apex/blob/main/hooks/hooks.json) (Claude Code), [`hooks/hooks-codex.json`](https://github.com/steepy-it/steepy-apex/blob/main/hooks/hooks-codex.json) (Codex), and [`scripts/stop-hook.mjs`](../scripts/stop-hook.mjs). The Claude directory build ships no hooks.
+As with any plugin, review plugin hooks before trusting them: the full hook wiring is three small files, [`hooks/hooks.json`](https://github.com/steepy-it/steepy-apex/blob/main/hooks/hooks.json) (Claude Code), [`hooks/hooks-codex.json`](https://github.com/steepy-it/steepy-apex/blob/main/hooks/hooks-codex.json) (Codex), and [`scripts/stop-hook.mjs`](../scripts/stop-hook.mjs). The build prepared for the Claude plugin directory ships no hooks.
 
 ### Autopilot task execution receipts
 

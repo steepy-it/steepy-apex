@@ -6,6 +6,7 @@ docs/brand/
 .claude/settings.local.json
 .claude/skills/*
 !.claude/skills/steepy-apex-bootstrap
+/skills-lock.json
 
 # Local workflow artifacts must never enter release history.
 /.apex/work/

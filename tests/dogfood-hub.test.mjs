@@ -697,15 +697,16 @@ test('stable documentation locks the context-efficient autopilot contract and ne
 
   const architecture = readFileSync(join(repoRoot, 'docs', 'architecture.md'), 'utf8');
   const workflow = readFileSync(join(repoRoot, 'docs', 'workflow.md'), 'utf8');
-  assert.match(workflow, /verdict\/gear\/drive come from manifest contract scalars/i);
-  assert.match(workflow, /modular routes preserve the exact core and leaf links/i);
-  assert.match(workflow, /plan[^.]*required spec[^.]*exact paths\/topics[\s\S]{0,220}review[^.]*criteria[^.]*task-result index[^.]*branch diff/i);
-  assert.match(workflow, /every matching leaf[^.]*concrete reason/i);
-  assert.match(workflow, /zero matches[^.]*core only[^.]*no read-all fallback/i);
+  // Phase-context protocol is internal reference: it lives in the architecture doc, not the user guide.
+  assert.match(architecture, /verdict\/gear\/drive come from manifest contract scalars/i);
+  assert.match(architecture, /modular routes preserve the exact core and leaf links/i);
+  assert.match(architecture, /plan[^.]*required spec[^.]*exact paths\/topics[\s\S]{0,220}review[^.]*criteria[^.]*task-result index[^.]*branch diff/i);
+  assert.match(architecture, /every matching leaf[^.]*concrete reason/i);
+  assert.match(architecture, /zero matches[^.]*core only[^.]*no read-all fallback/i);
   assert.doesNotMatch(architecture, /phase timeout/i, 'healthy work must not halt on a phase timeout');
   assert.match(architecture, /finite phase\/task lifecycle/i);
   assert.match(architecture, /effective abstract controller tier/i);
-  for (const [name, text] of [['workflow', workflow], ['architecture', architecture]]) {
+  for (const [name, text] of [['architecture', architecture]]) {
     assert.match(text, /exact retransmissions[^.]*deduplicat/i, `${name} must scope dedupe to retransmissions`);
     assert.match(text, /distinct[^.]*phase[^.]*aggregate[\s\S]{0,220}(?:must not|cannot|not safe to) (?:be )?summ/i,
       `${name} must prohibit summing distinct phase aggregates without scope evidence`);
@@ -717,8 +718,8 @@ test('stable documentation locks the context-efficient autopilot contract and ne
   assert.match(architecture, /implement skill\/controller/i, 'architecture must assign envelope validation to implement');
 
   assert.doesNotMatch(workflow, /budget timeout/i, 'gear-3 workflow must not have a budget timeout');
-  assert.match(workflow, /resource JSONL/i);
-  assert.match(workflow, /`budget` field is rejected[\s\S]*fresh and resumed/i);
+  assert.match(architecture, /resource JSONL/i);
+  assert.match(architecture, /`budget` field is rejected[\s\S]*fresh and resumed/i);
   assert.match(workflow, /I\/O integrity timeout/i);
   assert.match(workflow, /stop-before-PR/i);
 

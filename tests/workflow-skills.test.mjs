@@ -1960,7 +1960,7 @@ test('unplanned discovery has an explicit signal preserved through the compact t
   ];
   assert.deepEqual(contractRows(review, '### Discovery signal interpretation'), expected);
   assert.match(review, /never infer discovery[^]*DONE_WITH_CONCERNS alone/i);
-  for (const path of ['.apex/standards/skills.md', '.apex/conventions.md', 'docs/workflow.md']) {
+  for (const path of ['.apex/standards/skills.md', '.apex/conventions.md', 'docs/architecture.md']) {
     const stable = readFileSync(join(root, path), 'utf8');
     assert.ok(stable.includes('discovery:unplanned'), path);
     assert.match(stable, /output[^]*READY[^]*input[^]*CONSUMED/i, path);
@@ -2482,13 +2482,7 @@ test('live-observability docs lock the bridge boundary, safe logging contract, a
     'new attempt',
     'interruption',
     'timeout',
-    'yes | unavailable | unproven',
     'OpenCode',
-    'unproven',
-    'https://code.claude.com/docs/en/cli-usage',
-    'https://developers.openai.com/codex/cli/reference',
-    'https://developers.openai.com/codex/noninteractive',
-    'https://opencode.ai/docs/it/cli/',
   ]) {
     assert.ok(workflow.includes(required), `workflow must document: ${required}`);
   }
@@ -2496,7 +2490,21 @@ test('live-observability docs lock the bridge boundary, safe logging contract, a
     'exact mode must not change curated live/readable output');
   assert.match(workflow, /safe[\s\S]{0,240}(?:best-effort|not a mathematical secrecy guarantee)/i,
     'safe redaction must be documented as best effort, not a secrecy guarantee');
-  assert.match(workflow, /Native capability matrix — 2026-08-19, steepy-apex v0\.8\.5/,
+  assert.ok(workflow.includes('](architecture.md#native-capability-matrix--2026-08-19-steepy-apex-v085)'),
+    'the user workflow guide must link the native capability matrix');
+
+  // The native capability matrix is internal reference; it lives in the architecture doc.
+  for (const required of [
+    'yes | unavailable | unproven',
+    'unproven',
+    'https://code.claude.com/docs/en/cli-usage',
+    'https://developers.openai.com/codex/cli/reference',
+    'https://developers.openai.com/codex/noninteractive',
+    'https://opencode.ai/docs/cli/',
+  ]) {
+    assert.ok(architecture.includes(required), `architecture must document: ${required}`);
+  }
+  assert.match(architecture, /Native capability matrix — 2026-08-19, steepy-apex v0\.8\.5/,
     'capability matrix must remain dated and tied to the current plugin version');
 
   for (const required of [
@@ -2504,18 +2512,18 @@ test('live-observability docs lock the bridge boundary, safe logging contract, a
     'codex exec --dangerously-bypass-approvals-and-sandbox --color never --json <prompt>',
     'opencode run --auto --format json --title <display-name> <prompt>',
   ]) {
-    assert.ok(workflow.includes(required), `workflow must show the complete mapped command: ${required}`);
+    assert.ok(architecture.includes(required), `architecture must show the complete mapped command: ${required}`);
   }
-  assert.match(workflow, /Native session identity \| Native discovery \| Native open\/resume/,
+  assert.match(architecture, /Native session identity \| Native discovery \| Native open\/resume/,
     'the matrix must distinguish observed session identity from discoverability and resume success');
-  assert.match(workflow, /Claude Code[^\n]*\| yes \| yes \| yes \| unproven \| unproven:[^\n]*\| yes \| unavailable \| unavailable \|/,
+  assert.match(architecture, /Claude Code[^\n]*\| yes \| yes \| yes \| unproven \| unproven:[^\n]*\| yes \| unavailable \| unavailable \|/,
     'Claude discovery and successful native resumption must remain unproven');
-  assert.match(workflow, /Codex[^\n]*\| yes \| unavailable \| yes \| yes:[^\n]*\| yes:[^\n]*\| unavailable \| unavailable \| unavailable \|/,
+  assert.match(architecture, /Codex[^\n]*\| yes \| unavailable \| yes \| yes:[^\n]*\| yes:[^\n]*\| unavailable \| unavailable \| unavailable \|/,
     'Codex documented discovery and resume baseline must stay separate from its locally unavailable canary');
-  assert.match(workflow, /OpenCode[^\n]*\| yes \| unavailable \| yes \| yes:[^\n]*\| yes:[^\n]*\| yes \| unavailable \| unavailable \|/,
+  assert.match(architecture, /OpenCode[^\n]*\| yes \| unavailable \| yes \| yes:[^\n]*\| yes:[^\n]*\| yes \| unavailable \| unavailable \|/,
     'OpenCode identity, discovery, and open/resume are yes on real event evidence (sessionID on every structured event)');
-  assert.match(workflow, /flag-only[^\n]*?(?:never|does not)[^\n]*promot/i,
-    'workflow must prohibit flag-only capability promotion explicitly');
+  assert.match(architecture, /flag-only[^\n]*?(?:never|does not)[^\n]*promot/i,
+    'architecture must prohibit flag-only capability promotion explicitly');
 
   assert.match(readme, /live observability/i, 'README must summarize live observability');
   assert.ok(readme.includes('[docs/workflow.md](docs/workflow.md)'), 'README must link to detailed workflow docs');

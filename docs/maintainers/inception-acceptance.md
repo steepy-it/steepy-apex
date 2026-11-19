@@ -1,6 +1,6 @@
 # Inception native acceptance protocol
 
-This protocol is a release gate after review. It is not a review criterion: review judges the repository, and this gate judges the skill running in a real harness. Nothing here is run by the test suite.
+This protocol is meant as a release gate after review. No release has passed it yet: every row of the evidence matrix below is `NOT RUN`. It is not a review criterion: review judges the repository, and this gate judges the skill running in a real harness. Nothing here is run by the test suite.
 
 ## Setup rule
 
@@ -30,7 +30,7 @@ A project with an asynchronous boundary or a strong compatibility constraint, po
 
 ## Recovery and verification scenarios
 
-Run these through the packaged skill, in new sessions where indicated. They supplement both scenarios above; record each case separately with exact refs, observed application differences, check IDs and human responses. Interruptions in every phase are required:
+Run these through the packaged skill, in new sessions where indicated. They supplement scenarios A and B above; record each case separately with exact refs, observed application differences, check IDs and human responses. Interruptions in every phase are required:
 
 | Case | Required observation |
 |---|---|

@@ -1,14 +1,5 @@
 # Contributing to steepy-apex
 
-## Command-family effects matrix
-
-Before running a command, consult the [effects matrix](docs/architecture.md#command-family-effects-matrix) and choose the relevant effects boundary: filesystem
-reads–writes–subprocesses–temporary state–providers/network. Local validation and
-scaffolding differ from session-store reporting, version transactions, workflow
-controllers, release-evidence validation, live model-mapping verification, and native
-installation/canaries. The project has zero third-party runtime dependencies, but some
-families intentionally invoke Git, npm, a provider catalog, or a host harness.
-
 Thanks for your interest. Contributions follow one rule: **discuss features first, fix bugs directly.**
 
 ## What's welcome
@@ -35,6 +26,15 @@ npm test
 1. **Tests pass** — `npm test` is green. Bug fixes add a regression test; features come with tests (this repo is built test-first).
 2. **Hub stays coherent** — if you touch `.apex/`, `templates/`, or anything the linter reads, `node scripts/validate-hub.mjs .` must exit 0.
 3. **Version gate** — every PR either bumps the plugin version (`node scripts/bump-version.mjs <patch|minor|major>`) and adds a matching `## vX.Y.Z` section to `CHANGELOG.md`, or carries the `no-release` label (docs-only and CI-only changes). CI enforces this.
+
+## Command-family effects matrix
+
+Before running a command, consult the [effects matrix](docs/architecture.md#command-family-effects-matrix) and choose the relevant effects boundary: filesystem
+reads–writes–subprocesses–temporary state–providers/network. Local validation and
+scaffolding differ from session-store reporting, version transactions, workflow
+controllers, release-evidence validation, live model-mapping verification, and native
+installation/canaries. The project has zero third-party runtime dependencies, but some
+families intentionally invoke Git, npm, a provider catalog, or a host harness.
 
 ## Navigating the code
 
