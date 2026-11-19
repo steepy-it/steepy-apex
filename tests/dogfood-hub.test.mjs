@@ -14,7 +14,7 @@ const readStable = (...parts) => readFileSync(join(repoRoot, ...parts), 'utf8');
 const projectScaffold = join(repoRoot, 'scripts', 'project-scaffold.mjs');
 const dogfoodModel = {
   projectName: 'steepy-apex',
-  description: 'Context engineering and governed workflows for AI coding agents. Keep project knowledge coherent, route work to specialists, and scale from small fixes to bounded autonomous loops.',
+  description: 'A plugin for Claude Code, Codex, OpenCode, Pi, and DeepSeek Harness that keeps your project\'s rules in a versioned hub, checks that its links and code references still resolve, and sizes the workflow to each task.',
   devCommands: ['npm test'],
   surfaces: [
     { name: 'adapters', path: 'adapters', agent: 'adapters-agent', testCmd: 'npm test' },

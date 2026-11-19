@@ -13,9 +13,9 @@ Community marketplace install path after approval: `steepy-apex@claude-community
 
 Detailed references:
 
-- [Public launch checklist](docs/publication-readiness.md).
+- [Public launch checklist (v1.0.0, historical)](docs/maintainers/publication-readiness.md).
 
-- [Optional audit evidence schema, capabilities and provenance](docs/release-evidence.md).
+- [Optional audit evidence schema, capabilities and provenance](docs/maintainers/release-evidence.md).
 
 ## Installation
 
@@ -271,7 +271,7 @@ Sources: [OpenAI submission](https://developers.openai.com/plugins/deploy/submis
    published version. A Git-based Pi install remains an alternative to npm.
 
 Sources: [OpenCode npm plugins](https://opencode.ai/docs/plugins/),
-[Pi packages and gallery metadata](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/packages.md).
+[Pi packages and gallery metadata](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md).
 
 ### DeepSeek Harness
 

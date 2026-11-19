@@ -11,7 +11,7 @@
 
 ## Short description
 
-Context engineering and governed workflows for AI coding agents. Keep project knowledge coherent, route work to specialists, and scale from small fixes to bounded autonomous loops.
+A plugin for Claude Code, Codex, OpenCode, Pi, and DeepSeek Harness that keeps your project's rules in a versioned hub, checks that its links and code references still resolve, and sizes the workflow to each task.
 
 ## Positioning
 

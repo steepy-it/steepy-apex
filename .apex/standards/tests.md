@@ -13,7 +13,7 @@
 ## Release documentation ownership
 
 [RELEASE.md](../../RELEASE.md) owns the operational publication checklist, manual smoke-test
-procedure, and version recovery. [Release evidence](../../docs/release-evidence.md) owns
+procedure, and version recovery. [Release evidence](../../docs/maintainers/release-evidence.md) owns
 the optional release audit schema. Content checks read the owning document and keep
 the checklist's reference links explicit. Historical observations do not certify the current release.
 

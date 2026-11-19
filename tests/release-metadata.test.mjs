@@ -393,7 +393,7 @@ test('RELEASE.md documents validation, smoke test, release, and rollback steps',
     'scripts/bump-version.mjs',
     '.github/workflows/release.yml',
     'Rollback',
-    'docs/release-evidence.md',
+    'docs/maintainers/release-evidence.md',
     '`.codex-plugin/plugin.json` in three-way lockstep',
     'claude.ai/directory/manage',
     '`claude-directory`',
@@ -415,7 +415,7 @@ test('RELEASE.md documents validation, smoke test, release, and rollback steps',
 });
 
 test('release evidence reference documents the optional release audit verification and release independence', () => {
-  const release = readFileSync(join(root, 'docs/release-evidence.md'), 'utf8');
+  const release = readFileSync(join(root, 'docs/maintainers/release-evidence.md'), 'utf8');
 
   for (const required of [
     'scripts/validate-release-evidence.mjs',
@@ -605,7 +605,7 @@ test('public docs describe the implemented deterministic Gear-4 controller bound
   assert.match(gear4, /Claude[\s\S]*Codex[\s\S]*OpenCode/);
   assert.match(gear4, /Pi[\s\S]*DeepSeek[\s\S]*`runner-unavailable`/i);
   assert.match(gear4, /fake-runner[\s\S]*not[\s\S]*five-provider LIVE|five-provider LIVE[\s\S]*not[\s\S]*fake-runner/i);
-  assert.match(gear4, /APEX-P1-04[\s\S]*open/i);
+  assert.match(gear4, /five-provider LIVE[\s\S]*remains open/i);
 
   assert.match(
     readme,
@@ -617,7 +617,9 @@ test('public docs describe the implemented deterministic Gear-4 controller bound
   const workflowGear4 = workflowSummary.match(/^- \*\*Gear-4 terminal controller\*\* — ([^\n]+)$/mu)?.[1];
   assert.ok(workflowGear4, 'Workflow guide must retain the Gear-4 capability and evidence summary');
   assert.match(workflowGear4, /fake-runner[\s\S]*runtime-only evidence/i);
-  assert.match(workflowGear4, /five-provider LIVE[\s\S]*APEX-P1-04[\s\S]*remains open/i);
+  assert.match(workflowGear4, /five-provider LIVE[\s\S]*remains open/i);
+  assert.doesNotMatch(workflowSummary, /APEX-P\d|m5a|port-apex|Task 7 canary/,
+    'the user workflow guide must not carry internal tracker IDs or run names');
 });
 
 test('CHANGELOG.md carries a heading for the current plugin.json version', () => {

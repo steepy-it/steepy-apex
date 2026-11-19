@@ -1,6 +1,9 @@
 # Public launch checklist
 
-Use this checklist alongside [RELEASE.md](../RELEASE.md). It describes the launch
+> Historical: this checklist was used for the v1.0.0 launch on 2026-09-17. Current releases
+> follow [RELEASE.md](../../RELEASE.md).
+
+Use this checklist alongside [RELEASE.md](../../RELEASE.md). It describes the launch
 procedure; the CI run and GitHub settings on the final commit establish current status.
 The initial public version is `1.0.0`. npm publication, marketplace submissions, and
 optional audit evidence are separate from the GitHub launch.
@@ -33,7 +36,7 @@ plan permits them. Some GitHub plans provide branch protection only on public re
   `validation / package`, and `version-gate`. The version check runs on pull requests;
   the release workflow's `publish` job is not a pull-request check.
 - Enable private vulnerability reporting and verify the route advertised in
-  [SECURITY.md](../SECURITY.md), including the maintainer's email fallback.
+  [SECURITY.md](../../SECURITY.md), including the maintainer's email fallback.
 - Make the reviewed repository public and publish the verified `v1.0.0` release.
 
 The release workflow can create a missing release automatically after a successful push
@@ -50,5 +53,5 @@ Use a fresh environment without stored GitHub credentials to check:
 - The documented native installation and first-run paths for the harnesses being announced.
 
 A local tarball install validates packaging, not anonymous GitHub access or native host
-behavior. Record those checks separately. See [installation](installation.md) for commands
-and [the release checklist](../RELEASE.md#public-distribution-checklist) for later channels.
+behavior. Record those checks separately. See [installation](../installation.md) for commands
+and [the release checklist](../../RELEASE.md#public-distribution-checklist) for later channels.

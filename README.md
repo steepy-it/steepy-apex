@@ -8,35 +8,30 @@
 <p align="center"><em>Keep your AI on the apex.</em></p>
 
 <p align="center">
-  <img alt="harnesses: Claude Code · Codex · OpenCode · Pi · DeepSeek Harness" src="https://img.shields.io/badge/harnesses-Claude_Code_%C2%B7_Codex_%C2%B7_OpenCode_%C2%B7_Pi_%C2%B7_DeepSeek-C8873A?style=flat-square&labelColor=1B3149">
+  <img alt="CI status on main" src="https://img.shields.io/github/actions/workflow/status/steepy-it/steepy-apex/release.yml?branch=main&label=CI&style=flat-square&labelColor=1B3149">
+  <img alt="latest release" src="https://img.shields.io/github/v/release/steepy-it/steepy-apex?style=flat-square&labelColor=1B3149&color=4A515B">
   <img alt="node ≥ 24" src="https://img.shields.io/badge/node-%E2%89%A5%2024-4A515B?style=flat-square&labelColor=1B3149">
-  <img alt="zero dependencies" src="https://img.shields.io/badge/deps-zero-4A515B?style=flat-square&labelColor=1B3149">
   <img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-4A515B?style=flat-square&labelColor=1B3149">
 </p>
 
-Context engineering and governed workflows for AI coding agents. Keep project knowledge coherent, route work to specialists, and scale from small fixes to bounded autonomous loops.
+steepy-apex is a plugin for Claude Code, Codex, OpenCode, Pi, and DeepSeek Harness. It keeps your project's rules in a versioned `.apex/` hub of Markdown docs, checks that the hub's links and code references still resolve, and sizes the workflow to each task.
 
-Requires **Node.js >= 24** and a supported coding agent: Claude Code, Codex, OpenCode, Pi, or DeepSeek Harness. Release notes are in the [changelog](CHANGELOG.md).
+The generated instructions send your agent to the hub before each task: your conventions, vocabulary, and which specialist agent owns each code area. Started through `/steepy-apex:brainstorm`, a fix the hub's rules already decide goes straight to an edit; a risky change goes through spec, plan, implement, and review.
 
-## What it does
+**Status:** actively developed since v1.0.0 (September 2026); see the [changelog](CHANGELOG.md). Install from GitHub; it is not on npm or in the Claude and Codex plugin directories. Requires **Node.js >= 24** and Git.
 
-- **Start from an idea:** turn an idea, a design, or a prototype into a verified, runnable first version, then govern it with the hub.
-- **Map your project:** a versioned `.apex/` hub with standards, domain vocabulary, and specialist routing.
-- **Catch documentation drift:** validate links, routing, and code anchors; refresh knowledge through discovery.
-- **Scale the workflow:** small fixes, spec-to-review development, or bounded autonomous loops with explicit authorization.
-- **Optimize model spend:** match model capability to each task’s complexity, using lighter models for mechanical work and stronger models for design and risk. [Provider-aware model selection](docs/workflow.md#model-selection) adapts to the harness, with mappings maintained as models and host capabilities evolve. Hosts without per-task selection use the session model.
+## Why steepy-apex
 
-Project knowledge stays versioned. Specs and plans stay gitignored under `.apex/work/` as a local work artifact.
+- **One source for every agent on the team.** `init` writes a shared `AGENTS.md`, a `CLAUDE.md` that imports it, and specialist agents for Claude Code, Codex, and OpenCode from one project model. Teammates on different agents follow the same rules.
+- **Docs that fail loudly when they drift.** The hub linter reports docs that nothing links to, broken links, agents missing from the routing table, and cited file paths that no longer exist. In Claude Code it also runs as a Stop hook at the end of every turn; in Codex it depends on the Codex version.
+- **Process sized to the task.** `brainstorm` checks each task against the hub and picks one of four process levels (gears), from a direct edit to a bounded autonomous loop you authorize. Where the agent allows it, each task runs on a [model tier matched to its difficulty](docs/workflow.md#model-selection).
+- **Plain files, no service.** The hub is Markdown in your Git history, reviewable in pull requests. No server, no telemetry, zero third-party runtime dependencies.
+
+**When it is not the right tool:** a small script, or a project where one hand-kept `AGENTS.md` is enough. `init` auto-detects project areas (surfaces) only in JavaScript and TypeScript workspaces; other stacks declare them during setup. `review`, inception checks, autopilot, and Gear-4 loops need Linux or macOS, not Windows; autopilot and Gear-4 also need Claude Code, Codex, or OpenCode.
 
 ## Quick start
 
-Install your harness first; steepy-apex requires **Node.js >= 24** and **Git**.
-npm and public plugin-directory availability are separate release steps. Choose your harness below;
-local alternatives and troubleshooting are in [the installation guide](docs/installation.md).
-
-### Claude Code
-
-Run inside Claude Code:
+**Claude Code**, inside a session:
 
 ```text
 /plugin marketplace add steepy-it/steepy-apex
@@ -44,72 +39,41 @@ Run inside Claude Code:
 ```
 
 Reload plugins, open your project, then run `/steepy-apex:init`.
-[Details](docs/installation.md#claude-code).
 
-### Codex
-
-Run in your terminal:
+**Codex**, in your terminal:
 
 ```sh
 codex plugin marketplace add steepy-it/steepy-apex
 codex plugin add steepy-apex@steepy-apex
 ```
 
-Start a new Codex session in your project and select steepy-apex's `init` skill (`$init`).
-[Details](docs/installation.md#codex).
+Start a new Codex session in your project and run the steepy-apex `init` skill (`$init`).
 
-### OpenCode
-
-Clone the complete package to a permanent location:
-
-```sh
-git clone https://github.com/steepy-it/steepy-apex.git
-```
-
-Add its absolute file URL to the `plugin` array in your project's `opencode.json`:
-
-```json
-{ "plugin": ["file:///ABSOLUTE/PATH/TO/steepy-apex/adapters/opencode/steepy-apex.js"] }
-```
-
-Restart OpenCode in your project, run `/steepy-apex-init`, and approve access to the
-checkout when prompted. [Details](docs/installation.md#opencode).
-
-### Pi
-
-```sh
-pi install git:github.com/steepy-it/steepy-apex
-```
-
-Start Pi in your project and run `/skill:init`.
-[Details](docs/installation.md#pi).
-
-### DeepSeek Harness
-
-Clone the package, then install it into your configured profile (replace `<name>`):
-
-```sh
-git clone https://github.com/steepy-it/steepy-apex.git
-dsh plugin --profile <name> add /absolute/path/to/steepy-apex
-```
-
-Open that profile in your project and ask the model to call `steepy_skill` with
-`skill: "init"`, then follow the returned instructions.
-[Details](docs/installation.md#deepseek-harness).
+**OpenCode, Pi, and DeepSeek Harness** install from a clone or a Git tag: follow [the installation guide](docs/installation.md). It also covers local checkouts, troubleshooting, and [upgrading an existing hub](docs/installation.md#upgrading-an-existing-hub).
 
 ## Get started
 
 Use your harness's [command syntax](docs/installation.md#first-run-and-troubleshooting); Claude Code is shown here.
 
 1. `/steepy-apex:init` - Initialize steepy-apex in your repo. Creates the `.apex/` hub, project instructions, and the local `.apex/work/` area for gitignored specs/plans.
-2. `/steepy-apex:discovery` — Populate the hub from an existing codebase, reviewing each proposal.
-3. `/steepy-apex:check` — Verify documentation coherence, then give your agent a task.
+2. `/steepy-apex:discovery` - Populate the hub from an existing codebase, reviewing each proposal.
+3. `/steepy-apex:check` - Verify documentation coherence. On a healthy hub the linter reports `steepy validate-hub: OK — doc graph is coherent`. Then start a task with `/steepy-apex:brainstorm`.
 
-Starting from an idea or a prototype? Run `/steepy-apex:inception` first. It ends by pointing to `/steepy-apex:init` and `/steepy-apex:discovery`. See the [inception guide](docs/inception.md).
-
-Upgrading from an earlier version? Read [Upgrading an existing hub](docs/installation.md#upgrading-an-existing-hub) first.
+Starting from an idea or a prototype? Run `/steepy-apex:inception` first. It ends by pointing to `/steepy-apex:init` and `/steepy-apex:discovery`. See the [inception guide](docs/inception.md). Inception is new: its runs in real harnesses have not completed the [acceptance protocol](docs/maintainers/inception-acceptance.md) yet.
 
 The generated bootstrap reads `AGENTS.md`, follows `.apex/_INDEX.md` routing, and invokes workflows by semantic skill name.
+
+## What `init` adds to your repository
+
+| Path | What it is |
+|---|---|
+| `.apex/` | The hub: routing table (`_INDEX.md`), conventions, glossary, testing checklist, and one standard per surface. Versioned. |
+| `.apex/work/` | Specs, plans, and run logs. Gitignored: a local work artifact that stays on your machine. |
+| `AGENTS.md`, `CLAUDE.md` | Shared root instructions in a managed block; `CLAUDE.md` imports `AGENTS.md`. |
+| `.agents/skills/`, `.claude/skills/` | The project bootstrap skill, plus a thin Claude stub that points to it. |
+| `.claude/agents/`, `.codex/agents/`, `.opencode/agents/` | One specialist agent per surface for each of those harnesses. |
+
+If `AGENTS.md` or `CLAUDE.md` already exists, `init` adds its managed block and keeps your text. If a generated file was edited or already exists with other content, `init` asks before replacing it. Other commands can run Git, tests, and model providers: the [effects matrix](docs/architecture.md#command-family-effects-matrix) lists what each one touches.
 
 ## Skills
 
@@ -128,7 +92,7 @@ Claude Code syntax is shown below; see the [installation guide](docs/installatio
 | `/steepy-apex:review` | Verify the result against the spec. |
 | `/steepy-apex:loop-engineer` | Run an authorized, bounded autonomous loop. |
 
-Deterministic runners support Claude, Codex, and OpenCode; Pi and DeepSeek report `runner-unavailable`. Gear-3 autopilot and Gear-4 `loop-engineer` support Linux and macOS. Native hooks and model selection depend on the host; use `check` and `review` as explicit verification gates.
+Deterministic runners support Claude, Codex, and OpenCode; Pi and DeepSeek report `runner-unavailable`. `review`, inception checks, Gear-3 autopilot, and Gear-4 `loop-engineer` run on Linux and macOS only. Native hooks and model selection depend on the host; use `check` and `review` as explicit verification gates.
 
 ## Data and external services
 
@@ -143,19 +107,20 @@ redacted by default (`log-mode: safe`). These skills reach services outside your
 | `/steepy-apex:review` | GitHub, through Git and the `gh` CLI | Your branch and a pull request to `main`, only after you confirm. |
 | `/steepy-apex:inception` | Official project documentation and package registries, reached through your harness and the approved tools; Git hosting only after your authorization | Research queries and installs. Pushes or repository creation only after you authorize each one. |
 
-`/steepy-apex:loop-engineer` runs its attempts on the harness you are already using. Per-command
-effects are in the [Command-family effects matrix](docs/architecture.md#command-family-effects-matrix).
-The full [privacy policy](PRIVACY.md) repeats this table.
+`/steepy-apex:loop-engineer` runs its attempts on the harness you are already using. The full
+[privacy policy](PRIVACY.md) repeats this table.
+
+Autopilot and `/steepy-apex:loop-engineer` start the harness headless with these flags: Claude Code
+`--dangerously-skip-permissions`, Codex `--dangerously-bypass-approvals-and-sandbox`, OpenCode
+`--auto`. The Claude Code and Codex flags turn off permission prompts, and the Codex one also turns
+off its sandbox. Run these modes only on a branch and a machine you are willing to let the agent change.
 
 ## Documentation
 
-- [Installation](docs/installation.md) — all harnesses, requirements, upgrading, and troubleshooting.
-- [Inception](docs/inception.md) — start a project from an idea, before the hub exists.
-- [Release checklist](RELEASE.md) — preflight, distribution channels, and rollback.
-- [docs/workflow.md](docs/workflow.md) — workflow selection, context efficiency, and live observability.
-- [docs/architecture.md](docs/architecture.md) — internals, usage reports, and the Command-family effects matrix: filesystem reads–writes–subprocesses–temporary state–providers/network.
-- [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 license](LICENSE)
-
-Zero third-party runtime dependencies. Commands can write files, run Git/tests, and invoke providers; review their documented effects and plugin hooks before use. Automatic surface detection covers JavaScript workspaces; other stacks can declare their surfaces during setup.
+- [Installation](docs/installation.md): all harnesses, requirements, upgrading, and troubleshooting.
+- [Inception](docs/inception.md): start a project from an idea, before the hub exists.
+- [docs/workflow.md](docs/workflow.md): gears, model selection, context efficiency, autopilot, and live observability.
+- [docs/architecture.md](docs/architecture.md): internals, usage reports, and the Command-family effects matrix: filesystem reads–writes–subprocesses–temporary state–providers/network.
+- [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Privacy](PRIVACY.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 license](LICENSE)
 
 Made by [Steepy](https://www.steepy.it).

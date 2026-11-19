@@ -4,7 +4,7 @@ How the plugin is built. Read this to contribute or to understand the machinery;
 
 steepy-apex is a multi-harness plugin — one canonical core installed natively in Claude Code, Codex, OpenCode, Pi, and DeepSeek Harness — with **zero runtime dependencies**: every script and adapter runs on Node.js built-ins only (Node >= 24).
 
-## Command-family effects matrix
+## Overview
 
 Filesystem reads–writes–subprocesses–temporary state–providers/network are not one global permission claim. Local validators read a repository while scaffolders and version transactions write it; observability may read a configured session store; review and controller workflows run tests, Git, and supported harness subprocesses with confined work state; release-evidence validation runs Git and `npm pack --dry-run` with a temporary cache but never a provider; live model-mapping verification can contact OpenCode/provider provenance; installation and native canaries use the selected host's cache, credentials, and network. Configured hooks describe wiring, while dated observations remain version-specific evidence rather than a current-runtime guarantee.
 
@@ -238,7 +238,8 @@ Run with `npm test` (`node --test tests/*.test.mjs`) — no test framework, just
 
 ## Local usage reports
 
-`node scripts/cost-report.mjs --repo-root <root> [--harness <id>]` reports raw token
+`node <engine-root>/scripts/cost-report.mjs --repo-root <root> [--harness <id>]`, where
+`<engine-root>` is the installed steepy-apex plugin directory, reports raw token
 usage from the repository's autopilot ledgers and the harness session store.
 Usage report schema version 7 separates exact observation identity from provider measurement
 scope, sums only provably disjoint measurements, and publishes accounting coverage. Unsupported or
@@ -280,7 +281,7 @@ Filesystem reads–writes–subprocesses–temporary state–providers/network v
 |---|---|
 | Local validation and scaffolding | Reads the selected repository; scaffold/version commands write governed project files and durable transaction state. `validate-hub` is read-only. |
 | Observability and usage reports | Reads repository ledgers and, unless disabled, the selected harness session store; it does not infer missing usage as zero. |
-| Review/controller workflows | Run declared tests, Git, and supported harness subprocesses; Gear-3/4 create confined work state and require their stated authorization. |
+| Review/controller workflows | Run declared tests, Git, and supported harness subprocesses; Gear-3/4 create confined work state and require their stated authorization. Headless harness children start with `--dangerously-skip-permissions` (Claude Code), `--dangerously-bypass-approvals-and-sandbox` (Codex), or `--auto` (OpenCode). |
 | Release evidence validation | Reads package inputs, invokes `npm pack --dry-run` and Git, and uses an OS temporary cache; it never invokes a provider. |
 | Model mapping verification | Its injected inputs support an offline test path; live mode invokes the OpenCode catalog and fetches provider provenance. |
 | Inception | Writes `.apex/inception/` and the application's files; runs the approved tools (installs, generators, builds, tests); may reach official sources and package registries; remote operations only after explicit authorization. |

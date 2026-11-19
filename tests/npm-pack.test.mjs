@@ -201,7 +201,7 @@ test('npm tarball includes the inception helper, its reached engine modules, and
     'skills/discovery/SKILL.md',
     'skills/init/SKILL.md',
     'docs/inception.md',
-    'docs/inception-acceptance.md',
+    'docs/maintainers/inception-acceptance.md',
     'docs/architecture.md',
   ], 'inception skill files');
 });

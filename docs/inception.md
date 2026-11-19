@@ -112,7 +112,7 @@ Without network access the run asks you for official sources or blocks; it never
 - One run per repository.
 - A mature application is not an inception case: the skill proposes `init`, then `discovery`, instead.
 - Native acceptance does not cover a project with an asynchronous boundary or a strong compatibility constraint yet (scenario C); it is deferred to a later version.
-- Real-harness runs follow the [native acceptance protocol](inception-acceptance.md); its evidence matrix records which have run.
+- Real-harness runs follow the [native acceptance protocol](maintainers/inception-acceptance.md); its evidence matrix records which have run.
 
 ## Reference
 
