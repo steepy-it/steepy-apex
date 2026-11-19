@@ -159,11 +159,10 @@ Update the plugin in your harness, then run `check` in each repository it govern
   happens on its own.
 - **Codex:** run `codex plugin marketplace upgrade steepy-apex`, then start a new session.
 - **OpenCode:** change the tag in your `opencode.json` entry to the new release.
-- **Pi:** `pi update` does not move a pinned tag. Remove the old source with
+- **Pi:** `pi update <source>` does not move a pinned tag. Remove the old source with
   `pi remove git:github.com/steepy-it/steepy-apex@<old-tag>`, then install the new one with
   `pi install git:github.com/steepy-it/steepy-apex@<new-tag>`.
-- **DeepSeek Harness:** run the `add` command from [the install section](#deepseek-harness)
-  with the new tag.
+- **DeepSeek Harness:** no update command has been checked yet.
 
 For a local checkout, check out the new tag in the checkout first. Then run the same update
 commands for Claude Code and Codex, or restart OpenCode and Pi.
@@ -204,7 +203,7 @@ documentation on these dates:
   and [commands](https://code.claude.com/docs/en/commands).
 - Codex, 2026-11-19 for the marketplace commands and 2026-09-16 for `codex plugin add`:
   [Codex plugin packaging](https://developers.openai.com/plugins/build/plugins).
-- OpenCode, 2026-09-16: [OpenCode plugins](https://opencode.ai/docs/plugins/).
+- OpenCode, 2026-09-16, install commands only: [OpenCode plugins](https://opencode.ai/docs/plugins/).
 - Pi, 2026-11-19: [Pi packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md)
   and the [Pi CLI](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md).
 
