@@ -271,7 +271,7 @@ Sources: [OpenAI submission](https://developers.openai.com/plugins/deploy/submis
    published version. A Git-based Pi install remains an alternative to npm.
 
 Sources: [OpenCode npm plugins](https://opencode.ai/docs/plugins/),
-[Pi packages and gallery metadata](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/packages.md).
+[Pi packages and gallery metadata](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md).
 
 ### DeepSeek Harness
 

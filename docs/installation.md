@@ -1,10 +1,19 @@
 # Installation
 
-steepy-apex installs natively in five harnesses — [Claude Code](https://docs.claude.com/en/docs/claude-code), [Codex](https://developers.openai.com/codex), [OpenCode](https://opencode.ai), [Pi Coding Agent](https://github.com/badlogic/pi-mono), and DeepSeek Harness (dsh) — from one shared package: a single canonical `skills/` tree plus thin per-harness adapters and manifests. Pick your harness.
+steepy-apex installs natively in five harnesses ([Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex), [OpenCode](https://opencode.ai), [Pi Coding Agent](https://github.com/earendil-works/pi), and DeepSeek Harness, `dsh`) from one shared package: a single canonical `skills/` tree plus thin per-harness adapters and manifests.
 
-Install the harness itself first, and keep Node.js >= 24 and Git available on your PATH.
 steepy-apex installs from GitHub; it is not published on npm or in the Claude and Codex
 plugin directories. See the [distribution checklist](../RELEASE.md#public-distribution-checklist).
+
+## Requirements
+
+- **A supported harness**, installed first: Claude Code, Codex, OpenCode, Pi Coding Agent, or DeepSeek Harness. One canonical skill set serves all five; where a harness lacks a capability (subagent dispatch, per-dispatch model choice), the skills degrade along a declared path — stated in the output, never silent.
+- **Node.js >= 24** — the hub linter (`validate-hub.mjs`) and scaffolders run on Node, with no third-party dependencies (only Node built-ins). Node 24 is the supported runtime floor; CI validates Node 24. They are invoked by the end-of-turn hook and the `check` skill.
+- **Git** on your PATH.
+
+## Install by harness
+
+Each harness lists the public install first and a local checkout for development second.
 
 ### Claude Code
 
@@ -14,8 +23,6 @@ plugin directories. See the [distribution checklist](../RELEASE.md#public-distri
 /plugin marketplace add steepy-it/steepy-apex
 /plugin install steepy-apex@steepy-apex
 ```
-
-steepy-apex is not listed in the Claude plugin directory; install from GitHub.
 
 **From a local checkout** (for development):
 
@@ -28,13 +35,6 @@ Then restart Claude Code (or reload plugins) and run `/steepy-apex:init`.
 
 ### Codex
 
-**From a local checkout** (for development):
-
-```
-codex plugin marketplace add /path/to/steepy-apex
-codex plugin add steepy-apex@steepy-apex
-```
-
 **From GitHub:**
 
 ```
@@ -42,9 +42,22 @@ codex plugin marketplace add steepy-it/steepy-apex
 codex plugin add steepy-apex@steepy-apex
 ```
 
+**From a local checkout** (for development):
+
+```
+codex plugin marketplace add /path/to/steepy-apex
+codex plugin add steepy-apex@steepy-apex
+```
+
 The checkout is itself a marketplace root (`.agents/plugins/marketplace.json` + `.codex-plugin/plugin.json` ship in the repo). Skills are invoked with `$<skill>` or picked automatically; run the `init` skill first.
 
 ### OpenCode
+
+**From a git tag** (replace `vX.Y.Z` with the desired published tag), in `opencode.json`:
+
+```json
+{ "plugin": ["steepy-apex@git+https://github.com/steepy-it/steepy-apex.git#vX.Y.Z"] }
+```
 
 **From a local checkout** (for development): keep the complete checkout intact and add its exported plugin module to the `plugin` array of your `opencode.json` using OpenCode's documented file-URL form:
 
@@ -54,28 +67,22 @@ The checkout is itself a marketplace root (`.agents/plugins/marketplace.json` + 
 
 The entry module resolves `skills/` and its shared adapter modules relative to that checkout. Do not copy the entry file by itself into `.opencode/plugins/`; that separates it from the required package payload.
 
-**From a git tag** (replace `vX.Y.Z` with the desired published tag), in `opencode.json`:
-
-```json
-{ "plugin": ["steepy-apex@git+https://github.com/steepy-it/steepy-apex.git#vX.Y.Z"] }
-```
-
 **From npm** — future release; the package is not published yet.
 
 The adapter registers the canonical `skills/` tree and ten `steepy-apex-<skill>` commands; skills are also invoked by the agent through the native skill tool. Skills read templates from the checkout, which OpenCode treats as an external directory: interactive sessions get a one-time permission prompt, while non-interactive `opencode run` needs it pre-granted in `opencode.json` (`"permission": { "external_directory": { "/path/to/steepy-apex/**": "allow" } }`).
 
 ### Pi
 
-**From a local checkout** (for development):
-
-```
-pi install /path/to/steepy-apex
-```
-
 **From a git tag** (replace `vX.Y.Z` with the desired published tag):
 
 ```
 pi install git:github.com/steepy-it/steepy-apex@vX.Y.Z
+```
+
+**From a local checkout** (for development):
+
+```
+pi install /path/to/steepy-apex
 ```
 
 **From npm** — future release; the package is not published yet.
@@ -84,26 +91,21 @@ Skills are invoked with `/skill:<name>` (or model-invoked), plus optional `/stee
 
 ### DeepSeek Harness
 
-**From a local checkout** (for development):
-
-```
-dsh plugin --profile <name> add /path/to/steepy-apex
-```
-
 **From a git tag** (replace `vX.Y.Z` with the desired published tag):
 
 ```
 dsh plugin --profile <name> add git+https://github.com/steepy-it/steepy-apex.git#vX.Y.Z
 ```
 
+**From a local checkout** (for development):
+
+```
+dsh plugin --profile <name> add /path/to/steepy-apex
+```
+
 **From npm** — future release; the package is not published yet.
 
 The adapter registers ten `steepy-<skill>` commands, a model-invocable `steepy_skill` tool, and a marker-guarded bootstrap section in the system prompt. A command's output is rendered to the human and never enters model history, so it can only name the tool call to make — ask the model to call `steepy_skill` directly, or run a `steepy-<skill>` command to see the exact call.
-
-### Requirements
-
-- **A supported harness** — Claude Code, Codex, OpenCode, Pi Coding Agent, or DeepSeek Harness. One canonical skill set serves all five; where a harness lacks a capability (subagent dispatch, per-dispatch model choice), the skills degrade along a declared path — stated in the output, never silent.
-- **Node.js >= 24** — the hub linter (`validate-hub.mjs`) and scaffolders run on Node, with no third-party dependencies (only Node built-ins). Node 24 is the supported runtime floor; CI validates Node 24. They are invoked by the end-of-turn hook and the `check` skill.
 
 ## First run and troubleshooting
 
