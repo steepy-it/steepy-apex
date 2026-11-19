@@ -10,6 +10,8 @@ plugin directories. See the [distribution checklist](../RELEASE.md#public-distri
 - **A supported harness**, installed first: Claude Code, Codex, OpenCode, Pi Coding Agent, or DeepSeek Harness. One canonical skill set serves all five; where a harness lacks a capability (subagent dispatch, per-dispatch model choice), the skills degrade along a declared path — stated in the output, never silent.
 - **Node.js >= 24** — the hub linter (`validate-hub.mjs`) and scaffolders run on Node, with no third-party dependencies (only Node built-ins). Node 24 is the supported runtime floor; CI validates Node 24. They are invoked by the end-of-turn hook and the `check` skill.
 - **Git** on your PATH.
+- **Linux or macOS** for `review`, inception checks, Gear-3 autopilot, and Gear-4 loops; they refuse other platforms. CI runs on Linux.
+- **Claude Code >= 2.1.211** for autopilot and Gear-4 runs on Claude Code, which pass `--forward-subagent-text`.
 
 ## Install by harness
 

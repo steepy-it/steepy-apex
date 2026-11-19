@@ -149,7 +149,8 @@ The status stream correlates every run, attempt, and discovered session: `run-id
 
 When an unfinished implementation needs additional existing evidence, name each exact
 repo-relative path with repeatable `--resume-input <path>` arguments to
-`node scripts/autopilot.mjs <spec-path>` (API: `runConductor(specPath, { resumeInputs })`).
+`node <engine-root>/scripts/autopilot.mjs <spec-path>`, where `<engine-root>` is the installed
+steepy-apex plugin directory (API: `runConductor(specPath, { resumeInputs })`).
 Each file must be inside the selected spec's task directory. The conductor checks the
 bindings before acquiring the lease and again before publication, then adds them only
 to the new implement manifest's `onDemand` inventory. It reads metadata rather than file
