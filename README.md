@@ -38,7 +38,7 @@ The generated instructions send your agent to the hub before each task: your con
 /plugin install steepy-apex@steepy-apex
 ```
 
-Reload plugins, open your project, then run `/steepy-apex:init`.
+Run `/reload-plugins` (or restart Claude Code), then open your project and run `/steepy-apex:init`.
 
 **Codex**, in your terminal:
 

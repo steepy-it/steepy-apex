@@ -1,6 +1,6 @@
 # Inception native acceptance protocol
 
-This protocol is a release gate after review. It is not a review criterion: review judges the repository, and this gate judges the skill running in a real harness. Nothing here is run by the test suite.
+This protocol is meant as a release gate after review. No release has passed it yet: every row of the evidence matrix below is `NOT RUN`. It is not a review criterion: review judges the repository, and this gate judges the skill running in a real harness. Nothing here is run by the test suite.
 
 ## Setup rule
 

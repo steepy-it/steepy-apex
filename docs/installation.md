@@ -33,7 +33,7 @@ Each harness lists the public install first and a local checkout for development
 /plugin install steepy-apex@steepy-apex
 ```
 
-Then restart Claude Code (or reload plugins) and run `/steepy-apex:init`.
+Then run `/reload-plugins` (or restart Claude Code) and start with `/steepy-apex:init`.
 
 ### Codex
 
@@ -55,7 +55,10 @@ The checkout is itself a marketplace root (`.agents/plugins/marketplace.json` + 
 
 ### OpenCode
 
-**From a git tag** (replace `vX.Y.Z` with the desired published tag), in `opencode.json`:
+These steps were written for OpenCode 1.x. OpenCode 2.x is not verified yet: for example,
+OpenCode 2.3.0 refuses the single-file local-checkout entry shown below.
+
+**From a git tag** (replace `vX.Y.Z` with a tag from the [releases page](https://github.com/steepy-it/steepy-apex/releases)), in `opencode.json`:
 
 ```json
 { "plugin": ["steepy-apex@git+https://github.com/steepy-it/steepy-apex.git#vX.Y.Z"] }
@@ -75,7 +78,7 @@ The adapter registers the canonical `skills/` tree and ten `steepy-apex-<skill>`
 
 ### Pi
 
-**From a git tag** (replace `vX.Y.Z` with the desired published tag):
+**From a git tag** (replace `vX.Y.Z` with a tag from the [releases page](https://github.com/steepy-it/steepy-apex/releases)):
 
 ```
 pi install git:github.com/steepy-it/steepy-apex@vX.Y.Z
@@ -93,7 +96,7 @@ Skills are invoked with `/skill:<name>` (or model-invoked), plus optional `/stee
 
 ### DeepSeek Harness
 
-**From a git tag** (replace `vX.Y.Z` with the desired published tag):
+**From a git tag** (replace `vX.Y.Z` with a tag from the [releases page](https://github.com/steepy-it/steepy-apex/releases)):
 
 ```
 dsh plugin --profile <name> add git+https://github.com/steepy-it/steepy-apex.git#vX.Y.Z
@@ -133,6 +136,12 @@ usually means the entry module was copied without its sibling directories.
 For DeepSeek Harness, use an existing configured profile. For one-shot verification,
 use the shipped `headless` profile: an arbitrary new profile name may have no frontend.
 
+In a JavaScript or TypeScript workspace, `init` proposes one surface per package listed in
+`pnpm-workspace.yaml` or in the `workspaces` field of `package.json`. It expands entries
+written as a plain path, `dir/*`, or `dir/**`. Other forms, such as `!` exclusions or
+braces, are not expanded, and in `pnpm-workspace.yaml` they stop the whole proposal. Either
+way, you confirm or edit the surface list during setup.
+
 A successful `init` creates `.apex/_INDEX.md`, project instructions, and the local
 `.apex/work/` area. `check` should report a coherent hub. See [workflow](workflow.md)
 for subsequent tasks and [architecture](architecture.md) for command effects, hooks,
@@ -141,7 +150,30 @@ Gear-3 autopilot or Gear-4 loops.
 
 ## Upgrading an existing hub
 
-After you update the plugin, run `check` in each repository it governs.
+Update the plugin in your harness, then run `check` in each repository it governs.
+
+- **Claude Code:** run `claude plugin marketplace update steepy-apex`, then
+  `claude plugin update steepy-apex@steepy-apex`, then `/reload-plugins` or a restart. Inside a
+  session, `/plugin marketplace update steepy-apex` refreshes the listing and **Update now** in
+  the `/plugin` Installed tab updates the plugin. With auto-update on for the marketplace, this
+  happens on its own.
+- **Codex:** run `codex plugin marketplace upgrade steepy-apex`, then start a new session.
+- **OpenCode:** change the tag in your `opencode.json` entry to the new release.
+- **Pi:** `pi update` does not move a pinned tag. Remove the old source with
+  `pi remove git:github.com/steepy-it/steepy-apex@<old-tag>`, then install the new one with
+  `pi install git:github.com/steepy-it/steepy-apex@<new-tag>`.
+- **DeepSeek Harness:** run the `add` command from [the install section](#deepseek-harness)
+  with the new tag.
+
+For a local checkout, check out the new tag in the checkout first. Then run the same update
+commands for Claude Code and Codex, or restart OpenCode and Pi.
+
+### To v1.3.2
+
+- **An inception run in progress.** If its snapshots already include the files of a linked Git
+  worktree inside the repository, those files now show as removed and `unit finish` refuses
+  them. Accept them with `unit reconcile` and an explicit human statement. A run that excluded
+  the worktrees by hand is not affected.
 
 ### To v1.2.0
 
@@ -165,10 +197,16 @@ The [changelog](../CHANGELOG.md) lists every change by version.
 
 ## Upstream references
 
-Installation syntax was cross-checked on 2026-09-16 against
-[Claude Code marketplaces](https://code.claude.com/docs/en/discover-plugins),
-[Codex plugin packaging](https://developers.openai.com/plugins/build/plugins),
-[OpenCode plugins](https://opencode.ai/docs/plugins/), and
-[Pi packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md).
+The install and update commands on this page were last checked against each host's
+documentation on these dates:
+
+- Claude Code, 2026-11-19: [Discover plugins](https://code.claude.com/docs/en/discover-plugins)
+  and [commands](https://code.claude.com/docs/en/commands).
+- Codex, 2026-11-19 for the marketplace commands and 2026-09-16 for `codex plugin add`:
+  [Codex plugin packaging](https://developers.openai.com/plugins/build/plugins).
+- OpenCode, 2026-09-16: [OpenCode plugins](https://opencode.ai/docs/plugins/).
+- Pi, 2026-11-19: [Pi packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md)
+  and the [Pi CLI](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md).
+
 These references describe host mechanisms; candidate-specific native verification is
 tracked separately in [release checks](../RELEASE.md#public-distribution-checklist).
