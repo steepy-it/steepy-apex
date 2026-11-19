@@ -2,10 +2,9 @@
 
 steepy-apex installs natively in five harnesses — [Claude Code](https://docs.claude.com/en/docs/claude-code), [Codex](https://developers.openai.com/codex), [OpenCode](https://opencode.ai), [Pi Coding Agent](https://github.com/badlogic/pi-mono), and DeepSeek Harness (dsh) — from one shared package: a single canonical `skills/` tree plus thin per-harness adapters and manifests. Pick your harness.
 
-GitHub installation requires access to this repository. Install the harness itself first,
-and keep Node.js >= 24 and Git available on your PATH. Public availability, marketplace
-approval, and npm publication are separate release steps; a GitHub tag does not establish
-a store listing. See the [distribution checklist](../RELEASE.md#public-distribution-checklist).
+Install the harness itself first, and keep Node.js >= 24 and Git available on your PATH.
+steepy-apex installs from GitHub; it is not published on npm or in the Claude and Codex
+plugin directories. See the [distribution checklist](../RELEASE.md#public-distribution-checklist).
 
 ### Claude Code
 
@@ -16,8 +15,7 @@ a store listing. See the [distribution checklist](../RELEASE.md#public-distribut
 /plugin install steepy-apex@steepy-apex
 ```
 
-The listing in the Claude plugin directory is under review. Until it is approved, install from
-GitHub.
+steepy-apex is not listed in the Claude plugin directory; install from GitHub.
 
 **From a local checkout** (for development):
 
