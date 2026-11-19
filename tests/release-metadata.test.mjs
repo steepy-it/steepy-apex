@@ -393,7 +393,7 @@ test('RELEASE.md documents validation, smoke test, release, and rollback steps',
     'scripts/bump-version.mjs',
     '.github/workflows/release.yml',
     'Rollback',
-    'docs/release-evidence.md',
+    'docs/maintainers/release-evidence.md',
     '`.codex-plugin/plugin.json` in three-way lockstep',
     'claude.ai/directory/manage',
     '`claude-directory`',
@@ -415,7 +415,7 @@ test('RELEASE.md documents validation, smoke test, release, and rollback steps',
 });
 
 test('release evidence reference documents the optional release audit verification and release independence', () => {
-  const release = readFileSync(join(root, 'docs/release-evidence.md'), 'utf8');
+  const release = readFileSync(join(root, 'docs/maintainers/release-evidence.md'), 'utf8');
 
   for (const required of [
     'scripts/validate-release-evidence.mjs',

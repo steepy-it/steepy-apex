@@ -199,7 +199,7 @@ test('RELEASE.md confirms ten commands including inception', () => {
 });
 
 test('acceptance protocol covers both scenarios, evidence matrix, and setup rule', () => {
-  const doc = norm(read('docs', 'inception-acceptance.md'));
+  const doc = norm(read('docs', 'maintainers', 'inception-acceptance.md'));
   assert.match(doc, /release gate after review/i);
   assert.match(doc, /not a review criterion/i);
   assert.match(doc, /Scenario A[\s\S]*empty repository[\s\S]*`init`[\s\S]*`discovery`[\s\S]*inception source/i);
@@ -214,7 +214,7 @@ test('acceptance protocol covers both scenarios, evidence matrix, and setup rule
   assert.match(doc, /model's approval is never recorded as a human approver/i);
   assert.match(doc, /packaged plugin[\s\S]*installed steepy-apex release[\s\S]*disabled[\s\S]*`missing _INDEX\.md`/i);
   assert.match(doc, /Scenario C is deferred out of v1/i);
-  assert.match(norm(guideDoc()), /\[native acceptance protocol\]\(inception-acceptance\.md\)/);
+  assert.match(norm(guideDoc()), /\[native acceptance protocol\]\(maintainers\/inception-acceptance\.md\)/);
 });
 
 test('v2 guide binds completion to approved checks and captured evidence, never editable results', () => {
@@ -254,7 +254,7 @@ test('v2 post-complete docs preserve the original init plan and reject source dr
 });
 
 test('native protocol requires every recovery and verification case without claiming execution', () => {
-  const doc = norm(read('docs', 'inception-acceptance.md'));
+  const doc = norm(read('docs', 'maintainers', 'inception-acceptance.md'));
   for (const phase of ['reconnaissance', 'architecture', 'research', 'approval', 'bootstrap', 'verification', 'complete']) assert.ok(doc.includes(phase));
   assert.match(doc, /automatically[\s\S]*correlation[\s\S]*ambiguous[\s\S]*human/i);
   assert.match(doc, /required check fails[\s\S]*manual.*missing[\s\S]*all required automatic and manual/i);
@@ -302,7 +302,7 @@ test('pre-merge rules agree across skills and guides', () => {
   assert.match(architecture.find(line => line.startsWith('| `inception-snapshot.mjs` |')), /recognized scaffold lease/);
   assert.match(architecture.find(line => line.startsWith('| `inception-snapshot.mjs` |')), /linked worktrees/);
   assert.match(architecture.find(line => line.startsWith('| `inception-governance.mjs` |')), /writes the certified stable documents/);
-  const acceptance = read('docs', 'inception-acceptance.md').split('\n');
+  const acceptance = read('docs', 'maintainers', 'inception-acceptance.md').split('\n');
   assert.match(acceptance.find(line => /complete → init → discovery/.test(line)), /`documents`/);
 });
 

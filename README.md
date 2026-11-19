@@ -59,7 +59,7 @@ Use your harness's [command syntax](docs/installation.md#first-run-and-troublesh
 2. `/steepy-apex:discovery` - Populate the hub from an existing codebase, reviewing each proposal.
 3. `/steepy-apex:check` - Verify documentation coherence. On a healthy hub the linter reports `steepy validate-hub: OK — doc graph is coherent`. Then give your agent a task.
 
-Starting from an idea or a prototype? Run `/steepy-apex:inception` first. It ends by pointing to `/steepy-apex:init` and `/steepy-apex:discovery`. See the [inception guide](docs/inception.md). Inception is new: its runs in real harnesses have not completed the [acceptance protocol](docs/inception-acceptance.md) yet.
+Starting from an idea or a prototype? Run `/steepy-apex:inception` first. It ends by pointing to `/steepy-apex:init` and `/steepy-apex:discovery`. See the [inception guide](docs/inception.md). Inception is new: its runs in real harnesses have not completed the [acceptance protocol](docs/maintainers/inception-acceptance.md) yet.
 
 The generated bootstrap reads `AGENTS.md`, follows `.apex/_INDEX.md` routing, and invokes workflows by semantic skill name.
 

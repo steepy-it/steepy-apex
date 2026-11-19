@@ -1,6 +1,6 @@
 # Release evidence reference
 
-[Release checklist](../RELEASE.md)
+[Release checklist](../../RELEASE.md)
 
 This reference describes optional release audit verification. It is not a release prerequisite.
 

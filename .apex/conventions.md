@@ -10,6 +10,9 @@ Repo-wide rules for steepy-apex. Surface-specific rules live in `standards/`.
   before writing it into a file (`scripts/sanitize.mjs`).
 - **Keep the hub green.** `node scripts/validate-hub.mjs .` must exit 0 before a
   task is done.
+- **User docs and maintainer docs.** `docs/` holds the guides for plugin users;
+  release, audit, and acceptance procedures live in `docs/maintainers/`. User guides
+  carry no internal tracker IDs.
 
 ## Public format baseline
 

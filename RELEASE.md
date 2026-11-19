@@ -13,9 +13,9 @@ Community marketplace install path after approval: `steepy-apex@claude-community
 
 Detailed references:
 
-- [Public launch checklist](docs/publication-readiness.md).
+- [Public launch checklist (v1.0.0, historical)](docs/maintainers/publication-readiness.md).
 
-- [Optional audit evidence schema, capabilities and provenance](docs/release-evidence.md).
+- [Optional audit evidence schema, capabilities and provenance](docs/maintainers/release-evidence.md).
 
 ## Installation
 
