@@ -1,6 +1,6 @@
 # Inception
 
-`/steepy-apex:inception` turns an idea and its starting materials into a minimal, verified, runnable first version. It runs before the hub exists and ends by pointing you to `init`, then `discovery`. Claude Code syntax is shown; see the [installation guide](installation.md#first-run-and-troubleshooting) for other harnesses.
+`/steepy-apex:inception` turns an idea and its starting materials into a minimal, verified, runnable first version. It runs before the hub exists and ends by pointing you to `init`, then `discovery`. Claude Code syntax is shown; see the [installation guide](installation.md#command-syntax-by-harness) for other harnesses.
 
 To start, open the repository and run `/steepy-apex:inception`. Describe your idea and point the skill at what you already have: code, images, exported designs, documents, links. It reads each one, then asks only what they don't answer.
 

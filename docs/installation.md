@@ -3,7 +3,7 @@
 steepy-apex installs natively in five harnesses ([Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex), [OpenCode](https://opencode.ai), [Pi Coding Agent](https://github.com/earendil-works/pi), and DeepSeek Harness, `dsh`) from one shared package: a single canonical `skills/` tree plus thin per-harness adapters and manifests.
 
 steepy-apex installs from GitHub; it is not published on npm or in the Claude and Codex
-plugin directories. See the [distribution checklist](../RELEASE.md#public-distribution-checklist).
+plugin directories.
 
 ## Requirements
 
@@ -118,6 +118,8 @@ Open the repository you want to govern, then run `init`, `discovery` (for an exi
 codebase), and `check` using your harness's syntax. Starting from an idea or a prototype,
 run `inception` first; see the [inception guide](inception.md).
 
+### Command syntax by harness
+
 | Harness | Start from an idea | Initialize | Discover | Check |
 |---|---|---|---|---|
 | Claude Code | `/steepy-apex:inception` | `/steepy-apex:init` | `/steepy-apex:discovery` | `/steepy-apex:check` |
@@ -125,6 +127,17 @@ run `inception` first; see the [inception guide](inception.md).
 | OpenCode | `/steepy-apex-inception` | `/steepy-apex-init` | `/steepy-apex-discovery` | `/steepy-apex-check` |
 | Pi | `/skill:inception` | `/skill:init` | `/skill:discovery` | `/skill:check` |
 | DeepSeek Harness | Ask the model to call `steepy_skill` with `skill: "inception"` | Use `skill: "init"` | Use `skill: "discovery"` | Use `skill: "check"` |
+
+Every other skill follows the same pattern, for example `/steepy-apex:brainstorm`, `$brainstorm`,
+`/steepy-apex-brainstorm`, `/skill:brainstorm`, or `skill: "brainstorm"`.
+
+A successful `init` creates `.apex/_INDEX.md`, project instructions, and the local
+`.apex/work/` area. `check` should report a coherent hub. See [workflow](workflow.md)
+for subsequent tasks and [architecture](architecture.md) for command effects, hooks,
+and adapter boundaries. Pi and DeepSeek have no Steepy deterministic runner for
+Gear-3 autopilot or Gear-4 loops.
+
+### Troubleshooting
 
 In Codex, select the skill belonging to **steepy-apex** if another plugin uses the
 same name. Restart the harness after installation if skills are not visible.
@@ -142,12 +155,6 @@ written as a plain path, `dir/*`, or `dir/**`. Other forms, such as `!` exclusio
 braces, are not expanded. In `package.json` they are skipped, so a package you excluded with
 `!` is still proposed. In `pnpm-workspace.yaml` they stop the whole proposal. Either way, you
 confirm or edit the surface list during setup.
-
-A successful `init` creates `.apex/_INDEX.md`, project instructions, and the local
-`.apex/work/` area. `check` should report a coherent hub. See [workflow](workflow.md)
-for subsequent tasks and [architecture](architecture.md) for command effects, hooks,
-and adapter boundaries. Pi and DeepSeek have no Steepy deterministic runner for
-Gear-3 autopilot or Gear-4 loops.
 
 ## Upgrading an existing hub
 
@@ -209,5 +216,5 @@ documentation on these dates:
 - Pi, 2026-11-19: [Pi packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md)
   and the [Pi CLI](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md).
 
-These references describe host mechanisms; candidate-specific native verification is
-tracked separately in [release checks](../RELEASE.md#public-distribution-checklist).
+These dates cover each host's documentation only; they are not a test run of steepy-apex
+in that host.

@@ -53,7 +53,7 @@ Start a new Codex session in your project and run the steepy-apex `init` skill (
 
 ## Get started
 
-Use your harness's [command syntax](docs/installation.md#first-run-and-troubleshooting); Claude Code is shown here.
+Each harness (the coding agent you run steepy-apex in) has its own [command syntax](docs/installation.md#command-syntax-by-harness); Claude Code is shown here.
 
 1. `/steepy-apex:init` - Initialize steepy-apex in your repo. Creates the `.apex/` hub, project instructions, and the local `.apex/work/` area for gitignored specs/plans.
 2. `/steepy-apex:discovery` - Populate the hub from an existing codebase, reviewing each proposal.
@@ -77,7 +77,7 @@ If `AGENTS.md` or `CLAUDE.md` already exists, `init` adds its managed block and 
 
 ## Skills
 
-Claude Code syntax is shown below; see the [installation guide](docs/installation.md#first-run-and-troubleshooting) for other agents.
+Claude Code syntax is shown below; see the [installation guide](docs/installation.md#command-syntax-by-harness) for other harnesses.
 
 | Skill | Purpose |
 |---|---|
@@ -119,8 +119,8 @@ off its sandbox. Run these modes only on a branch and a machine you are willing 
 
 - [Installation](docs/installation.md): all harnesses, requirements, upgrading, and troubleshooting.
 - [Inception](docs/inception.md): start a project from an idea, before the hub exists.
-- [docs/workflow.md](docs/workflow.md): gears, model selection, context efficiency, autopilot, and live observability.
-- [docs/architecture.md](docs/architecture.md): internals, usage reports, and the Command-family effects matrix: filesystem reads–writes–subprocesses–temporary state–providers/network.
+- [docs/workflow.md](docs/workflow.md): gears, model selection, autopilot, and live observability.
+- [docs/architecture.md](docs/architecture.md): internals, usage reports for context efficiency, and the Command-family effects matrix: filesystem reads–writes–subprocesses–temporary state–providers/network.
 - [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Privacy](PRIVACY.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 license](LICENSE)
 
 Made by [Steepy](https://www.steepy.it).
