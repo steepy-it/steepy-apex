@@ -123,4 +123,4 @@ off its sandbox. Run these modes only on a branch and a machine you are willing 
 - [docs/architecture.md](docs/architecture.md): internals, usage reports for context efficiency, and the Command-family effects matrix: filesystem reads–writes–subprocesses–temporary state–providers/network.
 - [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Privacy](PRIVACY.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 license](LICENSE)
 
-Made by [Steepy](https://www.steepy.it).
+Made by [Steepy](https://steepy.it/steepy-apex).
